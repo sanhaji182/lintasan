@@ -97,7 +97,7 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(conns)
+	json.NewEncoder(w).Encode(map[string]any{"data": conns})
 }
 
 func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) {
@@ -163,11 +163,16 @@ func (s *Server) handleGetCombos(w http.ResponseWriter, r *http.Request) {
 	combosJSON, err := s.db.GetSetting("combos")
 	if err != nil || combosJSON == "" {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode([]any{})
+		json.NewEncoder(w).Encode(map[string]any{"data": []any{}})
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	var combos any
+	if json.Unmarshal([]byte(combosJSON), &combos) == nil {
+		json.NewEncoder(w).Encode(map[string]any{"data": combos})
+		return
+	}
 	w.Write([]byte(combosJSON))
 }
 
@@ -193,7 +198,7 @@ func (s *Server) handleCreateCombo(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": input["id"].(string), "status": "created"})
+	json.NewEncoder(w).Encode(map[string]any{"data": input, "id": input["id"].(string), "status": "created"})
 }
 
 // Stats
@@ -217,14 +222,14 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
 		"total_requests":     totalRequests,
 		"cached_requests":    cachedRequests,
 		"cache_hit_rate":     fmt.Sprintf("%.1f%%", cacheRate),
 		"avg_latency_ms":     avgLatency.Float64,
 		"active_models":      modelCount,
 		"active_connections": connCount,
-	})
+	}})
 }
 
 // Logs
@@ -276,7 +281,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(logs)
+	json.NewEncoder(w).Encode(map[string]any{"data": logs})
 }
 
 // Settings

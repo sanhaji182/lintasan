@@ -71,93 +71,53 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	conn, err := p.findConnectionForModel(model)
-	if err != nil {
-		http.Error(w, fmt.Sprintf(`{"error":"no connection found for model %s"}`, model), http.StatusNotFound)
+	candidates, resolvedModel, err := p.resolveRoute(model)
+	if err != nil || len(candidates) == 0 {
+		http.Error(w, fmt.Sprintf(`{"error":"no route found for model %s"}`, model), http.StatusNotFound)
 		return
 	}
+	req["model"] = resolvedModel
+	body, _ = json.Marshal(req)
 
 	stream, _ := req["stream"].(bool)
-
-	// Build upstream URL using connection's chat_path
-	chatPath := conn.ChatPath
-	if chatPath == "" {
-		chatPath = "/v1/chat/completions"
-	}
-	upstreamURL := strings.TrimRight(conn.BaseURL, "/") + chatPath
-
-	upReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, strings.NewReader(string(body)))
-	if err != nil {
-		http.Error(w, `{"error":"failed to create upstream request"}`, http.StatusInternalServerError)
-		return
-	}
-
-	upReq.Header.Set("Content-Type", "application/json")
-
-	// Use connection's auth config
-	authHeader := conn.AuthHeader
-	if authHeader == "" {
-		authHeader = "Authorization"
-	}
-	authPrefix := conn.AuthPrefix
-	if authPrefix == "" {
-		authPrefix = "Bearer "
-	}
-	if conn.APIKey != "" {
-		upReq.Header.Set(authHeader, authPrefix+conn.APIKey)
-	}
-
-	// Forward extra headers from original request
-	if xcc := r.Header.Get("X-Command-Code-Version"); xcc != "" {
-		upReq.Header.Set("X-Command-Code-Version", xcc)
-	}
-
-	resp, err := p.client.Do(upReq)
-	if err != nil {
-		latency := time.Since(start).Milliseconds()
-		p.logRequest(model, conn.ID, conn.Name, 502, latency, 0, 0, false, err.Error())
-		http.Error(w, fmt.Sprintf(`{"error":"upstream error: %s"}`, err.Error()), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	// Copy response headers
-	for k, v := range resp.Header {
-		for _, vv := range v {
-			w.Header().Add(k, vv)
+	var lastErr string
+	var lastStatus int
+	for i, conn := range candidates {
+		resp, err := p.doUpstream(r, conn, body)
+		if err != nil {
+			lastErr = err.Error()
+			p.logRequest(resolvedModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr)
+			continue
 		}
-	}
+		defer resp.Body.Close()
+		lastStatus = resp.StatusCode
+		if resp.StatusCode >= 500 && i < len(candidates)-1 {
+			b, _ := io.ReadAll(resp.Body)
+			lastErr = string(b)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr)
+			continue
+		}
 
-	if stream {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-		w.WriteHeader(resp.StatusCode)
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
+		for k, v := range resp.Header {
+			for _, vv := range v { w.Header().Add(k, vv) }
+		}
+		if stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("Connection", "keep-alive")
+			w.WriteHeader(resp.StatusCode)
+			flusher, ok := w.(http.Flusher)
+			if !ok { io.Copy(w, resp.Body); return }
+			buf := make([]byte, 4096)
+			for { n, er := resp.Body.Read(buf); if n > 0 { w.Write(buf[:n]); flusher.Flush() }; if er != nil { break } }
+		} else {
+			w.WriteHeader(resp.StatusCode)
 			io.Copy(w, resp.Body)
-			return
 		}
-
-		buf := make([]byte, 4096)
-		for {
-			n, err := resp.Body.Read(buf)
-			if n > 0 {
-				w.Write(buf[:n])
-				flusher.Flush()
-			}
-			if err != nil {
-				break
-			}
-		}
-	} else {
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+		p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, "")
+		return
 	}
-
-	latency := time.Since(start).Milliseconds()
-	p.logRequest(model, conn.ID, conn.Name, resp.StatusCode, latency, 0, 0, false, "")
+	http.Error(w, fmt.Sprintf(`{"error":"all routes failed","status":%d,"last_error":%q}`, lastStatus, lastErr), http.StatusBadGateway)
 }
 
 func (p *ProxyHandler) HandleEmbeddings(w http.ResponseWriter, r *http.Request) {
@@ -223,6 +183,88 @@ func (p *ProxyHandler) HandleEmbeddings(w http.ResponseWriter, r *http.Request) 
 	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte) (*http.Response, error) {
+	chatPath := conn.ChatPath
+	if chatPath == "" { chatPath = "/v1/chat/completions" }
+	upstreamURL := strings.TrimRight(conn.BaseURL, "/") + chatPath
+	upReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, strings.NewReader(string(body)))
+	if err != nil { return nil, err }
+	upReq.Header.Set("Content-Type", "application/json")
+	authHeader := conn.AuthHeader; if authHeader == "" { authHeader = "Authorization" }
+	authPrefix := conn.AuthPrefix; if authPrefix == "" { authPrefix = "Bearer " }
+	if conn.APIKey != "" { upReq.Header.Set(authHeader, authPrefix+conn.APIKey) }
+	if xcc := r.Header.Get("X-Command-Code-Version"); xcc != "" { upReq.Header.Set("X-Command-Code-Version", xcc) }
+	return p.client.Do(upReq)
+}
+
+func (p *ProxyHandler) resolveRoute(model string) ([]*Connection, string, error) {
+	model = p.resolveAlias(model)
+	if conns, resolved, ok := p.resolveCombo(model); ok && len(conns) > 0 { return conns, resolved, nil }
+	conn, err := p.findConnectionForModel(model)
+	if err != nil { return nil, model, err }
+	return []*Connection{conn}, model, nil
+}
+
+func (p *ProxyHandler) resolveAlias(model string) string {
+	v, _ := p.db.GetSetting("aliases")
+	if v == "" { return model }
+	var m map[string]any
+	if json.Unmarshal([]byte(v), &m) != nil { return model }
+	if raw, ok := m[model]; ok {
+		switch t := raw.(type) {
+		case string: return t
+		case map[string]any: if s, _ := t["model"].(string); s != "" { return s }
+		}
+	}
+	return model
+}
+
+func (p *ProxyHandler) resolveCombo(name string) ([]*Connection, string, bool) {
+	v, _ := p.db.GetSetting("combos")
+	if v == "" { return nil, name, false }
+	var combos []map[string]any
+	if json.Unmarshal([]byte(v), &combos) != nil { return nil, name, false }
+	for _, c := range combos {
+		if c["name"] != name { continue }
+		entries, _ := c["entries"].([]any)
+		strategy, _ := c["strategy"].(string)
+		if strategy == "round-robin" && len(entries) > 1 {
+			idx := p.nextRoundRobinIndex("combo_rr_"+name, len(entries))
+			entries = append(entries[idx:], entries[:idx]...)
+		}
+		var out []*Connection
+		resolvedModel := name
+		for _, e := range entries {
+			em, _ := e.(map[string]any); if em == nil { continue }
+			m, _ := em["model"].(string); if m == "" { continue }
+			if resolvedModel == name { resolvedModel = m }
+			ids := stringSlice(em["connection_ids"])
+			conns := p.connectionsForModelAndIDs(m, ids)
+			out = append(out, conns...)
+		}
+		return out, resolvedModel, true
+	}
+	return nil, name, false
+}
+
+func stringSlice(v any) []string { arr, _ := v.([]any); out := []string{}; for _, x := range arr { if s, ok := x.(string); ok { out = append(out, s) } }; return out }
+
+func (p *ProxyHandler) nextRoundRobinIndex(key string, n int) int {
+	if n <= 1 { return 0 }
+	v, _ := p.db.GetSetting(key); var i int; fmt.Sscanf(v, "%d", &i); next := (i+1)%n; p.db.SetSetting(key, fmt.Sprintf("%d", next)); return i % n
+}
+
+func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*Connection {
+	query := `SELECT c.id, c.name, c.base_url, c.api_key, c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority FROM discovered_models m JOIN connections c ON m.connection_id=c.id WHERE m.model_id=? AND m.is_active=1 AND c.is_active=1`
+	args := []any{model}
+	if len(ids) > 0 { ph:=make([]string,len(ids)); for i,id:=range ids{ph[i]="?"; args=append(args,id)}; query += " AND c.id IN ("+strings.Join(ph,",")+")" }
+	query += " ORDER BY c.priority DESC"
+	rows, err := p.db.Conn().Query(query, args...); if err != nil { return nil }; defer rows.Close()
+	var out []*Connection
+	for rows.Next(){ var c Connection; if rows.Scan(&c.ID,&c.Name,&c.BaseURL,&c.APIKey,&c.Format,&c.ChatPath,&c.AuthHeader,&c.AuthPrefix,&c.IsActive,&c.Priority)==nil{ out=append(out,&c) } }
+	return out
 }
 
 func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error) {

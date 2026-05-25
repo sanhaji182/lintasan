@@ -9,7 +9,7 @@ export function useApi(url) {
     setLoading(true)
     fetch(url)
       .then(r => r.json())
-      .then(d => { setData(d); setLoading(false) })
+      .then(d => { setData(d && Object.prototype.hasOwnProperty.call(d, 'data') ? d.data : d); setLoading(false) })
       .catch(e => { setError(e); setLoading(false) })
   }, [url])
 

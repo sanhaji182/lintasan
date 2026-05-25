@@ -26,6 +26,18 @@ func (s *Server) setJSONSetting(key string, v any) {
 	b, _ := json.Marshal(v); s.db.SetSetting(key, string(b))
 }
 func writeJSON(w http.ResponseWriter, v any) { w.Header().Set("Content-Type", "application/json"); json.NewEncoder(w).Encode(v) }
+func writeData(w http.ResponseWriter, v any) { writeJSON(w, map[string]any{"data": v}) }
+
+func (s *Server) validDashboardAPIKey(key string) bool {
+	arr, ok := s.getJSONSetting("api_keys", []any{}).([]any)
+	if !ok { return false }
+	for _, item := range arr {
+		m, _ := item.(map[string]any)
+		if m == nil { continue }
+		if m["key"] == key && m["disabled"] != true { return true }
+	}
+	return false
+}
 
 func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	var total, cached, input, output int; var avg float64

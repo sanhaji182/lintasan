@@ -178,6 +178,12 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Check API keys created from dashboard (/api/keys)
+		if strings.HasPrefix(auth, "Bearer ") && s.validDashboardAPIKey(strings.TrimPrefix(auth, "Bearer ")) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid API key"})
