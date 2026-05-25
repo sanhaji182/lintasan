@@ -104,7 +104,12 @@ func (s *Server) handleCache(w http.ResponseWriter,r *http.Request){ var emb,sem
 func (s *Server) handleCacheAction(w http.ResponseWriter,r *http.Request){ s.db.Conn().Exec("DELETE FROM embedding_cache"); s.db.Conn().Exec("DELETE FROM semantic_cache"); writeJSON(w,map[string]any{"success":true,"status":"cleared"}) }
 func (s *Server) handleCosts(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"today":0,"month":0,"currency":"USD","by_model":[]any{}}) }
 func (s *Server) handleQuota(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"limits":s.getJSONSetting("quota_limits",map[string]any{}),"usage":map[string]any{"requests_today":0,"tokens_today":0}}) }
-func (s *Server) handleAudit(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"events":[]any{},"total":0}) }
+func (s *Server) handleAudit(w http.ResponseWriter,r *http.Request){
+	rows,_:=s.db.Conn().Query("SELECT id, action, actor, resource, details, created_at FROM audit_events ORDER BY created_at DESC LIMIT 100")
+	events:=[]map[string]any{}
+	if rows!=nil{defer rows.Close(); for rows.Next(){var id,action,actor,resource,details,created string; rows.Scan(&id,&action,&actor,&resource,&details,&created); events=append(events,map[string]any{"id":id,"action":action,"actor":actor,"resource":resource,"details":details,"created_at":created})}}
+	writeData(w,map[string]any{"events":events,"total":len(events)})
+}
 func (s *Server) handleFeatures(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"features":map[string]bool{"proxy":true,"streaming":true,"dashboard":true,"fallback":true,"cache":true,"plugins":true,"teams":true}}) }
 func (s *Server) handleFeatureStats(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"enabled":7,"total":7}) }
 func (s *Server) handleAnalyticsRealtime(w http.ResponseWriter,r *http.Request){ s.handleAnalytics(w,r) }

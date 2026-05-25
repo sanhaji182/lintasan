@@ -109,6 +109,22 @@ func (d *DB) migrate() error {
 			status TEXT DEFAULT 'pending',
 			created_at TEXT DEFAULT (datetime('now'))
 		)`,
+		`CREATE TABLE IF NOT EXISTS audit_events (
+			id TEXT PRIMARY KEY,
+			action TEXT NOT NULL,
+			actor TEXT DEFAULT '',
+			resource TEXT DEFAULT '',
+			details TEXT DEFAULT '{}',
+			created_at TEXT DEFAULT (datetime('now'))
+		)`,
+		`CREATE TABLE IF NOT EXISTS webhook_deliveries (
+			id TEXT PRIMARY KEY,
+			webhook_id TEXT,
+			event TEXT,
+			status INTEGER DEFAULT 0,
+			response TEXT DEFAULT '',
+			created_at TEXT DEFAULT (datetime('now'))
+		)`,
 		`CREATE INDEX IF NOT EXISTS idx_discovered_models_connection ON discovered_models(connection_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_discovered_models_model ON discovered_models(model_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_created ON request_logs(created_at)`,

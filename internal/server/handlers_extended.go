@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -37,6 +38,11 @@ func (s *Server) validDashboardAPIKey(key string) bool {
 		if m["key"] == key && m["disabled"] != true { return true }
 	}
 	return false
+}
+
+func (s *Server) audit(action, actor, resource string, details any) {
+	b, _ := json.Marshal(details)
+	s.db.Conn().Exec("INSERT INTO audit_events(id, action, actor, resource, details, created_at) VALUES(?,?,?,?,?,datetime('now'))", uuid.New().String(), action, actor, resource, string(b))
 }
 
 func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
@@ -88,8 +94,19 @@ func (s *Server) handleKeysAction(w http.ResponseWriter, r *http.Request){ var i
 
 func (s *Server) handleLoadBalancer(w http.ResponseWriter,r *http.Request){ v,_:=s.db.GetSetting("load_balancer_strategy"); if v==""{v="priority"}; writeJSON(w,map[string]any{"strategy":v}) }
 func (s *Server) handleLoadBalancerAction(w http.ResponseWriter,r *http.Request){ var in map[string]string; json.NewDecoder(r.Body).Decode(&in); s.db.SetSetting("load_balancer_strategy",in["strategy"]); writeJSON(w,map[string]any{"status":"updated"}) }
-func (s *Server) handleAliases(w http.ResponseWriter,r *http.Request){ writeJSON(w,s.getJSONSetting("aliases",[]any{})) }
-func (s *Server) handleAliasesAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); arr:=s.getJSONSetting("aliases",[]any{}).([]any); if in["action"]=="delete"{ writeJSON(w,map[string]any{"status":"deleted"}); return}; in["id"]=uuid.New().String(); arr=append(arr,in); s.setJSONSetting("aliases",arr); writeJSON(w,map[string]any{"status":"created"}) }
+func (s *Server) handleAliases(w http.ResponseWriter,r *http.Request){ writeData(w,s.getJSONSetting("aliases",map[string]any{})) }
+func (s *Server) handleAliasesAction(w http.ResponseWriter,r *http.Request){
+	var in map[string]any; json.NewDecoder(r.Body).Decode(&in)
+	// Node dashboard posts the whole alias map: {alias: {model: "..."}}
+	if _, hasAction := in["action"]; !hasAction {
+		s.setJSONSetting("aliases", in); s.audit("aliases.update", "dashboard", "aliases", in); writeData(w,in); return
+	}
+	aliases, _ := s.getJSONSetting("aliases",map[string]any{}).(map[string]any)
+	action,_:=in["action"].(string); alias,_:=in["alias"].(string)
+	if action=="delete" && alias!="" { delete(aliases, alias); s.setJSONSetting("aliases",aliases); s.audit("aliases.delete","dashboard",alias,map[string]any{}); writeJSON(w,map[string]any{"success":true}); return }
+	model,_:=in["model"].(string); if alias!="" && model!="" { aliases[alias]=map[string]any{"model":model}; s.setJSONSetting("aliases",aliases); s.audit("aliases.create","dashboard",alias,map[string]any{"model":model}); writeData(w,aliases); return }
+	writeJSON(w,map[string]any{"error":"alias and model required"})
+}
 
 func (s *Server) handlePlugins(w http.ResponseWriter,r *http.Request){ writeJSON(w,s.getJSONSetting("plugins",[]any{})) }
 func (s *Server) handlePluginsAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); arr:=s.getJSONSetting("plugins",[]any{}).([]any); action,_:=in["action"].(string); if action=="create"||action=="install"{ in["id"]=uuid.New().String(); in["enabled"]=true; arr=append(arr,in); s.setJSONSetting("plugins",arr); writeJSON(w,map[string]any{"status":"created"}); return}; writeJSON(w,map[string]any{"status":"ok"}) }
@@ -101,7 +118,31 @@ func (s *Server) handleTeams(w http.ResponseWriter,r *http.Request){ writeJSON(w
 func (s *Server) handleTeamsAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); arr:=s.getJSONSetting("teams",[]any{}).([]any); if in["action"]=="create"||in["name"]!=nil{ in["id"]=uuid.New().String(); in["members"]=[]any{}; arr=append(arr,in); s.setJSONSetting("teams",arr); writeJSON(w,map[string]any{"status":"created"}); return}; writeJSON(w,map[string]any{"status":"ok"}) }
 func (s *Server) handleUsers(w http.ResponseWriter,r *http.Request){ writeJSON(w,s.getJSONSetting("users",[]any{})) }
 func (s *Server) handleUsersAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); arr:=s.getJSONSetting("users",[]any{}).([]any); if in["action"]=="create"||in["username"]!=nil{ in["id"]=uuid.New().String(); in["active"]=true; arr=append(arr,in); s.setJSONSetting("users",arr); writeJSON(w,map[string]any{"status":"created"}); return}; writeJSON(w,map[string]any{"status":"ok"}) }
-func (s *Server) handleWebhooks(w http.ResponseWriter,r *http.Request){ writeJSON(w,s.getJSONSetting("webhooks",map[string]any{"webhooks":[]any{},"history":[]any{}})) }
-func (s *Server) handleWebhooksAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); data:=s.getJSONSetting("webhooks",map[string]any{"webhooks":[]any{},"history":[]any{}}).(map[string]any); arr:=data["webhooks"].([]any); if in["action"]=="create"||in["name"]!=nil{ in["id"]=uuid.New().String(); in["active"]=true; arr=append(arr,in); data["webhooks"]=arr; s.setJSONSetting("webhooks",data); writeJSON(w,map[string]any{"status":"created"}); return}; if in["action"]=="test"{ writeJSON(w,map[string]any{"status":"test_sent"}); return}; writeJSON(w,map[string]any{"status":"ok"}) }
+func (s *Server) handleWebhooks(w http.ResponseWriter,r *http.Request){ writeData(w,s.getJSONSetting("webhooks",map[string]any{"webhooks":[]any{},"history":[]any{}})) }
+func (s *Server) handleWebhooksAction(w http.ResponseWriter,r *http.Request){
+	var in map[string]any; json.NewDecoder(r.Body).Decode(&in)
+	data:=s.getJSONSetting("webhooks",map[string]any{"webhooks":[]any{},"history":[]any{}}).(map[string]any)
+	arr:=data["webhooks"].([]any)
+	if in["action"]=="create"||in["name"]!=nil{ in["id"]=uuid.New().String(); in["active"]=true; arr=append(arr,in); data["webhooks"]=arr; s.setJSONSetting("webhooks",data); s.audit("webhook.create","dashboard",fmt.Sprint(in["id"]),in); writeData(w,in); return }
+	if in["action"]=="test"{ s.deliverWebhooks("test", map[string]any{"message":"Lintasan test webhook","time":time.Now()}); writeJSON(w,map[string]any{"status":"test_sent"}); return }
+	writeJSON(w,map[string]any{"status":"ok"})
+}
+
+func (s *Server) deliverWebhooks(event string, payload map[string]any) {
+	data, _ := s.getJSONSetting("webhooks",map[string]any{"webhooks":[]any{}}).(map[string]any)
+	arr, _ := data["webhooks"].([]any)
+	for _, item := range arr {
+		wh, _ := item.(map[string]any); if wh == nil || wh["active"] == false { continue }
+		url, _ := wh["url"].(string); if url == "" { continue }
+		id := fmt.Sprint(wh["id"])
+		body, _ := json.Marshal(map[string]any{"event":event,"payload":payload,"timestamp":time.Now().Format(time.RFC3339)})
+		go func(webhookID, target string, b []byte){
+			req, _ := http.NewRequest("POST", target, bytes.NewReader(b)); req.Header.Set("Content-Type","application/json")
+			resp, err := (&http.Client{Timeout:10*time.Second}).Do(req)
+			status:=0; text:=""; if err!=nil{text=err.Error()} else {status=resp.StatusCode; rb,_:=io.ReadAll(io.LimitReader(resp.Body,1024)); text=string(rb); resp.Body.Close()}
+			s.db.Conn().Exec("INSERT INTO webhook_deliveries(id, webhook_id, event, status, response, created_at) VALUES(?,?,?,?,?,datetime('now'))", uuid.New().String(), webhookID, event, status, text)
+		}(id,url,body)
+	}
+}
 
 func zipBytes(files map[string][]byte) []byte { var b bytes.Buffer; z:=zip.NewWriter(&b); for n,d:=range files{ f,_:=z.Create(n); f.Write(d)}; z.Close(); return b.Bytes() }

@@ -53,6 +53,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.proxy.HandleChatCompletions)
 	s.mux.HandleFunc("POST /v1/embeddings", s.proxy.HandleEmbeddings)
+	// OpenAI-compatible media endpoints (Node.js exposes these through API routes; Go exposes root /v1 too)
+	s.mux.HandleFunc("POST /v1/images/generations", s.proxy.HandleImages)
+	s.mux.HandleFunc("POST /v1/audio/speech", s.proxy.HandleAudioSpeech)
+	s.mux.HandleFunc("POST /v1/audio/transcriptions", s.proxy.HandleAudioTranscriptions)
 
 	// Management API
 	s.mux.HandleFunc("GET /api/connections", s.handleGetConnections)
