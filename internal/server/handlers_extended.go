@@ -71,7 +71,7 @@ func (s *Server) handleBackup(w http.ResponseWriter, r *http.Request) {
 	files:=[]map[string]any{}
 	entries,_:=os.ReadDir(dir)
 	for _,e:=range entries{ if info,err:=e.Info();err==nil{ files=append(files,map[string]any{"filename":e.Name(),"size":info.Size(),"created_at":info.ModTime().Format(time.RFC3339)}) } }
-	writeJSON(w,map[string]any{"backups":files})
+	writeData(w,map[string]any{"backups":files})
 }
 func (s *Server) handleBackupAction(w http.ResponseWriter, r *http.Request) {
 	var in map[string]any; json.NewDecoder(r.Body).Decode(&in); action,_:=in["action"].(string)
@@ -85,14 +85,14 @@ func (s *Server) handleBackupAction(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request){ writeJSON(w, s.getJSONSetting("fallback_chains", map[string]any{"model_chains":[]any{},"connection_chains":[]any{},"stats":map[string]any{"total_used":0,"success_rate":100}})) }
+func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request){ writeData(w, s.getJSONSetting("fallback_chains", map[string]any{"model_chains":[]any{},"connection_chains":[]any{},"stats":map[string]any{"total_used":0,"success_rate":100}})) }
 func (s *Server) handleFallbackAction(w http.ResponseWriter, r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); data:=s.getJSONSetting("fallback_chains", map[string]any{"model_chains":[]any{},"connection_chains":[]any{}}).(map[string]any); typ,_:=in["type"].(string); key:="model_chains"; if typ=="connection"{key="connection_chains"}; arr:=data[key].([]any); in["id"]=uuid.New().String(); in["usage_count"]=0; data[key]=append(arr,in); s.setJSONSetting("fallback_chains",data); writeJSON(w,map[string]any{"status":"created"}) }
 func (s *Server) handleFallbackDelete(w http.ResponseWriter, r *http.Request){ writeJSON(w,map[string]any{"status":"deleted"}) }
 
-func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request){ writeJSON(w, s.getJSONSetting("api_keys", []any{})) }
+func (s *Server) handleKeys(w http.ResponseWriter, r *http.Request){ writeData(w, s.getJSONSetting("api_keys", []any{})) }
 func (s *Server) handleKeysAction(w http.ResponseWriter, r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); action,_:=in["action"].(string); arr:=s.getJSONSetting("api_keys", []any{}).([]any); if action=="create"{ in["id"]=uuid.New().String(); in["key"]="sk-lintasan-"+strings.ReplaceAll(uuid.New().String(),"-",""); in["created_at"]=time.Now().Format(time.RFC3339); arr=append(arr,in); s.setJSONSetting("api_keys",arr); writeJSON(w,in); return }; writeJSON(w,map[string]any{"status":"ok"}) }
 
-func (s *Server) handleLoadBalancer(w http.ResponseWriter,r *http.Request){ v,_:=s.db.GetSetting("load_balancer_strategy"); if v==""{v="priority"}; writeJSON(w,map[string]any{"strategy":v}) }
+func (s *Server) handleLoadBalancer(w http.ResponseWriter,r *http.Request){ v,_:=s.db.GetSetting("load_balancer_strategy"); if v==""{v="priority"}; writeData(w,map[string]any{"strategy":v}) }
 func (s *Server) handleLoadBalancerAction(w http.ResponseWriter,r *http.Request){ var in map[string]string; json.NewDecoder(r.Body).Decode(&in); s.db.SetSetting("load_balancer_strategy",in["strategy"]); writeJSON(w,map[string]any{"status":"updated"}) }
 func (s *Server) handleAliases(w http.ResponseWriter,r *http.Request){ writeData(w,s.getJSONSetting("aliases",map[string]any{})) }
 func (s *Server) handleAliasesAction(w http.ResponseWriter,r *http.Request){
@@ -108,15 +108,15 @@ func (s *Server) handleAliasesAction(w http.ResponseWriter,r *http.Request){
 	writeJSON(w,map[string]any{"error":"alias and model required"})
 }
 
-func (s *Server) handlePlugins(w http.ResponseWriter,r *http.Request){ writeJSON(w,s.getJSONSetting("plugins",[]any{})) }
+func (s *Server) handlePlugins(w http.ResponseWriter,r *http.Request){ writeData(w,s.getJSONSetting("plugins",[]any{})) }
 func (s *Server) handlePluginsAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); arr:=s.getJSONSetting("plugins",[]any{}).([]any); action,_:=in["action"].(string); if action=="create"||action=="install"{ in["id"]=uuid.New().String(); in["enabled"]=true; arr=append(arr,in); s.setJSONSetting("plugins",arr); writeJSON(w,map[string]any{"status":"created"}); return}; writeJSON(w,map[string]any{"status":"ok"}) }
-func (s *Server) handlePluginStore(w http.ResponseWriter,r *http.Request){ writeJSON(w,[]map[string]any{{"name":"Request Logger","category":"observability","author":"Lintasan","version":"1.0.0","description":"Log request metadata","tags":[]string{"logs","debug"}},{"name":"Rate Limiter","category":"security","author":"Lintasan","version":"1.0.0","description":"Basic per-key rate limits","tags":[]string{"rate-limit"}},{"name":"Cost Guard","category":"cost","author":"Lintasan","version":"1.0.0","description":"Block expensive requests","tags":[]string{"cost"}}}) }
+func (s *Server) handlePluginStore(w http.ResponseWriter,r *http.Request){ writeData(w,[]map[string]any{{"name":"Request Logger","category":"observability","author":"Lintasan","version":"1.0.0","description":"Log request metadata","tags":[]string{"logs","debug"}},{"name":"Rate Limiter","category":"security","author":"Lintasan","version":"1.0.0","description":"Basic per-key rate limits","tags":[]string{"rate-limit"}},{"name":"Cost Guard","category":"cost","author":"Lintasan","version":"1.0.0","description":"Block expensive requests","tags":[]string{"cost"}}}) }
 func (s *Server) handlePluginStoreAction(w http.ResponseWriter,r *http.Request){ s.handlePluginsAction(w,r) }
 func (s *Server) handlePluginGenerate(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); name,_:=in["name"].(string); if name==""{name="generated-plugin"}; code:=fmt.Sprintf("// %s\nexport default async function plugin(ctx) {\n  return ctx.next();\n}\n",name); writeJSON(w,map[string]any{"name":name,"code":code,"model":"lintasan-go-template"}) }
 
-func (s *Server) handleTeams(w http.ResponseWriter,r *http.Request){ writeJSON(w,s.getJSONSetting("teams",[]any{})) }
+func (s *Server) handleTeams(w http.ResponseWriter,r *http.Request){ writeData(w,s.getJSONSetting("teams",[]any{})) }
 func (s *Server) handleTeamsAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); arr:=s.getJSONSetting("teams",[]any{}).([]any); if in["action"]=="create"||in["name"]!=nil{ in["id"]=uuid.New().String(); in["members"]=[]any{}; arr=append(arr,in); s.setJSONSetting("teams",arr); writeJSON(w,map[string]any{"status":"created"}); return}; writeJSON(w,map[string]any{"status":"ok"}) }
-func (s *Server) handleUsers(w http.ResponseWriter,r *http.Request){ writeJSON(w,s.getJSONSetting("users",[]any{})) }
+func (s *Server) handleUsers(w http.ResponseWriter,r *http.Request){ writeData(w,s.getJSONSetting("users",[]any{})) }
 func (s *Server) handleUsersAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); arr:=s.getJSONSetting("users",[]any{}).([]any); if in["action"]=="create"||in["username"]!=nil{ in["id"]=uuid.New().String(); in["active"]=true; arr=append(arr,in); s.setJSONSetting("users",arr); writeJSON(w,map[string]any{"status":"created"}); return}; writeJSON(w,map[string]any{"status":"ok"}) }
 func (s *Server) handleWebhooks(w http.ResponseWriter,r *http.Request){ writeData(w,s.getJSONSetting("webhooks",map[string]any{"webhooks":[]any{},"history":[]any{}})) }
 func (s *Server) handleWebhooksAction(w http.ResponseWriter,r *http.Request){

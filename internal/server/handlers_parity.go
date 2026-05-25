@@ -119,8 +119,8 @@ func (s *Server) handleModelsManual(w http.ResponseWriter, r *http.Request){
 }
 func (s *Server) handleCache(w http.ResponseWriter,r *http.Request){ var emb,sem int; s.db.Conn().QueryRow("SELECT COUNT(*) FROM embedding_cache").Scan(&emb); s.db.Conn().QueryRow("SELECT COUNT(*) FROM semantic_cache").Scan(&sem); writeJSON(w,map[string]any{"embedding_cache":emb,"semantic_cache":sem,"total":emb+sem}) }
 func (s *Server) handleCacheAction(w http.ResponseWriter,r *http.Request){ s.db.Conn().Exec("DELETE FROM embedding_cache"); s.db.Conn().Exec("DELETE FROM semantic_cache"); writeJSON(w,map[string]any{"success":true,"status":"cleared"}) }
-func (s *Server) handleCosts(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"today":0,"month":0,"currency":"USD","by_model":[]any{}}) }
-func (s *Server) handleQuota(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"limits":s.getJSONSetting("quota_limits",map[string]any{}),"usage":map[string]any{"requests_today":0,"tokens_today":0}}) }
+func (s *Server) handleCosts(w http.ResponseWriter,r *http.Request){ writeData(w,map[string]any{"today":0,"month":0,"currency":"USD","by_model":[]any{}}) }
+func (s *Server) handleQuota(w http.ResponseWriter,r *http.Request){ writeData(w,[]any{map[string]any{"limits":s.getJSONSetting("quota_limits",map[string]any{}),"usage":map[string]any{"requests_today":0,"tokens_today":0}}}) }
 func (s *Server) handleAudit(w http.ResponseWriter,r *http.Request){
 	rows,_:=s.db.Conn().Query("SELECT id, action, actor, resource, details, created_at FROM audit_events ORDER BY created_at DESC LIMIT 100")
 	events:=[]map[string]any{}
@@ -130,7 +130,7 @@ func (s *Server) handleAudit(w http.ResponseWriter,r *http.Request){
 func (s *Server) handleFeatures(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"features":map[string]bool{"proxy":true,"streaming":true,"dashboard":true,"fallback":true,"cache":true,"plugins":true,"teams":true}}) }
 func (s *Server) handleFeatureStats(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"enabled":7,"total":7}) }
 func (s *Server) handleAnalyticsRealtime(w http.ResponseWriter,r *http.Request){ s.handleAnalytics(w,r) }
-func (s *Server) handleAnalyticsCombos(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"combos":s.getJSONSetting("combos",[]any{}),"stats":[]any{}}) }
+func (s *Server) handleAnalyticsCombos(w http.ResponseWriter,r *http.Request){ writeData(w,map[string]any{"combos":s.getJSONSetting("combos",[]any{}),"stats":[]any{}}) }
 func (s *Server) handleAnalyticsStream(w http.ResponseWriter,r *http.Request){ w.Header().Set("Content-Type","text/event-stream"); fmt.Fprintf(w,"data: {\"status\":\"connected\"}\n\n") }
 func (s *Server) handleChatTest(w http.ResponseWriter,r *http.Request){ s.proxy.HandleChatCompletions(w,r) }
 func (s *Server) handlePromptRouting(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); writeJSON(w,map[string]any{"recommended_model":"auto","reason":"Go heuristic routing placeholder","input":in}) }
