@@ -20,6 +20,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/config"
 	"github.com/sanhaji182/lintasan-go/internal/db"
 	"github.com/sanhaji182/lintasan-go/internal/fallback"
+	"github.com/sanhaji182/lintasan-go/internal/lb"
 	"github.com/sanhaji182/lintasan-go/internal/optimizer"
 	"github.com/sanhaji182/lintasan-go/internal/plugin"
 	"github.com/sanhaji182/lintasan-go/internal/quota"
@@ -39,6 +40,7 @@ type ProxyHandler struct {
 	rl        *ratelimit.Limiter          // rate limiter
 	fb        *fallback.Engine            // fallback chain engine
 	cmb       *combo.Engine               // hybrid combo engine
+	lb        *lb.LoadBalancer            // load balancer
 	breakers  map[string]*circuit.Breaker // per-connection circuit breakers
 	breakerMu sync.RWMutex               // protects breakers map
 }
@@ -67,6 +69,7 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 		ph.cmb.LoadFromSettings(cbJSON)
 	}
 	ph.breakers = make(map[string]*circuit.Breaker)
+	ph.lb = ph.initLoadBalancer()
 	return ph
 }
 
@@ -105,6 +108,82 @@ func (p *ProxyHandler) getBreaker(connID string) *circuit.Breaker {
 	b := circuit.New(3, 30*time.Second)
 	p.breakers[connID] = b
 	return b
+}
+
+// initLoadBalancer loads all active connections from the DB and creates a load balancer.
+// Default strategy is Priority; can be changed via the "lb_strategy" setting.
+func (p *ProxyHandler) initLoadBalancer() *lb.LoadBalancer {
+	rows, err := p.db.Conn().Query(`
+		SELECT id, priority, is_active
+		FROM connections
+		WHERE is_active = 1
+		ORDER BY priority DESC
+	`)
+	if err != nil {
+		// DB not ready yet, return empty LB
+		return lb.New(lb.Priority, nil)
+	}
+	defer rows.Close()
+
+	var conns []lb.Connection
+	for rows.Next() {
+		var c lb.Connection
+		var isActive int
+		if err := rows.Scan(&c.ID, &c.Priority, &isActive); err != nil {
+			continue
+		}
+		c.Active = isActive == 1
+		c.Weight = 1 // default weight; override if weight column exists
+		conns = append(conns, c)
+	}
+
+	// Determine strategy from settings
+	strategy := lb.Priority
+	if s, err := p.db.GetSetting("lb_strategy"); err == nil && s != "" {
+		switch lb.Strategy(s) {
+		case lb.Priority, lb.RoundRobin, lb.LeastLatency, lb.Weighted, lb.Random:
+			strategy = lb.Strategy(s)
+		}
+	}
+
+	return lb.New(strategy, conns)
+}
+
+// UpdateLoadBalancerConnections refreshes the LB connection list from the DB.
+// Call this after connections are added/removed/modified.
+func (p *ProxyHandler) UpdateLoadBalancerConnections() {
+	conns, err := p.loadLBConnections()
+	if err != nil || len(conns) == 0 {
+		return
+	}
+	p.lb.UpdateConnections(conns)
+}
+
+// loadLBConnections loads connections from the DB for the load balancer.
+func (p *ProxyHandler) loadLBConnections() ([]lb.Connection, error) {
+	rows, err := p.db.Conn().Query(`
+		SELECT id, priority, is_active
+		FROM connections
+		WHERE is_active = 1
+		ORDER BY priority DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var conns []lb.Connection
+	for rows.Next() {
+		var c lb.Connection
+		var isActive int
+		if err := rows.Scan(&c.ID, &c.Priority, &isActive); err != nil {
+			continue
+		}
+		c.Active = isActive == 1
+		c.Weight = 1
+		conns = append(conns, c)
+	}
+	return conns, nil
 }
 
 func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -253,6 +332,18 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		http.Error(w, fmt.Sprintf(`{"error":"no route found for model %s"}`, model), http.StatusNotFound)
 		return
 	}
+
+	// Use load balancer to pick best connection from candidates
+	if lbConn, lbErr := p.lb.Pick(); lbErr == nil && lbConn != nil {
+		for i, c := range candidates {
+			if c.ID == lbConn.ID {
+				if i > 0 {
+					candidates[0], candidates[i] = candidates[i], candidates[0]
+				}
+				break
+			}
+		}
+	}
 	req["model"] = resolvedModel
 	body, _ = json.Marshal(req)
 
@@ -339,6 +430,10 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		// Success! Record to breaker
 		breaker.Success()
+
+		// Record latency for load balancer
+		latencyMs := float64(time.Since(start).Milliseconds())
+		p.lb.RecordLatency(conn.ID, latencyMs)
 
 		// Token counting from response headers
 		var tokensIn, tokensOut int
