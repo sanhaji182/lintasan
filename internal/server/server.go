@@ -145,9 +145,10 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health, dashboard, and dashboard API
+		// Skip auth for health, dashboard, auth, and dashboard API
 		if r.URL.Path == "/health" || r.URL.Path == "/" ||
-			strings.HasPrefix(r.URL.Path, "/api/dashboard/") {
+			strings.HasPrefix(r.URL.Path, "/api/dashboard/") ||
+			strings.HasPrefix(r.URL.Path, "/api/auth/") {
 			next.ServeHTTP(w, r)
 			return
 		}
