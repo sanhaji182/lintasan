@@ -60,6 +60,7 @@ func (s *Server) registerParityRoutes() {
     s.mux.HandleFunc("POST /api/v1/audio/speech", s.proxy.HandleAudioSpeech)
     s.mux.HandleFunc("POST /api/v1/audio/transcriptions", s.proxy.HandleAudioTranscriptions)
     s.mux.HandleFunc("POST /api/web-search", s.handleWebSearch)
+    s.mux.HandleFunc("GET /api/favicon", s.handleFaviconProxy)
 }
 
 func (s *Server) handleOverviewStats(w http.ResponseWriter, r *http.Request){ s.handleStats(w,r) }
@@ -368,3 +369,39 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter,r *http.Request){ writeJ
 func (s *Server) handleTeamByID(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"success":true,"id":r.PathValue("id")}) }
 func (s *Server) handleTeamMembers(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"team_id":r.PathValue("id"),"members":[]any{}}) }
 func (s *Server) handleUserByID(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"success":true,"id":r.PathValue("id")}) }
+
+// handleFaviconProxy fetches favicons from Google server-side and caches them.
+// This avoids browser-level CORS/blocks that prevent direct loading.
+var faviconCache = map[string][]byte{}
+
+func (s *Server) handleFaviconProxy(w http.ResponseWriter, r *http.Request) {
+	domain := r.URL.Query().Get("domain")
+	if domain == "" {
+		http.Error(w, "domain is required", 400)
+		return
+	}
+	// Cache hit
+	if data, ok := faviconCache[domain]; ok {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(data)
+		return
+	}
+	// Fetch from Google
+	url := "https://www.google.com/s2/favicons?domain=" + domain + "&sz=32"
+	resp, err := http.Get(url)
+	if err != nil {
+		http.Error(w, "favicon fetch failed", 502)
+		return
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil || len(data) == 0 || resp.StatusCode != 200 {
+		http.Error(w, "favicon unavailable", 404)
+		return
+	}
+	faviconCache[domain] = data
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Write(data)
+}
