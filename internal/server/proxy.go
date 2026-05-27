@@ -18,13 +18,16 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/cache"
 	"github.com/sanhaji182/lintasan-go/internal/circuit"
 	"github.com/sanhaji182/lintasan-go/internal/combo"
+	"github.com/sanhaji182/lintasan-go/internal/compress"
 	"github.com/sanhaji182/lintasan-go/internal/config"
 	"github.com/sanhaji182/lintasan-go/internal/db"
 	"github.com/sanhaji182/lintasan-go/internal/fallback"
 	"github.com/sanhaji182/lintasan-go/internal/lb"
 	"github.com/sanhaji182/lintasan-go/internal/memory"
+	"github.com/sanhaji182/lintasan-go/internal/mlrouter"
 	"github.com/sanhaji182/lintasan-go/internal/optimizer"
 	"github.com/sanhaji182/lintasan-go/internal/plugin"
+	"github.com/sanhaji182/lintasan-go/internal/quality"
 	"github.com/sanhaji182/lintasan-go/internal/quota"
 	"github.com/sanhaji182/lintasan-go/internal/ratelimit"
 	"github.com/sanhaji182/lintasan-go/internal/reasoning"
@@ -41,13 +44,16 @@ type ProxyHandler struct {
 	quota  *quota.QuotaTracker
 	client *http.Client
 
-	rl        *ratelimit.Limiter          // rate limiter
-	fb        *fallback.Engine            // fallback chain engine
-	cmb       *combo.Engine               // hybrid combo engine
-	lb        *lb.LoadBalancer            // load balancer
-	breakers  map[string]*circuit.Breaker // per-connection circuit breakers
-	breakerMu sync.RWMutex               // protects breakers map
-	mem       *memory.MemoryStore         // vector memory (nil if Redis unavailable)
+	rl         *ratelimit.Limiter          // rate limiter
+	fb         *fallback.Engine            // fallback chain engine
+	cmb        *combo.Engine               // hybrid combo engine
+	lb         *lb.LoadBalancer            // load balancer
+	breakers   map[string]*circuit.Breaker // per-connection circuit breakers
+	breakerMu  sync.RWMutex               // protects breakers map
+	mem        *memory.MemoryStore         // vector memory (nil if Redis unavailable)
+	compressor *compress.Compressor        // context compression
+	qf         *quality.Filter             // quality filter for multi-shot
+	mlr        mlrouter.ModelPair          // ML router model pair config
 }
 
 func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
@@ -77,6 +83,32 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 	ph.breakers = make(map[string]*circuit.Breaker)
 	ph.lb = ph.initLoadBalancer()
 	ph.mem = memory.NewLazy(memory.Config{Addr: ""})
+
+	// Initialize context compressor with default settings
+	// These can be overridden via settings if needed
+	ph.compressor = compress.New(8000, 6, 8000)
+
+	// Initialize quality filter for multi-shot routing
+	qfThreshold := 0.4
+	if v, err := database.GetSetting("quality_filter_threshold"); err == nil && v != "" {
+		if t, err := strconv.ParseFloat(v, 64); err == nil && t > 0 && t < 1 {
+			qfThreshold = t
+		}
+	}
+	ph.qf = quality.New(qfThreshold, quality.Weights{})
+
+	// ML router model pair from settings
+	ph.mlr = mlrouter.ModelPair{
+		CheapModel:     ph.getSettingFromDB(database, "ml_router_cheap_model", "gpt-4o-mini"),
+		ExpensiveModel: ph.getSettingFromDB(database, "ml_router_expensive_model", "gpt-4o"),
+		Threshold:      0.5,
+	}
+	if v, err := database.GetSetting("ml_router_threshold"); err == nil && v != "" {
+		if t, err := strconv.ParseFloat(v, 64); err == nil && t > 0 && t < 1 {
+			ph.mlr.Threshold = t
+		}
+	}
+
 	return ph
 }
 
@@ -95,6 +127,14 @@ type Connection struct {
 
 func (p *ProxyHandler) getSetting(key, def string) string {
 	val, err := p.db.GetSetting(key)
+	if err != nil || val == "" { return def }
+	return val
+}
+
+// getSettingFromDB is a static helper that reads a setting from a DB instance.
+// Used during initialization before ProxyHandler is fully constructed.
+func (p *ProxyHandler) getSettingFromDB(database *db.DB, key, def string) string {
+	val, err := database.GetSetting(key)
 	if err != nil || val == "" { return def }
 	return val
 }
@@ -402,6 +442,42 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	// Context compression: compress messages if token count exceeds threshold
+	var compressionStats compress.Stats
+	compressionEnabled := p.getSetting("context_compression_enabled", "true") == "true"
+	if compressionEnabled && p.compressor != nil {
+		// Re-parse body to get messages
+		var compressReq map[string]any
+		if err := json.Unmarshal(body, &compressReq); err == nil {
+			if messages, ok := compressReq["messages"].([]any); ok {
+				// Convert []any to []map[string]any
+				msgs := make([]map[string]any, 0, len(messages))
+				for _, m := range messages {
+					if msgMap, ok := m.(map[string]any); ok {
+						msgs = append(msgs, msgMap)
+					}
+				}
+
+				compressed, stats := p.compressor.Compress(msgs)
+				compressionStats = stats
+
+				if stats.WasCompressed {
+					// Update messages in request
+					anyMsgs := make([]any, len(compressed))
+					for i, m := range compressed {
+						anyMsgs[i] = m
+					}
+					compressReq["messages"] = anyMsgs
+					body, _ = json.Marshal(compressReq)
+
+					fmt.Fprintf(os.Stderr, "Context compressed: %d -> %d tokens (%.1f%% reduction, %d -> %d messages)\n",
+						stats.OriginalTokens, stats.CompressedTokens,
+						stats.CompressionRatio*100, stats.MessagesBefore, stats.MessagesAfter)
+				}
+			}
+		}
+	}
+
 	var lastErr string
 	var lastStatusCode int
 	for i, conn := range candidates {
@@ -503,6 +579,16 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			for _, vv := range v {
 				w.Header().Add(k, vv)
 			}
+		}
+
+		// Add context compression headers if compression was applied
+		if compressionStats.WasCompressed {
+			w.Header().Set("X-Lintasan-Compressed", "true")
+			w.Header().Set("X-Lintasan-Original-Tokens", fmt.Sprintf("%d", compressionStats.OriginalTokens))
+			w.Header().Set("X-Lintasan-Compressed-Tokens", fmt.Sprintf("%d", compressionStats.CompressedTokens))
+			w.Header().Set("X-Lintasan-Compression-Ratio", fmt.Sprintf("%.2f", compressionStats.CompressionRatio))
+			w.Header().Set("X-Lintasan-Messages-Before", fmt.Sprintf("%d", compressionStats.MessagesBefore))
+			w.Header().Set("X-Lintasan-Messages-After", fmt.Sprintf("%d", compressionStats.MessagesAfter))
 		}
 
 		if stream {
