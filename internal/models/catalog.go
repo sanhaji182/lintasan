@@ -157,7 +157,7 @@ func Catalog() []ProviderInfo {
 			},
 		},
 		{
-			ID: "commandcode", Name: "CommandCode Alpha", BaseURL: "https://api.commandcode.dev",
+			ID: "commandcode", Name: "CommandCode Alpha", BaseURL: "https://api.commandcode.ai",
 			Format: "commandcode", AuthHeader: "Authorization", AuthPrefix: "Bearer ",
 			Models: []ModelInfo{
 				{ID: "cc-claude-sonnet-4", Name: "Claude Sonnet 4 (CC)", ContextWindow: 200000, MaxTokens: 8192, InputPrice: 3.00, OutputPrice: 15.00, Capabilities: []string{"chat", "vision", "tools", "streaming"}},

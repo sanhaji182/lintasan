@@ -20,7 +20,11 @@ type Config struct {
 // New creates a MemoryStore connected to Redis.
 func New(cfg Config) (*MemoryStore, error) {
 	if cfg.Addr == "" {
-		cfg.Addr = "127.0.0.1:6379"
+		if addr := os.Getenv("REDIS_ADDR"); addr != "" {
+			cfg.Addr = addr
+		} else {
+			cfg.Addr = "127.0.0.1:6379"
+		}
 	}
 	client, err := NewClient(cfg.Addr)
 	if err != nil {
@@ -41,7 +45,11 @@ func New(cfg Config) (*MemoryStore, error) {
 // must check Available() before using Store methods.
 func NewLazy(cfg Config) *MemoryStore {
 	if cfg.Addr == "" {
-		cfg.Addr = "127.0.0.1:6379"
+		if addr := os.Getenv("REDIS_ADDR"); addr != "" {
+			cfg.Addr = addr
+		} else {
+			cfg.Addr = "127.0.0.1:6379"
+		}
 	}
 	client, err := NewClient(cfg.Addr)
 	if err != nil {
