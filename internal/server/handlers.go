@@ -292,6 +292,87 @@ func (s *Server) handleCreateCombo(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"data": input, "id": input["id"].(string), "status": "created"})
 }
 
+func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, `{"error":"id is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	var input map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Get existing combos
+	combosJSON, _ := s.db.GetSetting("combos")
+	var combos []map[string]any
+	if combosJSON != "" {
+		json.Unmarshal([]byte(combosJSON), &combos)
+	}
+
+	// Find and update the combo
+	found := false
+	for i, combo := range combos {
+		if combo["id"] == id {
+			// Preserve the id
+			input["id"] = id
+			combos[i] = input
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		http.Error(w, `{"error":"combo not found"}`, http.StatusNotFound)
+		return
+	}
+
+	newJSON, _ := json.Marshal(combos)
+	s.db.SetSetting("combos", string(newJSON))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"data": input, "id": id, "status": "updated"})
+}
+
+func (s *Server) handleDeleteCombo(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, `{"error":"id is required"}`, http.StatusBadRequest)
+		return
+	}
+
+	// Get existing combos
+	combosJSON, _ := s.db.GetSetting("combos")
+	var combos []map[string]any
+	if combosJSON != "" {
+		json.Unmarshal([]byte(combosJSON), &combos)
+	}
+
+	// Filter out the combo with matching id
+	newCombos := make([]map[string]any, 0, len(combos))
+	found := false
+	for _, combo := range combos {
+		if combo["id"] == id {
+			found = true
+		} else {
+			newCombos = append(newCombos, combo)
+		}
+	}
+
+	if !found {
+		http.Error(w, `{"error":"combo not found"}`, http.StatusNotFound)
+		return
+	}
+
+	newJSON, _ := json.Marshal(newCombos)
+	s.db.SetSetting("combos", string(newJSON))
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"id": id, "status": "deleted"})
+}
+
 // Stats
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	var totalRequests, cachedRequests int

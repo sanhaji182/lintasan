@@ -1,5 +1,12 @@
 {{define "pages/routing.gohtml"}}
-<div x-data="{ routes: null }" x-init="fetchRoutes()">
+<div x-data="{
+  routes: null,
+  showModal: false,
+  editMode: false,
+  editId: null,
+  formData: { name: '', models: '', strategy: 'priority', provider: '', is_active: true },
+  toasts: []
+}" x-init="fetchRoutes()">
   <div class="page-header">
     <div>
       <h1 class="page-title">
@@ -8,6 +15,10 @@
       </h1>
       <p class="page-desc">Configure routing priority — drag rows to reorder. Higher priority providers are tried first.</p>
     </div>
+    <button class="btn btn-primary" x-on:click="openCreateModal()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+      Add Rule
+    </button>
   </div>
 
   <div class="card">
@@ -16,40 +27,111 @@
         <tr>
           <th></th>
           <th>Priority</th>
+          <th>Name</th>
           <th>Model</th>
           <th>Provider</th>
+          <th>Strategy</th>
           <th>Status</th>
           <th>Latency</th>
+          <th></th>
         </tr>
       </thead>
       <tbody id="routing-rows">
         <template x-if="!routes">
-          <tr><td colspan="6" class="text-center"><div class="spinner mx-auto"></div></td></tr>
+          <tr><td colspan="9" class="text-center"><div class="spinner mx-auto"></div></td></tr>
         </template>
         <template x-if="routes && routes.length === 0">
-          <tr><td colspan="6" class="text-center"><div class="empty-state"><p>No routing rules configured</p></div></td></tr>
+          <tr><td colspan="9" class="text-center"><div class="empty-state"><p>No routing rules configured</p></div></td></tr>
         </template>
         <template x-for="(route, index) in routes" :key="route.id">
           <tr data-id="route.id">
             <td class="drag-handle">⋮⋮</td>
             <td class="cell-priority" x-text="routes.length - index"></td>
-            <td class="cell-model" x-text="route.model || '—'"></td>
-            <td class="cell-provider" x-text="route.provider_name || route.provider || '—'"></td>
-            <td><span class="badge" :class="route.is_active ? 'badge-success' : 'badge-error'" x-text="route.is_active ? 'Active' : 'Inactive'"></span></td>
+            <td class="cell-name" x-text="route.name || '—'"></td>
+            <td class="cell-model" x-text="route.models || route.model || '—'"></td>
+            <td class="cell-provider" x-text="route.provider || route.provider_name || '—'"></td>
+            <td class="cell-strategy" x-text="route.strategy || 'priority'"></td>
+            <td><span class="badge" :class="route.is_active !== false ? 'badge-success' : 'badge-error'" x-text="route.is_active !== false ? 'Active' : 'Inactive'"></span></td>
             <td class="cell-latency" x-text="route.latency_ms ? route.latency_ms + 'ms' : '—'"></td>
+            <td class="cell-actions">
+              <button class="btn btn-ghost btn-sm" x-on:click="openEditModal(route)">Edit</button>
+              <button class="btn btn-ghost btn-sm btn-danger-text" x-on:click="deleteRoute(route.id)">Delete</button>
+            </td>
           </tr>
         </template>
       </tbody>
     </table>
   </div>
 
+  <!-- Create/Edit Modal -->
+  <template x-if="showModal">
+    <div>
+      <div class="modal-backdrop" x-on:click="closeModal()"></div>
+      <div class="modal-panel" x-on:click.outside="closeModal()">
+        <div class="modal-header">
+          <h2 class="modal-title" x-text="editMode ? 'Edit Routing Rule' : 'Create Routing Rule'"></h2>
+          <button class="btn-icon" x-on:click="closeModal()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <form x-on:submit.prevent="saveRoute()">
+          <template x-if="editMode">
+            <input type="hidden" name="id" x-bind:value="editId">
+          </template>
+          
+          <div class="form-group">
+            <label class="form-label">Rule Name</label>
+            <input type="text" name="name" x-model="formData.name" placeholder="e.g., coding, cheap, always-on" class="form-input">
+            <p class="form-hint">Use this name as the model in API requests</p>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Models (comma-separated)</label>
+            <input type="text" name="models" x-model="formData.models" placeholder="e.g., gpt-4o, claude-3-opus, deepseek-v4" class="form-input">
+            <p class="form-hint">Fallback models in priority order (left = highest priority)</p>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Strategy</label>
+            <select name="strategy" x-model="formData.strategy" class="form-input">
+              <option value="priority">Priority (default)</option>
+              <option value="round-robin">Round-robin</option>
+              <option value="least-connections">Least-connections</option>
+              <option value="latency">Latency-based</option>
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label class="checkbox-label">
+              <input type="checkbox" x-model="formData.is_active">
+              <span>Active</span>
+            </label>
+          </div>
+          
+          <div class="modal-actions">
+            <button type="button" class="btn btn-secondary" x-on:click="closeModal()">Cancel</button>
+            <button type="submit" class="btn btn-primary" x-text="editMode ? 'Update' : 'Create'" x-bind:disabled="!formData.models.trim()"></button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </template>
+
+  <!-- Toast container -->
+  <div>
+    <template x-for="(t, i) in toasts" :key="i">
+      <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
+    </template>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
   <script>
     async function fetchRoutes() {
       try {
-        let r = await fetch('/api/routing');
+        let r = await fetch('/api/combos');
         if (r.ok) {
-          this.routes = await r.json();
+          let data = await r.json();
+          this.routes = data.data || data || [];
           this.$nextTick(initSortable);
         }
       } catch(e) { console.error('Routing fetch failed', e); }
@@ -71,7 +153,7 @@
                 priority: rows.length - i
               });
             });
-            fetch('/api/routing/reorder', {
+            fetch('/api/combos/reorder', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ routes: order })
@@ -80,18 +162,112 @@
         });
       }
     }
+
+    function openCreateModal() {
+      this.editMode = false;
+      this.editId = null;
+      this.formData = { name: '', models: '', strategy: 'priority', provider: '', is_active: true };
+      this.showModal = true;
+    }
+
+    function openEditModal(route) {
+      this.editMode = true;
+      this.editId = route.id;
+      this.formData = {
+        name: route.name || '',
+        models: route.models || route.model || '',
+        strategy: route.strategy || 'priority',
+        provider: route.provider || '',
+        is_active: route.is_active !== false
+      };
+      this.showModal = true;
+    }
+
+    function closeModal() {
+      this.showModal = false;
+      this.editMode = false;
+      this.editId = null;
+    }
+
+    async function saveRoute() {
+      try {
+        let method = this.editMode ? 'PUT' : 'POST';
+        let url = '/api/combos';
+        if (this.editMode) {
+          url += '?id=' + encodeURIComponent(this.editId);
+        }
+        
+        let body = {
+          name: this.formData.name,
+          models: this.formData.models,
+          strategy: this.formData.strategy,
+          is_active: this.formData.is_active
+        };
+        
+        let r = await fetch(url, {
+          method: method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        
+        if (r.ok) {
+          this.closeModal();
+          this.fetchRoutes();
+          this.toasts.push({ type: 'success', message: this.editMode ? 'Rule updated successfully' : 'Rule created successfully' });
+        } else {
+          let err = await r.json();
+          this.toasts.push({ type: 'error', message: 'Failed: ' + (err.error || 'Unknown error') });
+        }
+      } catch(e) { 
+        console.error('Save route failed', e);
+        this.toasts.push({ type: 'error', message: 'Network error' });
+      }
+    }
+
+    async function deleteRoute(id) {
+      if (!confirm('Delete this routing rule? This cannot be undone.')) return;
+      try {
+        let r = await fetch('/api/combos?id=' + encodeURIComponent(id), { method: 'DELETE' });
+        if (r.ok) {
+          this.fetchRoutes();
+          this.toasts.push({ type: 'success', message: 'Rule deleted' });
+        } else {
+          let err = await r.json();
+          this.toasts.push({ type: 'error', message: 'Failed: ' + (err.error || 'Unknown error') });
+        }
+      } catch(e) { 
+        console.error('Delete route failed', e);
+        this.toasts.push({ type: 'error', message: 'Network error' });
+      }
+    }
   </script>
   <style>
     .page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
     .page-title { font-size: 18px; font-weight: 700; color: var(--fg-0); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
     .page-desc { font-size: 13px; color: var(--fg-2); }
     .cell-priority { font-size: 13px; font-weight: 600; }
-    .cell-model { font-size: 13px; font-weight: 600; }
+    .cell-name { font-size: 13px; font-weight: 600; }
+    .cell-model { font-size: 12px; color: var(--fg-2); }
     .cell-provider { font-size: 12px; color: var(--fg-2); }
+    .cell-strategy { font-size: 11px; color: var(--fg-3); text-transform: capitalize; }
     .cell-latency { font-size: 12px; color: var(--fg-2); }
+    .cell-actions { display: flex; gap: 4px; }
     .drag-handle { cursor: grab; color: var(--fg-3); font-size: 16px; user-select: none; }
     .drag-handle:active { cursor: grabbing; }
     .sortable-ghost { opacity: 0.4; background: var(--primary); }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .modal-title { font-size: 15px; font-weight: 600; color: var(--fg-0); }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+    .btn-icon { background: none; border: none; padding: 4px; cursor: pointer; color: var(--fg-2); display: flex; align-items: center; justify-content: center; }
+    .btn-icon:hover { color: var(--fg-0); }
+    .btn-danger-text { color: var(--error) !important; }
+    .form-group { margin-bottom: 16px; }
+    .form-label { display: block; font-size: 11px; font-weight: 600; color: var(--fg-2); margin-bottom: 4px; }
+    .form-input { width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-body); color: var(--fg-0); font-size: 13px; }
+    .form-input:focus { outline: none; border-color: var(--primary); }
+    .form-hint { font-size: 11px; color: var(--fg-3); margin-top: 4px; }
+    .checkbox-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .checkbox-label input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--primary); }
   </style>
 </div>
 {{end}}

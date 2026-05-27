@@ -15,8 +15,9 @@
 
   async init() {
     try {
-      let r = await fetch('/api/connections');
-      this.models = await r.json();
+      let r = await fetch('/v1/models');
+      let data = await r.json();
+      this.models = data.data || [];
     } catch(e) {
       console.error('Failed to load models', e);
     }
@@ -67,9 +68,13 @@
         for (let line of lines) {
           line = line.trim();
           if (!line.startsWith('data: ')) continue;
-          let data = line.sliceMsg += delta.content;
-              this.streamText = assistantMsg;
-            }
+          let data = line.slice(6).trim();
+          if (data === '[DONE]') continue;
+          try {
+            let parsed = JSON.parse(data);
+            let delta = parsed.choices?.[0]?.delta?.content || '';
+            assistantMsg += delta;
+            this.streamText = assistantMsg;
           } catch(e) {}
         }
       }
