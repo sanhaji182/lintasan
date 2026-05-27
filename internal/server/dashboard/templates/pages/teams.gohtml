@@ -1,15 +1,15 @@
 {{define "pages/teams.gohtml"}}
-<div x-data="{ showCreateModal: false, newTeamName: '' }">
-  <div>
+<div x-data="{ showCreateModal: false, newTeamName: '', teams: null, toasts: [] }" x-init="fetchTeams()">
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1>👥 Teams</h1>
-      <p>Manage teams and their rate limits.</p>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">👥 Teams</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Manage teams and their rate limits.</p>
     </div>
     <button class="btn btn-primary" x-on:click="showCreateModal = true">+ Create Team</button>
   </div>
 
   <!-- Teams Table -->
-  <div class="card" id="teams-table" hx-get="/api/teams" hx-trigger="load" hx-swap="outerHTML">
+  <div class="card">
     <table>
       <thead>
         <tr>
@@ -21,11 +21,24 @@
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td colspan="5">
-            <div class="mx-auto spinner"></div>
-          </td>
-        </tr>
+        <template x-if="!teams">
+          <tr><td colspan="5" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="teams && teams.length === 0">
+          <tr><td colspan="5" class="text-center p-6"><div class="empty-state"><p>No teams yet</p></div></td></tr>
+        </template>
+        <template x-for="team in teams" :key="team.id">
+          <tr>
+            <td class="text-sm font-medium" x-text="team.name"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="team.members || 0"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="team.rate_limit ? team.rate_limit + '/min' : 'Unlimited'"></td>
+            <td class="text-xs text-[var(--color-fg-3)]" x-text="team.created_at || '—'"></td>
+            <td>
+              <button class="btn btn-ghost btn-sm" x-on:click="editTeam(team)">Edit</button>
+              <button class="btn btn-ghost btn-sm text-red-500" x-on:click="deleteTeam(team.id)">Delete</button>
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
@@ -35,17 +48,19 @@
     <div>
       <div class="modal-backdrop" x-on:click="showCreateModal = false"></div>
       <div class="modal-panel" x-on:click.outside="showCreateModal = false">
-        <div>
-          <h2>Create Team</h2>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold text-[var(--color-fg-0)]" x-text="editMode ? 'Edit Team' : 'Create Team'"></h2>
           <button class="btn-icon text-lg" x-on:click="showCreateModal = false">&times;</button>
         </div>
-        <form hx-post="/api/teams" hx-target="#teams-table" hx-swap="outerHTML"
-              x-on:submit="showCreateModal = false">
+        <form x-on:submit="saveTeam()">
+          <template x-if="editMode">
+            <input type="hidden" name="id" x-bind:value="editId">
+          </template>
           <label>Team Name</label>
           <input type="text" name="name" x-model="newTeamName" placeholder="e.g., Engineering, Support">
           <label>Rate Limit (requests/min)</label>
-          <input type="number" name="rate_limit" placeholder="Leave empty for unlimited" min="0">
-          <div>
+          <input type="number" name="rate_limit" x-model="newRateLimit" placeholder="Leave empty for unlimited" min="0">
+          <div class="flex gap-2 justify-end mt-4">
             <button type="button" class="btn btn-secondary" x-on:click="showCreateModal = false">Cancel</button>
             <button type="submit" class="btn btn-primary" x-bind:disabled="!newTeamName.trim()">Create</button>
           </div>
@@ -53,5 +68,63 @@
       </div>
     </div>
   </template>
+
+  <!-- Toast container -->
+  <div>
+    <template x-for="(t, i) in toasts" :key="i">
+      <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
+    </template>
+  </div>
 </div>
+
+<script>
+async function fetchTeams() {
+  try {
+    let r = await fetch('/api/teams');
+    if (r.ok) {
+      this.teams = await r.json();
+    }
+  } catch(e) { console.error('Teams fetch failed', e); }
+}
+
+function editTeam(team) {
+  this.showCreateModal = true;
+  this.editMode = true;
+  this.editId = team.id;
+  this.newTeamName = team.name;
+  this.newRateLimit = team.rate_limit || '';
+}
+
+async function saveTeam() {
+  try {
+    let method = this.editMode ? 'PUT' : 'POST';
+    let r = await fetch('/api/teams', {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        name: this.newTeamName,
+        rate_limit: this.newRateLimit ? parseInt(this.newRateLimit) : null
+      })
+    });
+    if (r.ok) {
+      this.showCreateModal = false;
+      this.newTeamName = '';
+      this.newRateLimit = '';
+      this.fetchTeams();
+      this.toasts.push({ type: 'success', message: 'Team saved successfully' });
+    }
+  } catch(e) { console.error('Save team failed', e); }
+}
+
+async function deleteTeam(id) {
+  if (!confirm('Delete this team?')) return;
+  try {
+    let r = await fetch('/api/teams?id=' + id, { method: 'DELETE' });
+    if (r.ok) {
+      this.fetchTeams();
+      this.toasts.push({ type: 'success', message: 'Team deleted' });
+    }
+  } catch(e) { console.error('Delete team failed', e); }
+}
+</script>
 {{end}}

@@ -1,55 +1,78 @@
 {{define "pages/plugins.gohtml"}}
-<div x-data="{ showConfirm: false, installPlugin: null }">
-  <h1>🧩 Plugins</h1>
-  <p>Extend Lintasan with custom plugins.</p>
+<div x-data="pluginsData()" x-init="fetchAll()">
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">🧩 Plugins</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Extend Lintasan with custom plugins.</p>
+    </div>
+  </div>
 
   <!-- Installed Plugins -->
   <div class="card mb-4">
-    <h2>Installed Plugins</h2>
-    <div id="installed-plugins" hx-get="/api/plugins" hx-trigger="load" hx-swap="outerHTML">
-      <table>
-        <thead>
+    <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Installed Plugins</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Version</th>
+          <th>Description</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-if="!installedPlugins">
+          <tr><td colspan="5" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="installedPlugins">
+          <template x-if="installedPlugins.length === 0">
+            <tr><td colspan="5" class="text-center p-6"><div class="empty-state"><p>No plugins installed</p></div></td></tr>
+          </template>
+        </template>
+        <template x-for="p in installedPlugins" :key="p.id">
           <tr>
-            <th>Name</th>
-            <th>Version</th>
-            <th>Description</th>
-            <th>Status</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td colspan="5">
-              <div class="mx-auto spinner"></div>
+            <td class="text-sm font-medium" x-text="p.name"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="'v' + (p.version || '0.0.0')"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="p.description || '—'"></td>
+            <td><span class="badge" :class="p.enabled ? 'badge-success' : 'badge-danger'" x-text="p.enabled ? 'Active' : 'Disabled'"></span></td>
+            <td>
+              <button class="btn btn-ghost btn-sm" x-on:click="togglePlugin(p)" x-text="p.enabled ? 'Disable' : 'Enable'"></button>
             </td>
           </tr>
-        </tbody>
-      </table>
-    </div>
+        </template>
+      </tbody>
+    </table>
   </div>
 
   <!-- Plugin Store -->
   <div class="card">
-    <h2>Plugin Store</h2>
-    <div id="plugin-store">
-      {{range .Plugins}}
-      <div class="card card-hover flex justify-between">
-        <div>
-          <div>{{.Name}}</div>
-          <div>{{.Description}}</div>
-          <div>v{{.Version}}</div>
+    <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Plugin Store</h2>
+    <div x-show="!storePlugins" class="text-center p-6">
+      <div class="spinner mx-auto"></div>
+    </div>
+    <div x-show="storePlugins" x-cloak>
+      <template x-if="storePlugins.length === 0">
+        <div class="empty-state">
+          <p>No plugins available in the store.</p>
         </div>
-        <button class="btn btn-primary btn-sm mt-3"
-                x-on:click="installPlugin = '{{.ID}}'; showConfirm = true">
-          Install
-        </button>
-      </div>
-      {{else}}
-      <div class="empty-state">
-        <div class="empty-state-icon">🧩</div>
-        <p>No plugins available in the store.</p>
-      </div>
-      {{end}}
+      </template>
+      <template x-if="storePlugins.length > 0">
+        <div class="grid grid-cols-2 gap-3">
+          <template x-for="p in storePlugins" :key="p.name">
+            <div class="card flex items-center justify-between">
+              <div>
+                <div class="text-sm font-medium text-[var(--color-fg-0)]" x-text="p.name"></div>
+                <div class="text-xs text-[var(--color-fg-2)] mt-1" x-text="p.description || ''"></div>
+                <div class="text-xs text-[var(--color-fg-3)] mt-1">
+                  <span x-text="'v' + (p.version || '0.0.0')"></span>
+                  <span class="ml-2" x-text="p.author ? 'by ' + p.author : ''"></span>
+                </div>
+              </div>
+              <button class="btn btn-primary btn-sm" x-on:click="confirmInstall(p)">Install</button>
+            </div>
+          </template>
+        </div>
+      </template>
     </div>
   </div>
 
@@ -58,25 +81,81 @@
     <div>
       <div class="modal-backdrop" x-on:click="showConfirm = false"></div>
       <div class="modal-panel" x-on:click.outside="showConfirm = false">
-        <div>
-          <h2>Install Plugin</h2>
-          <button class="btn-icon text-lg" x-on:click="showConfirm = false">&times;</button>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold text-[var(--color-fg-0)]">Install Plugin</h2>
+          <button class="text-lg text-[var(--color-fg-3)] hover:text-[var(--color-fg-0)]" x-on:click="showConfirm = false">&times;</button>
         </div>
-        <p>Are you sure you want to install this plugin? It may have access to your API keys and data.</p>
-        <div>
+        <p class="text-sm text-[var(--color-fg-2)] mb-4">
+          Are you sure you want to install <strong x-text="installPlugin?.name"></strong>? It may have access to your API keys and data.
+        </p>
+        <div class="flex gap-2 justify-end">
           <button class="btn btn-secondary" x-on:click="showConfirm = false">Cancel</button>
-          <button class="btn btn-primary"
-                  hx-post="/api/plugins"
-                  hx-vals='{"id": ""}'
-                  hx-target="#installed-plugins"
-                  hx-swap="outerHTML"
-                  x-bind:hx-vals="'{\"id\":\"' + installPlugin + '\"}'"
-                  x-on:click="showConfirm = false">
-            Install
-          </button>
+          <button class="btn btn-primary" x-on:click="doInstall()">Install</button>
         </div>
       </div>
     </div>
   </template>
 </div>
+
+<script>
+function pluginsData() {
+  return {
+    installedPlugins: null,
+    storePlugins: null,
+    showConfirm: false,
+    installPlugin: null,
+    async fetchAll() {
+      await Promise.all([this.fetchInstalled(), this.fetchStore()]);
+    },
+    async fetchInstalled() {
+      try {
+        let r = await fetch('/api/plugins');
+        if (r.ok) {
+          let data = await r.json();
+          this.installedPlugins = data.data || data || [];
+        }
+      } catch(e) { console.error('Fetch installed plugins failed', e); }
+    },
+    async fetchStore() {
+      try {
+        let r = await fetch('/api/plugins/store');
+        if (r.ok) {
+          let data = await r.json();
+          this.storePlugins = data.data || data || [];
+        }
+      } catch(e) { console.error('Fetch plugin store failed', e); }
+    },
+    confirmInstall(p) {
+      this.installPlugin = p;
+      this.showConfirm = true;
+    },
+    async doInstall() {
+      if (!this.installPlugin) return;
+      try {
+        let r = await fetch('/api/plugins', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'install',
+            name: this.installPlugin.name,
+            version: this.installPlugin.version,
+            description: this.installPlugin.description,
+            category: this.installPlugin.category,
+            author: this.installPlugin.author
+          })
+        });
+        if (r.ok) {
+          this.showConfirm = false;
+          this.installPlugin = null;
+          await this.fetchInstalled();
+        }
+      } catch(e) { console.error('Install plugin failed', e); }
+    },
+    async togglePlugin(p) {
+      // TODO: implement toggle endpoint
+      console.log('Toggle plugin', p);
+    }
+  };
+}
+</script>
 {{end}}

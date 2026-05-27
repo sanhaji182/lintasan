@@ -1,28 +1,32 @@
 {{define "pages/docs.gohtml"}}
 <div>
-  <h1>📖 Documentation</h1>
-  <p>Learn how to use Lintasan for AI model routing and management.</p>
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">📖 Documentation</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Learn how to use Lintasan for AI model routing and management.</p>
+    </div>
+  </div>
 
-  <div>
+  <div class="grid grid-cols-4 gap-6">
     <!-- Sidebar nav -->
-    <nav>
-      <div class="card">
-        <a href="#getting-started">Getting Started</a>
-        <a href="#configuration">Configuration</a>
-        <a href="#api-reference">API Reference</a>
-        <a href="#routing">Routing</a>
-        <a href="#fallback">Fallback Chains</a>
-        <a href="#caching">Caching</a>
-      </div>
-    </nav>
+    <div class="col-span-1">
+      <nav class="card p-3">
+        <a href="#getting-started" class="block py-1 text-sm text-[var(--color-fg-2)] hover:text-[var(--color-fg-0)]">Getting Started</a>
+        <a href="#configuration" class="block py-1 text-sm text-[var(--color-fg-2)] hover:text-[var(--color-fg-0)]">Configuration</a>
+        <a href="#api-reference" class="block py-1 text-sm text-[var(--color-fg-2)] hover:text-[var(--color-fg-0)]">API Reference</a>
+        <a href="#routing" class="block py-1 text-sm text-[var(--color-fg-2)] hover:text-[var(--color-fg-0)]">Routing</a>
+        <a href="#fallback" class="block py-1 text-sm text-[var(--color-fg-2)] hover:text-[var(--color-fg-0)]">Fallback Chains</a>
+        <a href="#caching" class="block py-1 text-sm text-[var(--color-fg-2)] hover:text-[var(--color-fg-0)]">Caching</a>
+      </nav>
+    </div>
 
     <!-- Content -->
-    <div>
+    <div class="col-span-3">
       <section id="getting-started" class="card mb-4">
-        <h2>Getting Started</h2>
-        <p>Lintasan is a lightweight AI model gateway that routes requests across multiple providers. It supports OpenAI, Anthropic, Google, Groq, Ollama, and any OpenAI-compatible endpoint.</p>
-        <h3>Quick Start</h3>
-        <pre><code># Set your master key
+        <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Getting Started</h2>
+        <p class="text-sm text-[var(--color-fg-2)] mb-3">Lintasan is a lightweight AI model gateway that routes requests across multiple providers. It supports OpenAI, Anthropic, Google, Groq, Ollama, and any OpenAI-compatible endpoint.</p>
+        <h3 class="text-xs font-semibold text-[var(--color-fg-1)] mb-2">Quick Start</h3>
+        <pre class="bg-[var(--color-bg-input)] p-3 rounded text-xs font-mono overflow-x-auto"><code># Set your master key
 export LINTASAN_MASTER_KEY="your-secret-key"
 
 # Run the server
@@ -32,9 +36,9 @@ export LINTASAN_MASTER_KEY="your-secret-key"
       </section>
 
       <section id="configuration" class="card mb-4">
-        <h2>Configuration</h2>
-        <p>All configuration is done through the dashboard UI. No config files needed. Settings are stored in SQLite and persist across restarts.</p>
-        <ul>
+        <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Configuration</h2>
+        <p class="text-sm text-[var(--color-fg-2)] mb-3">All configuration is done through the dashboard UI. No config files needed. Settings are stored in SQLite and persist across restarts.</p>
+        <ul class="text-sm text-[var(--color-fg-2)] list-disc list-inside space-y-1">
           <li><strong>Master Key:</strong> Protects your dashboard and API.</li>
           <li><strong>Cache TTL:</strong> How long responses are cached.</li>
           <li><strong>Rate Limits:</strong> Per-key and per-model limits.</li>
@@ -42,27 +46,27 @@ export LINTASAN_MASTER_KEY="your-secret-key"
       </section>
 
       <section id="api-reference" class="card mb-4">
-        <h2>API Reference</h2>
-        <p>Lintasan exposes an OpenAI-compatible API at <code>/v1/chat/completions</code>. Use your API key in the <code>Authorization: Bearer</code> header.</p>
-        <pre><code>curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_API_KEY" \
+        <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">API Reference</h2>
+        <p class="text-sm text-[var(--color-fg-2)] mb-3">Lintasan exposes an OpenAI-compatible API at <code>/v1/chat/completions</code>. Use your API key in the <code>Authorization: Bearer</code> header.</p>
+        <pre class="bg-[var(--color-bg-input)] p-3 rounded text-xs font-mono overflow-x-auto"><code>curl http://localhost:8080/v1/chat/completions \
+  -H "Authorization: Bearer *** \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}'</code></pre>
       </section>
 
       <section id="routing" class="card mb-4">
-        <h2>Routing</h2>
-        <p>Configure routing priorities to control which provider handles requests for each model. Higher priority providers are tried first. Use the Routing page to drag and drop provider order.</p>
+        <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Routing</h2>
+        <p class="text-sm text-[var(--color-fg-2)]">Configure routing priorities to control which provider handles requests for each model. Higher priority providers are tried first. Use the Routing page to drag and drop provider order.</p>
       </section>
 
       <section id="fallback" class="card mb-4">
-        <h2>Fallback Chains</h2>
-        <p>Fallback chains define a sequence of providers to try when the primary provider fails. Create chains that step through providers in order until one succeeds.</p>
+        <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Fallback Chains</h2>
+        <p class="text-sm text-[var(--color-fg-2)]">Fallback chains define a sequence of providers to try when the primary provider fails. Create chains that step through providers in order until one succeeds.</p>
       </section>
 
       <section id="caching" class="card mb-4">
-        <h2>Caching</h2>
-        <p>Lintasan can cache LLM responses to reduce costs and latency. Configure cache behavior in Settings. Cached responses are served instantly without calling upstream providers.</p>
+        <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Caching</h2>
+        <p class="text-sm text-[var(--color-fg-2)]">Lintasan can cache LLM responses to reduce costs and latency. Configure cache behavior in Settings. Cached responses are served instantly without calling upstream providers.</p>
       </section>
     </div>
   </div>

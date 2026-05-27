@@ -6,18 +6,19 @@
   editId: '',
   selectedPreset: null,
   presets: [],
+  connections: null,
   form: { name: '', provider: '', api_key: '', base_url: '', models: '' }
-}">
-  <div>
+}" x-init="fetchConnections()">
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1>🔌 Provider Accounts</h1>
-      <p>Manage connections to AI model providers.</p>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">🔌 Provider Accounts</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Manage connections to AI model providers.</p>
     </div>
     <button class="btn btn-primary" x-on:click="showModal = true; modalTitle = 'Add Provider'; editMode = false; selectedPreset = null; form = { name: '', provider: '', api_key: '', base_url: '', models: '' }; $nextTick(() => $refs.presetsGrid && loadPresets())">+ Add Provider</button>
   </div>
 
   <!-- Connections Table -->
-  <div class="card" id="connections-table" hx-get="/api/connections" hx-trigger="load" hx-swap="outerHTML">
+  <div class="card">
     <table>
       <thead>
         <tr>
@@ -30,11 +31,25 @@
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td colspan="6">
-            <div class="mx-auto spinner"></div>
-          </td>
-        </tr>
+        <template x-if="!connections">
+          <tr><td colspan="6" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="connections && connections.length === 0">
+          <tr><td colspan="6" class="text-center p-6"><div class="empty-state"><p>No connections yet</p></div></td></tr>
+        </template>
+        <template x-for="conn in connections" :key="conn.id">
+          <tr>
+            <td class="text-sm font-medium" x-text="conn.name"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="conn.provider"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="conn.models_count || '—'"></td>
+            <td><span class="badge" :class="conn.is_active ? 'badge-success' : 'badge-danger'" x-text="conn.is_active ? 'Active' : 'Inactive'"></span></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="conn.latency_ms ? conn.latency_ms + 'ms' : '—'"></td>
+            <td>
+              <button class="btn btn-ghost btn-sm" x-on:click="editConnection(conn)">Edit</button>
+              <button class="btn btn-ghost btn-sm text-red-500" x-on:click="deleteConnection(conn.id)">Delete</button>
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
@@ -44,28 +59,24 @@
     <div>
       <div class="modal-backdrop" x-on:click="showModal = false"></div>
       <div class="max-w-[640px] modal-panel" x-on:click.outside="showModal = false">
-        <div>
-          <h2 x-text="modalTitle"></h2>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold text-[var(--color-fg-0)]" x-text="modalTitle"></h2>
           <button class="btn-icon text-lg" x-on:click="showModal = false">&times;</button>
         </div>
 
         <!-- Preset Grid (only when adding) -->
         <template x-if="!editMode && !selectedPreset">
           <div>
-            <p>Choose a provider preset to get started:</p>
-            <div x-ref="presetsGrid" id="presets-grid">
-              <!-- Loaded via hx-get -->
+            <p class="text-sm text-[var(--color-fg-2)] mb-3">Choose a provider preset to get started:</p>
+            <div x-ref="presetsGrid" id="presets-grid" class="grid grid-cols-2 gap-2 mb-4">
             </div>
-            <div>
-              <button class="btn btn-ghost" x-on:click="selectedPreset = { provider: 'custom', name: '' }; form.provider = 'custom'">Manual Configuration</button>
-            </div>
+            <button class="btn btn-ghost" x-on:click="selectedPreset = { provider: 'custom', name: '' }; form.provider = 'custom'">Manual Configuration</button>
           </div>
         </template>
 
         <!-- Manual form (after preset or edit) -->
         <template x-if="selectedPreset || editMode">
-          <form hx-post="/api/connections" hx-target="#connections-table" hx-swap="outerHTML"
-                x-on:submit="showModal = false">
+          <form x-on:submit="saveConnection()">
             <template x-if="editMode">
               <input type="hidden" name="id" x-bind:value="editId">
             </template>
@@ -84,20 +95,17 @@
             <label>Models (comma-separated)</label>
             <input type="text" name="models" x-model="form.models" placeholder="gpt-4o, gpt-4o-mini">
 
-            <div>
+            <div class="flex gap-2 mt-4">
               <button type="button" class="btn btn-secondary"
-                      hx-post="/api/connections/test"
-                      hx-include="closest form"
-                      hx-target="#test-result"
-                      hx-swap="innerHTML">
+                      x-on:click="testConnection()">
                 Test Connection
               </button>
-              <div>
-                <button type="button" class="btn btn-secondary" x-on:click="selectedPreset = null; if (editMode) { showModal = false }">Back</button>
-                <button type="submit" class="btn btn-primary" x-bind:disabled="!form.name.trim() || !form.provider.trim()">Save</button>
-              </div>
+              <div id="test-result" class="flex items-center text-sm"></div>
             </div>
-            <div id="test-result"></div>
+            <div class="flex gap-2 justify-end mt-4">
+              <button type="button" class="btn btn-secondary" x-on:click="selectedPreset = null; if (editMode) { showModal = false }">Back</button>
+              <button type="submit" class="btn btn-primary" x-bind:disabled="!form.name.trim() || !form.provider.trim()">Save</button>
+            </div>
           </form>
         </template>
       </div>
@@ -126,6 +134,75 @@
         .catch(() => {
           grid.innerHTML = '<span>Failed to load presets</span>';
         });
+    }
+
+    async function fetchConnections() {
+      try {
+        let r = await fetch('/api/connections');
+        if (r.ok) {
+          let data = await r.json();
+          this.connections = data || [];
+        }
+      } catch(e) { console.error('Connections fetch failed', e); }
+    }
+
+    function editConnection(conn) {
+      this.showModal = true;
+      this.modalTitle = 'Edit Provider';
+      this.editMode = true;
+      this.editId = conn.id;
+      this.form = {
+        name: conn.name || '',
+        provider: conn.provider || '',
+        api_key: '',
+        base_url: conn.base_url || '',
+        models: ''
+      };
+      this.selectedPreset = { provider: conn.provider, name: conn.name };
+    }
+
+    async function saveConnection() {
+      try {
+        let method = this.editMode ? 'PUT' : 'POST';
+        let r = await fetch('/api/connections', {
+          method: method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.form)
+        });
+        if (r.ok) {
+          this.showModal = false;
+          this.fetchConnections();
+        }
+      } catch(e) { console.error('Save connection failed', e); }
+    }
+
+    async function deleteConnection(id) {
+      if (!confirm('Delete this connection?')) return;
+      try {
+        let r = await fetch('/api/connections?id=' + id, { method: 'DELETE' });
+        if (r.ok) {
+          this.fetchConnections();
+        }
+      } catch(e) { console.error('Delete connection failed', e); }
+    }
+
+    async function testConnection() {
+      let result = document.getElementById('test-result');
+      result.innerHTML = '<span class="spinner mr-2"></span> Testing...';
+      try {
+        let r = await fetch('/api/connections/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.form)
+        });
+        if (r.ok) {
+          result.innerHTML = '<span class="text-green-500">✓ Success</span>';
+        } else {
+          result.innerHTML = '<span class="text-red-500">✗ Failed</span>';
+        }
+      } catch(e) {
+        result.innerHTML = '<span class="text-red-500">✗ Error</span>';
+      }
     }
   </script>
 </div>

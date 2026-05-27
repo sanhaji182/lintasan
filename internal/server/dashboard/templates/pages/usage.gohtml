@@ -1,9 +1,13 @@
 {{define "pages/usage.gohtml"}}
-<div>
-  <h1>💰 Usage</h1>
-  <p>Token consumption by model and provider.</p>
+<div x-data="{ data: null }" x-init="fetchUsage()">
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">💰 Usage</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Token consumption by model and provider.</p>
+    </div>
+  </div>
 
-  <div class="card" id="usage-table-container" hx-get="/api/usage" hx-trigger="load" hx-swap="outerHTML">
+  <div class="card">
     <table>
       <thead>
         <tr>
@@ -17,13 +21,36 @@
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td colspan="7">
-            <div class="mx-auto spinner"></div>
-          </td>
-        </tr>
+        <template x-if="!data">
+          <tr><td colspan="7" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="data && data.length === 0">
+          <tr><td colspan="7" class="text-center p-6"><div class="empty-state"><p>No usage data yet</p></div></td></tr>
+        </template>
+        <template x-for="row in data" :key="row.model + row.provider">
+          <tr>
+            <td class="text-sm font-medium" x-text="row.model || '—'"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="row.provider || '—'"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="(row.requests || 0).toLocaleString()"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="(row.prompt_tokens || 0).toLocaleString()"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="(row.completion_tokens || 0).toLocaleString()"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="(row.total_tokens || 0).toLocaleString()"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="row.avg_latency_ms ? row.avg_latency_ms + 'ms' : '—'"></td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
 </div>
+
+<script>
+async function fetchUsage() {
+  try {
+    let r = await fetch('/api/usage');
+    if (r.ok) {
+      this.data = await r.json();
+    }
+  } catch(e) { console.error('Usage fetch failed', e); }
+}
+</script>
 {{end}}

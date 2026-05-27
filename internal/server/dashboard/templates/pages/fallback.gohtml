@@ -1,9 +1,17 @@
 {{define "pages/fallback.gohtml"}}
-<div x-data="{ showModal: false, editMode: false, editId: '', chainName: '', providers: [''], providerOptions: [] }">
-  <div>
+<div x-data="{ 
+  showModal: false, 
+  editMode: false, 
+  editId: '', 
+  chainName: '', 
+  chains: null,
+  providers: [''], 
+  providerOptions: [] 
+}" x-init="fetchChains()">
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1>🔄 Fallback Chains</h1>
-      <p>Define provider fallback sequences when a provider fails.</p>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">🔄 Fallback Chains</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Define provider fallback sequences when a provider fails.</p>
     </div>
     <button class="btn btn-primary" x-on:click="
       showModal = true; editMode = false; editId = ''; chainName = ''; providers = [''];
@@ -12,7 +20,7 @@
   </div>
 
   <!-- Fallback Chains Table -->
-  <div class="card" id="fallback-table" hx-get="/api/fallback" hx-trigger="load" hx-swap="outerHTML">
+  <div class="card">
     <table>
       <thead>
         <tr>
@@ -23,11 +31,23 @@
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td colspan="4">
-            <div class="mx-auto spinner"></div>
-          </td>
-        </tr>
+        <template x-if="!chains">
+          <tr><td colspan="4" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="chains && chains.length === 0">
+          <tr><td colspan="4" class="text-center p-6"><div class="empty-state"><p>No fallback chains configured</p></div></td></tr>
+        </template>
+        <template x-for="chain in chains" :key="chain.id">
+          <tr>
+            <td class="text-sm font-medium" x-text="chain.name"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="chain.providers ? chain.providers.join(' → ') : '—'"></td>
+            <td class="text-xs text-[var(--color-fg-3)]" x-text="chain.created_at || '—'"></td>
+            <td>
+              <button class="btn btn-ghost btn-sm" x-on:click="editChain(chain)">Edit</button>
+              <button class="btn btn-ghost btn-sm text-red-500" x-on:click="deleteChain(chain.id)">Delete</button>
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
@@ -37,13 +57,12 @@
     <div>
       <div class="modal-backdrop" x-on:click="showModal = false"></div>
       <div class="max-w-[540px] modal-panel" x-on:click.outside="showModal = false">
-        <div>
-          <h2 x-text="editMode ? 'Edit Chain' : 'Add Fallback Chain'"></h2>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold text-[var(--color-fg-0)]" x-text="editMode ? 'Edit Chain' : 'Add Fallback Chain'"></h2>
           <button class="btn-icon text-lg" x-on:click="showModal = false">&times;</button>
         </div>
 
-        <form hx-post="/api/fallback" hx-target="#fallback-table" hx-swap="outerHTML"
-              x-on:submit="showModal = false">
+        <form x-on:submit="saveChain()">
           <template x-if="editMode">
             <input type="hidden" name="id" x-bind:value="editId">
           </template>
@@ -54,11 +73,11 @@
           <label>Providers (in fallback order)</label>
           <div id="provider-sequence">
             <template x-for="(provider, index) in providers" :key="index">
-              <div>
-                <select x-bind:name="'providers[]'">
+              <div class="flex gap-2 mb-2">
+                <select x-bind:name="'providers[]'" class="flex-1">
                   <option value="">-- Select Provider --</option>
                   <template x-for="opt in providerOptions" :key="opt.id">
-                    <option x-bind:value="opt.name || opt.id" x-text="opt.name" x-bind:selected="provider === (opt.name || opt.id)"></option>
+                    <option x-bind:value="opt.name || opt.id" x-text="opt.name || opt.id" x-bind:selected="provider === (opt.name || opt.id)"></option>
                   </template>
                 </select>
                 <button type="button" class="btn btn-icon btn-danger btn-sm" x-on:click="providers.splice(index, 1)"
@@ -69,7 +88,7 @@
           <button type="button" class="btn btn-secondary btn-sm mt-2"
                   x-on:click="providers.push('')">+ Add Provider</button>
 
-          <div>
+          <div class="flex gap-2 justify-end mt-4">
             <button type="button" class="btn btn-secondary" x-on:click="showModal = false">Cancel</button>
             <button type="submit" class="btn btn-primary" x-bind:disabled="!chainName.trim() || providers.filter(p => p.trim()).length < 2">
               Save Chain
@@ -79,5 +98,53 @@
       </div>
     </div>
   </template>
+
+  <script>
+    async function fetchChains() {
+      try {
+        let r = await fetch('/api/fallback');
+        if (r.ok) {
+          this.chains = await r.json();
+        }
+      } catch(e) { console.error('Fallback fetch failed', e); }
+    }
+
+    function editChain(chain) {
+      this.showModal = true;
+      this.editMode = true;
+      this.editId = chain.id;
+      this.chainName = chain.name;
+      this.providers = chain.providers ? [...chain.providers, ''] : [''];
+      fetch('/api/connections').then(r => r.json()).then(d => this.providerOptions = d || []).catch(() => {});
+    }
+
+    async function saveChain() {
+      try {
+        let method = this.editMode ? 'PUT' : 'POST';
+        let r = await fetch('/api/fallback', {
+          method: method,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: this.chainName,
+            providers: this.providers.filter(p => p.trim())
+          })
+        });
+        if (r.ok) {
+          this.showModal = false;
+          this.fetchChains();
+        }
+      } catch(e) { console.error('Save chain failed', e); }
+    }
+
+    async function deleteChain(id) {
+      if (!confirm('Delete this fallback chain?')) return;
+      try {
+        let r = await fetch('/api/fallback?id=' + id, { method: 'DELETE' });
+        if (r.ok) {
+          this.fetchChains();
+        }
+      } catch(e) { console.error('Delete chain failed', e); }
+    }
+  </script>
 </div>
 {{end}}

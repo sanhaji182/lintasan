@@ -67,13 +67,7 @@
         for (let line of lines) {
           line = line.trim();
           if (!line.startsWith('data: ')) continue;
-          let data = line.slice(6);
-          if (data === '[DONE]') continue;
-          try {
-            let json = JSON.parse(data);
-            let delta = json.choices && json.choices[0] && json.choices[0].delta;
-            if (delta && delta.content) {
-              assistantMsg += delta.content;
+          let data = line.sliceMsg += delta.content;
               this.streamText = assistantMsg;
             }
           } catch(e) {}
@@ -112,13 +106,13 @@
     this.input = '';
   }
 }" x-init="init()">
-  <div>
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1>🧪 Playground</h1>
-      <p>Test AI models directly from the dashboard.</p>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">🧪 Playground</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Test AI models directly from the dashboard.</p>
     </div>
-    <div>
-      <select x-model="model">
+    <div class="flex items-center gap-2">
+      <select x-model="model" class="form-select">
         <option value="">-- Select Model --</option>
         <template x-for="m in models" :key="m.id || m.name">
           <option x-bind:value="m.id || m.name" x-text="m.name || m.id"></option>
@@ -130,24 +124,25 @@
 
   <!-- Settings Panel -->
   <div class="card mb-4" x-show="showSettings">
-    <div>
-      <div>
-        <label>System Prompt</label>
-        <textarea x-model="sys" rows="3"></textarea>
+    <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Settings</h2>
+    <div class="grid grid-cols-3 gap-4">
+      <div class="col-span-2">
+        <label class="text-xs font-semibold text-[var(--color-fg-2)]">System Prompt</label>
+        <textarea x-model="sys" rows="3" class="w-full mt-1"></textarea>
       </div>
       <div>
-        <div>
-          <label>Temperature: <span x-text="temp"></span></label>
-          <input type="range" x-model="temp" min="0" max="2" step="0.1">
+        <div class="mb-3">
+          <label class="text-xs font-semibold text-[var(--color-fg-2)]">Temperature: <span x-text="temp"></span></label>
+          <input type="range" x-model="temp" min="0" max="2" step="0.1" class="w-full mt-1">
+        </div>
+        <div class="mb-3">
+          <label class="text-xs font-semibold text-[var(--color-fg-2)]">Max Tokens</label>
+          <input type="number" x-model="maxTok" min="1" max="131072" class="w-full mt-1">
         </div>
         <div>
-          <label>Max Tokens</label>
-          <input type="number" x-model="maxTok" min="1" max="131072">
-        </div>
-        <div>
-          <label>
+          <label class="flex items-center gap-2 text-xs text-[var(--color-fg-2)]">
             <input type="checkbox" x-model="single">
-            Single turn (no conversation history)
+            Single turn (no history)
           </label>
         </div>
       </div>
@@ -155,7 +150,7 @@
   </div>
 
   <!-- Chat Area -->
-  <div class="- 380px)] card max-h-[calc(100vh mb-4 min-h-[400px] overflow-y-auto p-4" id="chat-messages">
+  <div class="card mb-4 min-h-[400px] max-h-[calc(100vh-380px)] overflow-y-auto p-4" id="chat-messages">
     <template x-if="messages.length === 0 && !streamText">
       <div class="empty-state px-4 py-15">
         <div class="empty-state-icon">💬</div>
@@ -164,11 +159,9 @@
     </template>
 
     <template x-for="(msg, i) in messages" :key="i">
-      <div
-           x-bind:style="msg.role === 'user' ? 'text-align:right;' : ''">
-        <div
-             x-text="msg.error ? 'ERROR' : msg.role === 'user' ? 'You' : 'Assistant'"></div>
-        <div
+      <div class="mb-3" x-bind:style="msg.role === 'user' ? 'text-align:right;' : ''">
+        <div class="text-xs font-semibold mb-1" x-text="msg.error ? 'ERROR' : msg.role === 'user' ? 'You' : 'Assistant'"></div>
+        <div class="inline-block rounded p-3 max-w-[80%] text-sm"
              x-bind:style="msg.error ?
                'background:#fee2e2; color:#991b1b;' :
                (msg.role === 'user' ?
@@ -183,27 +176,26 @@
 
     <!-- Streaming text -->
     <template x-if="streamText">
-      <div>
-        <div>Assistant</div>
-        <div
-             x-text="streamText"></div>
+      <div class="mb-3">
+        <div class="text-xs font-semibold mb-1">Assistant</div>
+        <div class="inline-block rounded p-3 max-w-[80%] text-sm bg-[var(--color-bg-input)] text-[var(--color-fg-0)]" x-text="streamText"></div>
         <span class="align-middle h-[12px] inline-block ml-1 spinner w-[12px]"></span>
       </div>
     </template>
 
     <!-- Loading indicator -->
-    <div x-show="loading && !streamText">
+    <div x-show="loading && !streamText" class="text-center py-4">
       <div class="mx-auto spinner"></div>
     </div>
   </div>
 
   <!-- Input Area -->
   <div class="card px-4 py-3">
-    <div>
+    <div class="flex gap-2 items-end">
       <textarea x-model="input" placeholder="Type your message..." rows="1"
                 x-on:keydown.enter.prevent="if(!$event.shiftKey) { send(); }"
                 x-on:input="$el.style.height = 'auto'; $el.style.height = Math.min($el.scrollHeight, 120) + 'px';"
-                x-bind:disabled="loading"></textarea>
+                x-bind:disabled="loading" class="flex-1 resize-none"></textarea>
       <button x-show="!loading" class="btn btn-primary px-5 py-[10px]" x-on:click="send()" x-bind:disabled="!input.trim()">
         Send
       </button>
@@ -211,12 +203,9 @@
         ⏹ Stop
       </button>
     </div>
-    <div>
+    <div class="mt-2">
       <button class="btn btn-ghost btn-sm" x-on:click="clear()">🗑 Clear Chat</button>
     </div>
   </div>
-
-  <!-- Marked.js (optional, loaded on demand) -->
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </div>
 {{end}}

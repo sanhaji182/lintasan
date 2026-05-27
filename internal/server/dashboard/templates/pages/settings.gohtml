@@ -1,75 +1,71 @@
 {{define "pages/settings.gohtml"}}
 <div>
-  <h1>⚙ Settings</h1>
-  <p>Configure your Lintasan instance.</p>
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">⚙ Settings</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Configure your Lintasan instance.</p>
+    </div>
+  </div>
 
   <form hx-put="/api/settings" hx-swap="none">
     <!-- General Section -->
     <div class="card mb-4">
-      <h2>General</h2>
-      <div>
-        <label>Master Key</label>
-        <input type="password" name="master_key" placeholder="Change master password...">
-        <p>Leave blank to keep current.</p>
+      <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">General</h2>
+      <div class="mb-3">
+        <label class="text-xs font-semibold text-[var(--color-fg-2)]">Master Key</label>
+        <input type="password" name="master_key" placeholder="Change master password..." class="w-full mt-1">
+        <p class="text-xs text-[var(--color-fg-3)] mt-1">Leave blank to keep current.</p>
       </div>
       <div>
-        <label>Port</label>
-        <input type="number" name="port" placeholder="8080">
+        <label class="text-xs font-semibold text-[var(--color-fg-2)]">Port</label>
+        <input type="number" name="port" placeholder="8080" class="w-full mt-1">
       </div>
     </div>
 
     <!-- Cache Section -->
     <div class="card mb-4" x-data="{ cacheEnabled: true }">
-      <h2>Cache</h2>
-      <div>
-        <label>Enable Response Caching</label>
-        <label>
+      <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Cache</h2>
+      <div class="mb-3">
+        <label class="flex items-center gap-2">
           <input type="checkbox" name="cache_enabled" x-model="cacheEnabled">
-          <span
-                x-bind:style="cacheEnabled ? 'background:var(--color-primary);' : 'background:var(--color-border);'"></span>
-          <span
-                x-bind:style="cacheEnabled ? 'transform:translateX(20px);' : ''"></span>
+          <span class="text-xs font-semibold text-[var(--color-fg-2)]">Enable Response Caching</span>
         </label>
       </div>
-      <div>
-        <label>Cache TTL (seconds)</label>
-        <input type="number" name="cache_ttl" placeholder="3600" min="0">
+      <div class="mb-3">
+        <label class="text-xs font-semibold text-[var(--color-fg-2)]">Cache TTL (seconds)</label>
+        <input type="number" name="cache_ttl" placeholder="3600" min="0" class="w-full mt-1">
       </div>
       <div>
-        <label>Cache Similarity Threshold</label>
-        <input type="number" name="cache_threshold" step="0.01" min="0" max="1" placeholder="0.95">
-        <p>Semantic similarity threshold for cache hits (0-1). Higher = stricter matching.</p>
+        <label class="text-xs font-semibold text-[var(--color-fg-2)]">Cache Similarity Threshold</label>
+        <input type="number" name="cache_threshold" step="0.01" min="0" max="1" placeholder="0.95" class="w-full mt-1">
+        <p class="text-xs text-[var(--color-fg-3)] mt-1">Semantic similarity threshold for cache hits (0-1). Higher = stricter matching.</p>
       </div>
     </div>
 
     <!-- Security Section -->
     <div class="card mb-4" x-data="{ rateLimitEnabled: false }">
-      <h2>Security</h2>
-      <div>
-        <label>Enable Rate Limiting</label>
-        <label>
+      <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Security</h2>
+      <div class="mb-3">
+        <label class="flex items-center gap-2">
           <input type="checkbox" name="rate_limit_enabled" x-model="rateLimitEnabled">
-          <span
-                x-bind:style="rateLimitEnabled ? 'background:var(--color-primary);' : 'background:var(--color-border);'"></span>
-          <span
-                x-bind:style="rateLimitEnabled ? 'transform:translateX(20px);' : ''"></span>
+          <span class="text-xs font-semibold text-[var(--color-fg-2)]">Enable Rate Limiting</span>
         </label>
       </div>
       <div x-show="rateLimitEnabled">
-        <label>Requests per Minute</label>
-        <input type="number" name="rate_limit_rpm" placeholder="60" min="1">
+        <label class="text-xs font-semibold text-[var(--color-fg-2)]">Requests per Minute</label>
+        <input type="number" name="rate_limit_rpm" placeholder="60" min="1" class="w-full mt-1">
       </div>
     </div>
 
     <!-- Save -->
-    <div>
+    <div class="flex items-center gap-3">
       <button type="submit" class="btn btn-primary">
         <span class="hidden htmx-indicator">
           <span class="align-middle h-[14px] inline-block mr-1 spinner w-[14px]"></span>
         </span>
         Save Settings
       </button>
-      <span id="settings-saved">✓ Saved</span>
+      <span id="settings-saved" class="text-sm text-green-500 hidden">✓ Saved</span>
     </div>
   </form>
 

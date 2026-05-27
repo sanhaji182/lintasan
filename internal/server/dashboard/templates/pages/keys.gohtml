@@ -1,15 +1,15 @@
 {{define "pages/keys.gohtml"}}
-<div x-data="{ showCreateModal: false, newKeyName: '' }">
-  <div>
+<div x-data="{ showCreateModal: false, newKeyName: '', keys: null, toasts: [] }" x-init="fetchKeys()">
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1>🔑 API Keys</h1>
-      <p>Manage API keys for authenticating requests.</p>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">🔑 API Keys</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Manage API keys for authenticating requests.</p>
     </div>
     <button class="btn btn-primary" x-on:click="showCreateModal = true">+ Create Key</button>
   </div>
 
   <!-- Keys Table -->
-  <div class="card" id="keys-table" hx-get="/api/keys" hx-trigger="load" hx-swap="outerHTML">
+  <div class="card">
     <table>
       <thead>
         <tr>
@@ -21,11 +21,26 @@
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td colspan="5">
-            <div class="mx-auto spinner"></div>
-          </td>
-        </tr>
+        <template x-if="!keys">
+          <tr><td colspan="5" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="keys && keys.length === 0">
+          <tr><td colspan="5" class="text-center p-6"><div class="empty-state"><p>No API keys yet</p></div></td></tr>
+        </template>
+        <template x-for="key in keys" :key="key.id">
+          <tr>
+            <td class="text-sm font-medium" x-text="key.name"></td>
+            <td class="text-xs font-mono text-[var(--color-fg-2)]">
+              <span x-text="key.key ? key.key.substring(0, 8) + '...' : '—'"></span>
+              <button class="btn btn-ghost btn-sm ml-1" x-on:click="copyKey(key)">📋</button>
+            </td>
+            <td class="text-xs text-[var(--color-fg-3)]" x-text="key.created_at || '—'"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="key.requests || 0"></td>
+            <td>
+              <button class="btn btn-ghost btn-sm text-red-500" x-on:click="deleteKey(key.id)">Revoke</button>
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
@@ -35,15 +50,14 @@
     <div>
       <div class="modal-backdrop" x-on:click="showCreateModal = false"></div>
       <div class="modal-panel" x-on:click.outside="showCreateModal = false">
-        <div>
-          <h2>Create API Key</h2>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold text-[var(--color-fg-0)]">Create API Key</h2>
           <button class="btn-icon text-lg" x-on:click="showCreateModal = false">&times;</button>
         </div>
-        <form hx-post="/api/keys" hx-target="#keys-table" hx-swap="outerHTML"
-              x-on:submit="showCreateModal = false">
+        <form x-on:submit="createKey()">
           <label>Key Name</label>
           <input type="text" name="name" x-model="newKeyName" placeholder="e.g., Production, Development">
-          <div>
+          <div class="flex gap-2 justify-end mt-4">
             <button type="button" class="btn btn-secondary" x-on:click="showCreateModal = false">Cancel</button>
             <button type="submit" class="btn btn-primary" x-bind:disabled="!newKeyName.trim()">Create</button>
           </div>
@@ -53,16 +67,56 @@
   </template>
 
   <!-- Toast container -->
-  <div x-data="{ toasts: [] }" x-on:htmx:after-request.window="
-    const detail = $event.detail;
-    if (detail.xhr.getResponseHeader('HX-Trigger')) {
-      const trigger = JSON.parse(detail.xhr.getResponseHeader('HX-Trigger'));
-      if (trigger.toast) toasts.push(trigger.toast);
-    }
-  ">
+  <div>
     <template x-for="(t, i) in toasts" :key="i">
       <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
     </template>
   </div>
 </div>
+
+<script>
+async function fetchKeys() {
+  try {
+    let r = await fetch('/api/keys');
+    if (r.ok) {
+      this.keys = await r.json();
+    }
+  } catch(e) { console.error('Keys fetch failed', e); }
+}
+
+async function createKey() {
+  try {
+    let r = await fetch('/api/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: this.newKeyName })
+    });
+    if (r.ok) {
+      let data = await r.json();
+      this.showCreateModal = false;
+      this.newKeyName = '';
+      this.fetchKeys();
+      this.toasts.push({ type: 'success', message: 'API key created successfully' });
+    }
+  } catch(e) { console.error('Create key failed', e); }
+}
+
+async function deleteKey(id) {
+  if (!confirm('Revoke this API key? This cannot be undone.')) return;
+  try {
+    let r = await fetch('/api/keys?id=' + id, { method: 'DELETE' });
+    if (r.ok) {
+      this.fetchKeys();
+      this.toasts.push({ type: 'success', message: 'API key revoked' });
+    }
+  } catch(e) { console.error('Delete key failed', e); }
+}
+
+function copyKey(key) {
+  if (key && key.key) {
+    navigator.clipboard.writeText(key.key).catch(() => {});
+    this.toasts.push({ type: 'success', message: 'Key copied to clipboard' });
+  }
+}
+</script>
 {{end}}

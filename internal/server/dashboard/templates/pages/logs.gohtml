@@ -4,19 +4,11 @@
   paused: false,
   autoScroll: true,
   logCount: 0,
-  toggleLevel(l) { this.level = l; this.refreshStream(); },
-  refreshStream() {
-    var tbody = document.getElementById('log-entries');
-    if (tbody) tbody.innerHTML = '';
-    this.logCount = 0;
-    var container = document.getElementById('log-stream');
-    if (container) {
-      container.setAttribute('hx-get', '/api/logs/stream?level=' + this.level);
-      htmx.process(container);
-      container.dispatchEvent(new Event('htmx:trigger'));
-    }
-  }
+  logs: [],
+  toggleLevel(l) { this.level = l; },
+  clearLogs() { this.logs = []; this.logCount = 0; }
 }" x-init="
+  // Fetch logs via SSE or polling
   $watch('autoScroll', function(v) {
     if (v) {
       var el = document.getElementById('log-container');
@@ -24,60 +16,90 @@
     }
   });
 ">
-  <div>
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1>📋 Logs</h1>
-      <p>Real-time server logs.</p>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">📋 Logs</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Real-time server logs.</p>
     </div>
-    <div>
+    <div class="flex items-center gap-2">
       <button class="btn btn-sm" x-bind:class="level === 'all' ? 'btn-primary' : 'btn-secondary'" x-on:click="toggleLevel('all')">All</button>
       <button class="btn btn-sm" x-bind:class="level === 'info' ? 'btn-primary' : 'btn-secondary'" x-on:click="toggleLevel('info')">Info</button>
       <button class="btn btn-sm" x-bind:class="level === 'warn' ? 'btn-primary' : 'btn-secondary'" x-on:click="toggleLevel('warn')">Warn</button>
       <button class="btn btn-sm" x-bind:class="level === 'error' ? 'btn-primary' : 'btn-secondary'" x-on:click="toggleLevel('error')">Error</button>
-      <span></span>
+      <span class="mx-2"></span>
       <button class="btn btn-sm btn-secondary" x-on:click="paused = !paused" x-text="paused ? '▶ Resume' : '⏸ Pause'"></button>
-      <button class="btn btn-sm btn-ghost" x-on:click="document.getElementById('log-entries').innerHTML = ''; logCount = 0;">Clear</button>
+      <button class="btn btn-sm btn-ghost" x-on:click="clearLogs()">Clear</button>
     </div>
   </div>
 
-  <div class="- 200px)] card max-h-[calc(100vh overflow-y-auto" id="log-container"
+  <div class="card max-h-[calc(100vh-200px)] overflow-y-auto" id="log-container"
        x-init="
          var obs = new MutationObserver(function() {
            if (autoScroll) { $el.scrollTop = $el.scrollHeight; }
          });
          obs.observe($el, { childList: true, subtree: true });
        ">
-    <div id="log-stream" hx-ext="sse" sse-connect="/api/logs/stream" sse-swap="message" hx-swap="afterbegin">
-      <table>
-        <thead>
+    <table>
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Level</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody id="log-entries">
+        <template x-if="logs.length === 0">
           <tr>
-            <th>Timestamp</th>
-            <th>Level</th>
-            <th>Message</th>
-          </tr>
-        </thead>
-        <tbody id="log-entries">
-          <tr>
-            <td colspan="3">
+            <td colspan="3" class="text-center p-6 text-[var(--color-fg-3)]">
               Waiting for log events...
             </td>
           </tr>
-        </tbody>
-      </table>
-    </div>
+        </template>
+        <template x-for="(log, i) in logs" :key="i">
+          <tr>
+            <td class="text-xs text-[var(--color-fg-3)]" x-text="log.timestamp || log.time || ''"></td>
+            <td>
+              <span class="badge" 
+                    :class="log.level === 'error' ? 'badge-danger' : (log.level === 'warn' ? 'badge-warning' : 'badge-default')"
+                    x-text="log.level || 'info'"></span>
+            </td>
+            <td class="text-sm text-[var(--color-fg-2)]" x-text="log.message || log.msg || ''"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
   </div>
 
-  <div>
+  <div class="flex items-center gap-4 mt-2 text-xs text-[var(--color-fg-3)]">
     <span x-text="logCount + ' entries'">0 entries</span>
     <span x-show="paused">(Paused)</span>
   </div>
 
   <script src="https://unpkg.com/htmx-ext-sse@2.2.3/sse.js"></script>
   <script>
-    // Track log count
-    document.addEventListener('htmx:sseMessage', function(evt) {
+    // Connect to SSE for real-time logs
+    document.addEventListener('DOMContentLoaded', function() {
+      var es = new EventSource('/api/logs/stream');
       var alpineData = document.querySelector('[x-data]')._x_dataStack[0];
-      if (alpineData) alpineData.logCount++;
+      
+      es.addEventListener('message', function(e) {
+        if (alpineData.paused) return;
+        try {
+          var log = JSON.parse(e.data);
+          if (alpineData.level === 'all' || alpineData.level === log.level) {
+            alpineData.logs.unshift(log);
+            alpineData.logCount++;
+            // Keep only last 500 entries
+            if (alpineData.logs.length > 500) {
+              alpineData.logs.pop();
+            }
+          }
+        } catch(err) {}
+      });
+      
+      es.addEventListener('error', function() {
+        console.log('SSE connection closed');
+      });
     });
   </script>
 </div>

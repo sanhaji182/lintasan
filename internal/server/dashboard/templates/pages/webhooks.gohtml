@@ -1,15 +1,15 @@
 {{define "pages/webhooks.gohtml"}}
-<div x-data="{ showCreateModal: false, form: { name: '', url: '', events: 'completion' } }">
-  <div>
+<div x-data="{ showCreateModal: false, form: { name: '', url: '', events: 'completion' }, webhooks: null, toasts: [] }" x-init="fetchWebhooks()">
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1>🪝 Webhooks</h1>
-      <p>Configure webhook endpoints for event notifications.</p>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">🪝 Webhooks</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Configure webhook endpoints for event notifications.</p>
     </div>
     <button class="btn btn-primary" x-on:click="showCreateModal = true; form = { name: '', url: '', events: 'completion' }">+ Add Webhook</button>
   </div>
 
   <!-- Webhooks Table -->
-  <div class="card" id="webhooks-table" hx-get="/api/webhooks" hx-trigger="load" hx-swap="outerHTML">
+  <div class="card">
     <table>
       <thead>
         <tr>
@@ -22,11 +22,25 @@
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td colspan="6">
-            <div class="mx-auto spinner"></div>
-          </td>
-        </tr>
+        <template x-if="!webhooks">
+          <tr><td colspan="6" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="webhooks && webhooks.length === 0">
+          <tr><td colspan="6" class="text-center p-6"><div class="empty-state"><p>No webhooks configured</p></div></td></tr>
+        </template>
+        <template x-for="wh in webhooks" :key="wh.id">
+          <tr>
+            <td class="text-sm font-medium" x-text="wh.name"></td>
+            <td class="text-xs text-[var(--color-fg-2)] truncate max-w-[200px]" x-text="wh.url"></td>
+            <td><span class="badge badge-default" x-text="wh.events || 'completion'"></span></td>
+            <td><span class="badge" :class="wh.is_active ? 'badge-success' : 'badge-danger'" x-text="wh.is_active ? 'Active' : 'Inactive'"></span></td>
+            <td class="text-xs text-[var(--color-fg-3)]" x-text="wh.last_triggered || 'Never'"></td>
+            <td>
+              <button class="btn btn-ghost btn-sm" x-on:click="editWebhook(wh)">Edit</button>
+              <button class="btn btn-ghost btn-sm text-red-500" x-on:click="deleteWebhook(wh.id)">Delete</button>
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
@@ -36,12 +50,14 @@
     <div>
       <div class="modal-backdrop" x-on:click="showCreateModal = false"></div>
       <div class="modal-panel" x-on:click.outside="showCreateModal = false">
-        <div>
-          <h2>Add Webhook</h2>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold text-[var(--color-fg-0)]" x-text="editMode ? 'Edit Webhook' : 'Add Webhook'"></h2>
           <button class="btn-icon text-lg" x-on:click="showCreateModal = false">&times;</button>
         </div>
-        <form hx-post="/api/webhooks" hx-target="#webhooks-table" hx-swap="outerHTML"
-              x-on:submit="showCreateModal = false">
+        <form x-on:submit="saveWebhook()">
+          <template x-if="editMode">
+            <input type="hidden" name="id" x-bind:value="editId">
+          </template>
           <label>Name</label>
           <input type="text" name="name" x-model="form.name" placeholder="e.g., Slack Notifications">
 
@@ -55,7 +71,7 @@
             <option value="completion,error">All Events</option>
           </select>
 
-          <div>
+          <div class="flex gap-2 justify-end mt-4">
             <button type="button" class="btn btn-secondary" x-on:click="showCreateModal = false">Cancel</button>
             <button type="submit" class="btn btn-primary" x-bind:disabled="!form.name.trim() || !form.url.trim()">Create</button>
           </div>
@@ -63,5 +79,62 @@
       </div>
     </div>
   </template>
+
+  <!-- Toast container -->
+  <div>
+    <template x-for="(t, i) in toasts" :key="i">
+      <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
+    </template>
+  </div>
 </div>
+
+<script>
+async function fetchWebhooks() {
+  try {
+    let r = await fetch('/api/webhooks');
+    if (r.ok) {
+      this.webhooks = await r.json();
+    }
+  } catch(e) { console.error('Webhooks fetch failed', e); }
+}
+
+function editWebhook(wh) {
+  this.showCreateModal = true;
+  this.editMode = true;
+  this.editId = wh.id;
+  this.form = {
+    name: wh.name || '',
+    url: wh.url || '',
+    events: wh.events || 'completion'
+  };
+}
+
+async function saveWebhook() {
+  try {
+    let method = this.editMode ? 'PUT' : 'POST';
+    let r = await fetch('/api/webhooks', {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(this.form)
+    });
+    if (r.ok) {
+      this.showCreateModal = false;
+      this.form = { name: '', url: '', events: 'completion' };
+      this.fetchWebhooks();
+      this.toasts.push({ type: 'success', message: 'Webhook saved successfully' });
+    }
+  } catch(e) { console.error('Save webhook failed', e); }
+}
+
+async function deleteWebhook(id) {
+  if (!confirm('Delete this webhook?')) return;
+  try {
+    let r = await fetch('/api/webhooks?id=' + id, { method: 'DELETE' });
+    if (r.ok) {
+      this.fetchWebhooks();
+      this.toasts.push({ type: 'success', message: 'Webhook deleted' });
+    }
+  } catch(e) { console.error('Delete webhook failed', e); }
+}
+</script>
 {{end}}

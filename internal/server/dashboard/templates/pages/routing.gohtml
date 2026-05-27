@@ -1,9 +1,13 @@
 {{define "pages/routing.gohtml"}}
-<div>
-  <h1>🔀 Routing</h1>
-  <p>Configure routing priority — drag rows to reorder. Higher priority providers are tried first.</p>
+<div x-data="{ routes: null }" x-init="fetchRoutes()">
+  <div class="flex items-center justify-between mb-5">
+    <div>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">🔀 Routing</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Configure routing priority — drag rows to reorder. Higher priority providers are tried first.</p>
+    </div>
+  </div>
 
-  <div class="card" id="routing-table" hx-get="/api/routing" hx-trigger="load" hx-swap="outerHTML">
+  <div class="card">
     <table>
       <thead>
         <tr>
@@ -16,31 +20,52 @@
         </tr>
       </thead>
       <tbody id="routing-rows">
-        <tr>
-          <td colspan="6">
-            <div class="mx-auto spinner"></div>
-          </td>
-        </tr>
+        <template x-if="!routes">
+          <tr><td colspan="6" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="routes && routes.length === 0">
+          <tr><td colspan="6" class="text-center p-6"><div class="empty-state"><p>No routing rules configured</p></div></td></tr>
+        </template>
+        <template x-for="(route, index) in routes" :key="route.id">
+          <tr data-id="route.id">
+            <td class="drag-handle">⋮⋮</td>
+            <td class="text-sm font-medium" x-text="routes.length - index"></td>
+            <td class="text-sm font-medium" x-text="route.model || '—'"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="route.provider_name || route.provider || '—'"></td>
+            <td><span class="badge" :class="route.is_active ? 'badge-success' : 'badge-danger'" x-text="route.is_active ? 'Active' : 'Inactive'"></span></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="route.latency_ms ? route.latency_ms + 'ms' : '—'"></td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
   <script>
-    document.addEventListener('htmx:afterSettle', function() {
+    async function fetchRoutes() {
+      try {
+        let r = await fetch('/api/routing');
+        if (r.ok) {
+          this.routes = await r.json();
+          this.$nextTick(initSortable);
+        }
+      } catch(e) { console.error('Routing fetch failed', e); }
+    }
+
+    function initSortable() {
       var tbody = document.getElementById('routing-rows');
-      if (tbody && !tbody._sortableInit) {
+      if (tbody && !tbody._sortableInit && this.routes && this.routes.length > 0) {
         tbody._sortableInit = true;
         new Sortable(tbody, {
           handle: '.drag-handle',
           animation: 150,
           onEnd: function() {
-            var rows = tbody.querySelectorAll('tr[draggable]');
+            var rows = tbody.querySelectorAll('tr[data-id]');
             var order = [];
             rows.forEach(function(row, i) {
               order.push({
                 id: row.getAttribute('data-id'),
-                priority: i + 1
+                priority: rows.length - i
               });
             });
             fetch('/api/routing/reorder', {
@@ -51,7 +76,7 @@
           }
         });
       }
-    });
+    }
   </script>
   <style>
     .drag-handle { cursor: grab; color: var(--color-fg-3); font-size: 16px; user-select: none; }

@@ -1,50 +1,68 @@
 {{define "pages/backup.gohtml"}}
-<div>
-  <div>
+<div x-data="backupData()" x-init="fetchBackup()">
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1>💾 Backup</h1>
-      <p>Database backup and restore.</p>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">💾 Backup</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Database backup and restore.</p>
     </div>
   </div>
 
   <!-- Backup Status -->
-  <div class="card mb-4" id="backup-status" hx-get="/api/backup" hx-trigger="load" hx-swap="outerHTML">
-    <div>
-      <div>
-        <div>Backup Status</div>
-        <div>Loading...</div>
+  <div class="card mb-4">
+    <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Backup Status</h2>
+    <div x-show="!backup" class="skeleton rounded" style="height:60px"></div>
+    <div x-show="backup" x-cloak>
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="text-sm text-[var(--color-fg-2)]">Last Backup:</span>
+          <span class="text-sm font-medium text-[var(--color-fg-0)]" x-text="backup.lastBackup || 'Never'"></span>
+        </div>
+        <div>
+          <span class="badge" :class="backup.isRunning ? 'badge-warning' : 'badge-success'" x-text="backup.isRunning ? 'Running...' : 'Ready'"></span>
+        </div>
       </div>
-      <div class="spinner"></div>
     </div>
   </div>
 
   <!-- Create Backup -->
   <div class="card">
-    <h2>Create Backup</h2>
-    <p>
+    <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Create Backup</h2>
+    <p class="text-sm text-[var(--color-fg-2)] mb-4">
       Create a full backup of your Lintasan database including all settings, keys, teams, users, and routing configuration.
     </p>
     <button class="btn btn-primary"
-            hx-post="/api/backup"
-            hx-target="#backup-status"
-            hx-swap="outerHTML"
-            hx-indicator="this">
-      <span class="hidden htmx-indicator">
-        <span class="align-middle h-[14px] inline-block mr-1 spinner w-[14px]"></span>
-        Creating...
-      </span>
-      <span class="htmx-indicator-off">Create Backup Now</span>
+            x-on:click="createBackup()"
+            x-bind:disabled="loading">
+      <span x-show="loading" class="align-middle h-[14px] inline-block mr-1 spinner w-[14px]"></span>
+      <span x-text="loading ? 'Creating...' : 'Create Backup Now'"></span>
     </button>
-    <script>
-      // Toggle button text on request
-      document.addEventListener('click', function(e) {
-        var btn = e.target.closest('[hx-post="/api/backup"]');
-        if (btn) {
-          btn.querySelector('.htmx-indicator').style.display = 'inline';
-          btn.querySelector('.htmx-indicator-off').style.display = 'none';
-        }
-      });
-    </script>
   </div>
 </div>
+
+<script>
+function backupData() {
+  return {
+    backup: null,
+    loading: false,
+    async fetchBackup() {
+      try {
+        let r = await fetch('/api/backup');
+        if (r.ok) {
+          this.backup = await r.json();
+        }
+      } catch(e) { console.error('Backup fetch failed', e); }
+    },
+    async createBackup() {
+      this.loading = true;
+      try {
+        let r = await fetch('/api/backup', { method: 'POST' });
+        if (r.ok) {
+          this.backup = await r.json();
+        }
+      } catch(e) { console.error('Backup create failed', e); }
+      this.loading = false;
+    }
+  };
+}
+</script>
 {{end}}

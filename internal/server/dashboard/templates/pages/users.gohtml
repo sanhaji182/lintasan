@@ -1,15 +1,15 @@
 {{define "pages/users.gohtml"}}
-<div x-data="{ showCreateModal: false, newUserName: '', newUserEmail: '' }">
-  <div>
+<div x-data="{ showCreateModal: false, newUserName: '', newUserEmail: '', users: null, toasts: [] }" x-init="fetchUsers()">
+  <div class="flex items-center justify-between mb-5">
     <div>
-      <h1>👤 Users</h1>
-      <p>Manage dashboard and API users.</p>
+      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">👤 Users</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Manage dashboard and API users.</p>
     </div>
     <button class="btn btn-primary" x-on:click="showCreateModal = true">+ Add User</button>
   </div>
 
   <!-- Users Table -->
-  <div class="card" id="users-table" hx-get="/api/users" hx-trigger="load" hx-swap="outerHTML">
+  <div class="card">
     <table>
       <thead>
         <tr>
@@ -22,11 +22,24 @@
         </tr>
       </thead>
       <tbody>
-        <tr>
-          <td colspan="6">
-            <div class="mx-auto spinner"></div>
-          </td>
-        </tr>
+        <template x-if="!users">
+          <tr><td colspan="6" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="users && users.length === 0">
+          <tr><td colspan="6" class="text-center p-6"><div class="empty-state"><p>No users yet</p></div></td></tr>
+        </template>
+        <template x-for="user in users" :key="user.id">
+          <tr>
+            <td class="text-sm font-medium" x-text="user.name || '—'"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="user.email || '—'"></td>
+            <td><span class="badge" :class="user.role === 'admin' ? 'badge-primary' : 'badge-default'" x-text="user.role || 'member'"></span></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="user.team_name || '—'"></td>
+            <td class="text-xs text-[var(--color-fg-3)]" x-text="user.created_at || '—'"></td>
+            <td>
+              <button class="btn btn-ghost btn-sm text-red-500" x-on:click="deleteUser(user.id)">Remove</button>
+            </td>
+          </tr>
+        </template>
       </tbody>
     </table>
   </div>
@@ -36,28 +49,77 @@
     <div>
       <div class="modal-backdrop" x-on:click="showCreateModal = false"></div>
       <div class="modal-panel" x-on:click.outside="showCreateModal = false">
-        <div>
-          <h2>Add User</h2>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold text-[var(--color-fg-0)]">Add User</h2>
           <button class="btn-icon text-lg" x-on:click="showCreateModal = false">&times;</button>
         </div>
-        <form hx-post="/api/users" hx-target="#users-table" hx-swap="outerHTML"
-              x-on:submit="showCreateModal = false">
+        <form x-on:submit="createUser()">
           <label>Name</label>
           <input type="text" name="name" x-model="newUserName" placeholder="Full name">
           <label>Email</label>
           <input type="email" name="email" x-model="newUserEmail" placeholder="user@example.com">
           <label>Role</label>
-          <select name="role">
+          <select name="role" x-model="newUserRole">
             <option value="member">Member</option>
             <option value="admin">Admin</option>
           </select>
-          <div>
+          <div class="flex gap-2 justify-end mt-4">
             <button type="button" class="btn btn-secondary" x-on:click="showCreateModal = false">Cancel</button>
-            <button type="submit" class="btn btn-primary" x-bind:disabled="!newUserName.trim()">Add User</button>
+            <button type="submit" class="btn btn-primary" x-bind:disabled="!newUserName.trim() || !newUserEmail.trim()">Add User</button>
           </div>
         </form>
       </div>
     </div>
   </template>
+
+  <!-- Toast container -->
+  <div>
+    <template x-for="(t, i) in toasts" :key="i">
+      <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
+    </template>
+  </div>
 </div>
+
+<script>
+async function fetchUsers() {
+  try {
+    let r = await fetch('/api/users');
+    if (r.ok) {
+      this.users = await r.json();
+    }
+  } catch(e) { console.error('Users fetch failed', e); }
+}
+
+async function createUser() {
+  try {
+    let r = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        name: this.newUserName,
+        email: this.newUserEmail,
+        role: this.newUserRole || 'member'
+      })
+    });
+    if (r.ok) {
+      this.showCreateModal = false;
+      this.newUserName = '';
+      this.newUserEmail = '';
+      this.fetchUsers();
+      this.toasts.push({ type: 'success', message: 'User added successfully' });
+    }
+  } catch(e) { console.error('Create user failed', e); }
+}
+
+async function deleteUser(id) {
+  if (!confirm('Remove this user?')) return;
+  try {
+    let r = await fetch('/api/users?id=' + id, { method: 'DELETE' });
+    if (r.ok) {
+      this.fetchUsers();
+      this.toasts.push({ type: 'success', message: 'User removed' });
+    }
+  } catch(e) { console.error('Delete user failed', e); }
+}
+</script>
 {{end}}

@@ -1,0 +1,177 @@
+{{define "pages/analytics.gohtml"}}
+<div x-data="analyticsData()" x-init="fetchData()">
+  <div class="flex items-center justify-between mb-5">
+    <h1 class="text-xl font-bold text-[var(--color-fg-0)]">📈 Analytics</h1>
+    <span class="text-xs text-[var(--color-fg-3)]">Auto-refreshes every 30s</span>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="grid grid-cols-4 gap-4 mb-6">
+    <div class="card flex items-center gap-3">
+      <div class="text-2xl">📊</div>
+      <div>
+        <div class="text-xs font-semibold uppercase text-[var(--color-fg-3)]">Total Requests</div>
+        <div x-show="!data" class="skeleton w-16 h-7 rounded"></div>
+        <div x-show="data" class="text-lg font-bold text-[var(--color-fg-0)]" x-text="(data?.totalRequests ?? 0).toLocaleString()" x-cloak></div>
+      </div>
+    </div>
+    <div class="card flex items-center gap-3">
+      <div class="text-2xl">⚡</div>
+      <div>
+        <div class="text-xs font-semibold uppercase text-[var(--color-fg-3)]">Avg Latency</div>
+        <div x-show="!data" class="skeleton w-16 h-7 rounded"></div>
+        <div x-show="data" class="text-lg font-bold text-[var(--color-fg-0)]" x-text="(data?.avgLatency ?? 0).toFixed(0) + ' ms'" x-cloak></div>
+      </div>
+    </div>
+    <div class="card flex items-center gap-3">
+      <div class="text-2xl">🎯</div>
+      <div>
+        <div class="text-xs font-semibold uppercase text-[var(--color-fg-3)]">Cache Hit Rate</div>
+        <div x-show="!data" class="skeleton w-14 h-7 rounded"></div>
+        <div x-show="data" class="text-lg font-bold text-[var(--color-fg-0)]" x-text="(data?.cacheHitRate ?? 0).toFixed(1) + '%'" x-cloak></div>
+      </div>
+    </div>
+    <div class="card flex items-center gap-3">
+      <div class="text-2xl">🔌</div>
+      <div>
+        <div class="text-xs font-semibold uppercase text-[var(--color-fg-3)]">Active Providers</div>
+        <div x-show="!data" class="skeleton w-12 h-7 rounded"></div>
+        <div x-show="data" class="text-lg font-bold text-[var(--color-fg-0)]" x-text="(data?.providers || []).filter(p => p.healthy).length" x-cloak></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Request Volume Chart -->
+  <div class="card mb-6">
+    <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Request Volume (7 days)</h2>
+    <div x-show="!data" class="skeleton rounded" style="height:220px"></div>
+    <div x-show="data" x-cloak class="relative">
+      <canvas id="volume-chart" height="220" class="w-full"></canvas>
+    </div>
+  </div>
+
+  <!-- Provider Breakdown -->
+  <div class="card">
+    <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Provider Breakdown</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Format</th>
+          <th>Avg Latency</th>
+          <th>Health</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-if="!data">
+          <tr><td colspan="4" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
+        </template>
+        <template x-if="data && (!data.providers || data.providers.length === 0)">
+          <tr><td colspan="4"><div class="empty-state"><p>No provider data yet</p></div></td></tr>
+        </template>
+        <template x-for="p in data?.providers" :key="p.name">
+          <tr>
+            <td class="text-sm font-medium" x-text="p.name"></td>
+            <td class="text-xs text-[var(--color-fg-3)] uppercase" x-text="p.format || '—'"></td>
+            <td class="text-xs text-[var(--color-fg-2)]" x-text="(p.latency || 0).toFixed(0) + ' ms'"></td>
+            <td>
+              <span class="badge" :class="p.healthy ? 'badge-success' : 'badge-danger'" x-text="p.healthy ? 'Healthy' : 'Down'"></span>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function analyticsData() {
+  return {
+    data: null,
+    async fetchData() {
+      try {
+        let r = await fetch('/api/overview-stats');
+        if (r.ok) {
+          let d = await r.json();
+          this.data = d.data || d;
+          // Render chart after Alpine has processed the DOM update
+          await this.$nextTick();
+          this.renderChart();
+        }
+      } catch(e) { console.error('Analytics fetch failed', e); }
+
+      // Auto-refresh
+      setTimeout(() => this.fetchData(), 30000);
+    },
+    renderChart() {
+      let canvas = document.getElementById('volume-chart');
+      if (!canvas || !this.data?.requestVolume) return;
+
+      let ctx = canvas.getContext('2d');
+      let values = this.data.requestVolume;
+      let days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+      // Use device pixel ratio for crisp rendering
+      let dpr = window.devicePixelRatio || 1;
+      let rect = canvas.parentElement.getBoundingClientRect();
+      let w = rect.width;
+      let h = 220;
+
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      canvas.style.width = w + 'px';
+      canvas.style.height = h + 'px';
+      ctx.scale(dpr, dpr);
+
+      // Clear
+      ctx.clearRect(0, 0, w, h);
+
+      let max = Math.max(...values, 1);
+      let padding = { top: 30, bottom: 30, left: 10, right: 10 };
+      let chartW = w - padding.left - padding.right;
+      let chartH = h - padding.top - padding.bottom;
+      let barCount = values.length;
+      let barGap = Math.max(6, chartW * 0.02);
+      let barW = (chartW - barGap * (barCount + 1)) / barCount;
+
+      // Purple gradient for bars
+      let gradient = ctx.createLinearGradient(0, h - padding.bottom, 0, padding.top);
+      gradient.addColorStop(0, '#6366f1');
+      gradient.addColorStop(1, '#a78bfa');
+
+      // Draw bars
+      values.forEach((v, i) => {
+        let barH = Math.max(2, (v / max) * chartH);
+        let x = padding.left + barGap + i * (barW + barGap);
+        let y = h - padding.bottom - barH;
+
+        // Bar with rounded top
+        let radius = Math.min(4, barW / 2);
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.moveTo(x, y + radius);
+        ctx.arcTo(x, y, x + radius, y, radius);
+        ctx.arcTo(x + barW, y, x + barW, y + radius, radius);
+        ctx.lineTo(x + barW, h - padding.bottom);
+        ctx.lineTo(x, h - padding.bottom);
+        ctx.closePath();
+        ctx.fill();
+
+        // Value label above bar
+        ctx.fillStyle = 'var(--color-fg-2)';
+        ctx.font = 'bold 11px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(v, x + barW / 2, y - 4);
+
+        // Day label below bar
+        ctx.fillStyle = 'var(--color-fg-3)';
+        ctx.font = '10px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textBaseline = 'top';
+        ctx.fillText(days[i] || 'Day ' + (i + 1), x + barW / 2, h - padding.bottom + 6);
+      });
+    }
+  };
+}
+</script>
+{{end}}

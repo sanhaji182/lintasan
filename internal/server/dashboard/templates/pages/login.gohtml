@@ -1,17 +1,17 @@
 {{define "pages/login.gohtml"}}
-<div>
+<div class="flex items-center justify-center min-h-[60vh]">
   <div class="card max-w-[380px] p-8 w-full">
-    <div>
-      <h1>Lintasan</h1>
-      <p>Dashboard Access</p>
+    <div class="text-center mb-6">
+      <h1 class="text-2xl font-bold text-[var(--color-fg-0)] mb-2">Lintasan</h1>
+      <p class="text-sm text-[var(--color-fg-2)]">Dashboard Access</p>
     </div>
     <form hx-post="/api/auth/login" hx-target="this" hx-swap="outerHTML">
-      <label>Master Password</label>
-      <input type="password" name="password" placeholder="Enter password..." autocomplete="current-password">
+      <label class="text-xs font-semibold text-[var(--color-fg-2)]">Master Password</label>
+      <input type="password" name="password" placeholder="Enter password..." autocomplete="current-password" class="w-full mt-1 mb-4">
       <button type="submit" class="btn btn-primary justify-center mt-4 w-full">
         Sign In
       </button>
-      <div class="htmx-indicator" id="login-error"></div>
+      <div class="htmx-indicator mt-2 text-center text-sm text-red-500" id="login-error"></div>
     </form>
     <script>
       document.body.addEventListener('htmx:afterRequest', function(evt) {
