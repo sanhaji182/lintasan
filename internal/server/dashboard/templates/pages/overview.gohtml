@@ -184,7 +184,7 @@
           <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
         </svg>
         <h2 style="font-size:14px;font-weight:600;color:var(--fg-1)">Provider Health</h2>
-        <span style="font-size:11px;color:var(--fg-3);font-weight:400" x-show="stats?.providers?.length > 0" x-text="'(' + stats.providers.length + ')'"></span>
+        <span style="font-size:11px;color:var(--fg-3);font-weight:400" x-show="stats?.providers?.length > 0" x-text="'(' + (stats?.providers?.length || 0) + ')'"></span>
       </div>
       <div x-show="!stats" class="skeleton" style="height:100px;width:100%"></div>
       <div x-show="stats" x-cloak style="max-height:200px;overflow-y:auto">
