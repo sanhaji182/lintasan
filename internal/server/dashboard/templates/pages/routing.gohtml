@@ -33,7 +33,7 @@
       </h1>
       <p style="font-size:13px;color:var(--fg-2);margin:0">Configure model routing, load balancing, and aliases.</p>
     </div>
-    <button class="btn-primary" onclick="rs.openNewCombo()">
+    <button class="btn-primary" @click="rs.openNewCombo()">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
       New Combo
     </button>
@@ -104,8 +104,8 @@
             </td>
             <td>
               <div style="display:flex;gap:4px">
-                <button class="btn-small" onclick="rs.editCombo(this)">Edit</button>
-                <button class="btn-small" style="color:var(--error)" onclick="rs.deleteCombo(this)">Delete</button>
+                <button class="btn-small" @click="rs.editCombo($el)">Edit</button>
+                <button class="btn-small" style="color:var(--error)" @click="rs.deleteCombo($el)">Delete</button>
               </div>
             </td>
           </tr>
@@ -129,7 +129,7 @@
       <label
         style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border:2px solid;border-radius:var(--radius);cursor:pointer;transition:all var(--transition)"
         :style="lbStrategy === 'priority' ? 'border-color:var(--primary);background:var(--primary-light)' : 'border-color:var(--border);background:var(--bg-body)'"
-        onclick="rs.setStrategy('priority')"
+        @click="lbStrategy = 'priority'"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
         <span style="font-size:12px;font-weight:600;color:var(--fg-0)">Priority</span>
@@ -140,7 +140,7 @@
       <label
         style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border:2px solid;border-radius:var(--radius);cursor:pointer;transition:all var(--transition)"
         :style="lbStrategy === 'round-robin' ? 'border-color:var(--primary);background:var(--primary-light)' : 'border-color:var(--border);background:var(--bg-body)'"
-        onclick="rs.setStrategy('round-robin')"
+        @click="lbStrategy = 'round-robin'"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <span style="font-size:12px;font-weight:600;color:var(--fg-0)">Round-Robin</span>
@@ -151,7 +151,7 @@
       <label
         style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border:2px solid;border-radius:var(--radius);cursor:pointer;transition:all var(--transition)"
         :style="lbStrategy === 'least-connections' ? 'border-color:var(--primary);background:var(--primary-light)' : 'border-color:var(--border);background:var(--bg-body)'"
-        onclick="rs.setStrategy('least-connections')"
+        @click="lbStrategy = 'least-connections'"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <span style="font-size:12px;font-weight:600;color:var(--fg-0)">Least-Conn</span>
@@ -162,7 +162,7 @@
       <label
         style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border:2px solid;border-radius:var(--radius);cursor:pointer;transition:all var(--transition)"
         :style="lbStrategy === 'latency' ? 'border-color:var(--primary);background:var(--primary-light)' : 'border-color:var(--border);background:var(--bg-body)'"
-        onclick="rs.setStrategy('latency')"
+        @click="lbStrategy = 'latency'"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         <span style="font-size:12px;font-weight:600;color:var(--fg-0)">Latency</span>
@@ -180,7 +180,7 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
         Strategy saved
       </span>
-      <button class="btn-secondary" onclick="rs.saveLoadBalancer()" :disabled="lbSaving">
+      <button class="btn-secondary" @click="saveLoadBalancer()" :disabled="lbSaving">
         <span x-show="!lbSaving">Apply Strategy</span>
         <span x-show="lbSaving" x-cloak style="display:flex;align-items:center;gap:6px">
           <span class="spinner" style="width:14px;height:14px;border-width:2px"></span>
@@ -199,7 +199,7 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
         Model Aliases
       </h2>
-      <button class="btn-small" onclick="rs.openNewAlias()">
+      <button class="btn-small" @click="rs.openNewAlias()">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
         Add Alias
       </button>
@@ -245,8 +245,8 @@
             <td style="font-size:12px;color:var(--fg-2)" x-text="alias.provider || '—'"></td>
             <td>
               <div style="display:flex;gap:4px">
-                <button class="btn-small" onclick="rs.editAlias(this)">Edit</button>
-                <button class="btn-small" style="color:var(--error)" onclick="rs.deleteAlias(this)">Delete</button>
+                <button class="btn-small" @click="rs.editAlias($el)">Edit</button>
+                <button class="btn-small" style="color:var(--error)" @click="rs.deleteAlias($el)">Delete</button>
               </div>
             </td>
           </tr>
@@ -260,13 +260,13 @@
   <!-- ════════════════════════════════════════════ -->
   <div x-show="comboModal" style="display:none" x-cloak>
     <div>
-      <div class="modal-backdrop" onclick="rs.closeComboModal()"></div>
+      <div class="modal-backdrop" @click="rs.closeComboModal()"></div>
       <div class="modal-panel" style="max-width:700px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
           <h2 style="font-size:16px;font-weight:600;color:var(--fg-0);margin:0" x-text="comboEditMode ? 'Edit Combo' : 'New Combo'"></h2>
           <button
             style="background:transparent;border:none;cursor:pointer;color:var(--fg-2);padding:4px;border-radius:var(--radius-sm);display:flex;align-items:center;line-height:1"
-            onclick="rs.closeComboModal()"
+            @click="rs.closeComboModal()"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -308,7 +308,7 @@
           <div style="margin-bottom:12px">
             <label class="label-st" style="display:flex;align-items:center;justify-content:space-between">
               <span>Model Entries</span>
-              <button type="button" class="btn-small" onclick="rs.addModelEntry()" style="font-size:11px;padding:3px 8px">
+              <button type="button" class="btn-small" @click="rs.addModelEntry()" style="font-size:11px;padding:3px 8px">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
                 Add
               </button>
@@ -333,7 +333,7 @@
                     </template>
                   </select>
                   <!-- Remove button -->
-                  <button type="button" class="btn-small" style="color:var(--error);flex-shrink:0;padding:5px 8px" onclick="rs.removeModelEntry(this)">
+                  <button type="button" class="btn-small" style="color:var(--error);flex-shrink:0;padding:5px 8px" @click="rs.removeModelEntry($el)">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
                 </div>
@@ -351,7 +351,7 @@
 
           <!-- Actions -->
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-            <button type="button" class="btn-secondary" onclick="rs.closeComboModal()">Cancel</button>
+            <button type="button" class="btn-secondary" @click="rs.closeComboModal()">Cancel</button>
             <button type="submit" class="btn-primary" :disabled="!comboForm.name.trim() || comboSaving">
               <span x-show="!comboSaving" x-text="comboEditMode ? 'Update' : 'Create'"></span>
               <span x-show="comboSaving" x-cloak style="display:flex;align-items:center;gap:6px">
@@ -370,13 +370,13 @@
   <!-- ════════════════════════════════════════════ -->
   <div x-show="aliasModal" style="display:none" x-cloak>
     <div>
-      <div class="modal-backdrop" onclick="rs.closeAliasModal()"></div>
+      <div class="modal-backdrop" @click="rs.closeAliasModal()"></div>
       <div class="modal-panel" style="max-width:500px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
           <h2 style="font-size:16px;font-weight:600;color:var(--fg-0);margin:0" x-text="aliasEditMode ? 'Edit Alias' : 'New Alias'"></h2>
           <button
             style="background:transparent;border:none;cursor:pointer;color:var(--fg-2);padding:4px;border-radius:var(--radius-sm);display:flex;align-items:center;line-height:1"
-            onclick="rs.closeAliasModal()"
+            @click="rs.closeAliasModal()"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
@@ -410,7 +410,7 @@
 
           <!-- Actions -->
           <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-            <button type="button" class="btn-secondary" onclick="rs.closeAliasModal()">Cancel</button>
+            <button type="button" class="btn-secondary" @click="rs.closeAliasModal()">Cancel</button>
             <button type="submit" class="btn-primary" :disabled="!aliasForm.name.trim() || !aliasForm.target.trim() || aliasSaving">
               <span x-show="!aliasSaving" x-text="aliasEditMode ? 'Update' : 'Create'"></span>
               <span x-show="aliasSaving" x-cloak style="display:flex;align-items:center;gap:6px">

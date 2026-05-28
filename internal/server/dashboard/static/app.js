@@ -1547,6 +1547,32 @@ function routingPage() {
     addModelEntry: function() {
       this.comboForm.models.push({ model: '', account: '' });
     },
+
+    setStrategy: function(strat) { this.lbStrategy = strat; },
+
+    saveLoadBalancer: async function() {
+      this.lbSaving = true;
+      this.lbSaved = false;
+      try {
+        var r = await fetch('/api/load-balancer', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ strategy: this.lbStrategy }),
+        });
+        if (r.ok) {
+          this.lbSaved = true;
+          window.rsFetchStats();
+          var self = this;
+          setTimeout(function() { self.lbSaved = false; }, 3000);
+        } else {
+          this.addToast('error', 'Failed to save strategy.');
+        }
+      } catch(e) {
+        this.addToast('error', 'Network error.');
+      } finally {
+        this.lbSaving = false;
+      }
+    },
   };
 }
 
@@ -1592,7 +1618,8 @@ function routingPage() {
       var r = await fetch('/api/load-balancer');
       if (r.ok) {
         var data = await r.json();
-        d.lbStrategy = data.strategy || data.default || 'priority';
+        var lb = data.data || data;
+        d.lbStrategy = lb.strategy || lb.default || 'priority';
         window.rsFetchStats();
       }
     } catch(e) { console.error('Fetch load balancer failed', e); }
@@ -1604,7 +1631,24 @@ function routingPage() {
       var r = await fetch('/api/aliases');
       if (r.ok) {
         var data = await r.json();
-        d.aliases = Array.isArray(data) ? data : (data.data || []);
+        var raw = data.data || data;
+        if (Array.isArray(raw)) {
+          d.aliases = raw;
+        } else if (raw && typeof raw === 'object') {
+          // Transform map {alias: {model: "..."}} → array [{name, target, provider}]
+          var arr = [];
+          Object.keys(raw).forEach(function(k) {
+            var v = raw[k];
+            if (v && typeof v === 'object') {
+              arr.push({ name: k, target: v.model || v.target || '', provider: v.provider || '' });
+            } else if (typeof v === 'string') {
+              arr.push({ name: k, target: v, provider: '' });
+            }
+          });
+          d.aliases = arr;
+        } else {
+          d.aliases = [];
+        }
         window.rsFetchStats();
       }
     } catch(e) { console.error('Fetch aliases failed', e); }
@@ -1746,7 +1790,7 @@ function routingPage() {
       d.lbSaved = false;
       try {
         var r = await fetch('/api/load-balancer', {
-          method: 'PUT',
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ strategy: d.lbStrategy }),
         });
@@ -1810,14 +1854,13 @@ function routingPage() {
           provider: d.aliasForm.provider || null,
         };
 
-        var method = d.aliasEditMode ? 'PUT' : 'POST';
         var url = '/api/aliases';
         if (d.aliasEditMode && d.aliasEditId) {
           url += '?id=' + encodeURIComponent(d.aliasEditId);
         }
 
         var r = await fetch(url, {
-          method: method,
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
