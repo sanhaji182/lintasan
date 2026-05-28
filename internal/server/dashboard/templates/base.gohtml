@@ -251,7 +251,23 @@ document.addEventListener('htmx:afterSettle', function() {
   if (page && window.Alpine) {
     Alpine.initTree(page);
   }
+  // Clean up any stale Chart.js instances from previous page
+  if (window.Chart) {
+    Object.keys(Chart.instances).forEach(function(id) {
+      Chart.instances[id].destroy();
+    });
+  }
   var path = window.location.pathname;
+
+  // Update header + title from swapped content
+  var h1 = page && page.querySelector('h1');
+  if (h1) {
+    var label = h1.textContent.trim();
+    var headerTitle = document.querySelector('#main-area header span');
+    if (headerTitle) headerTitle.textContent = label;
+    document.title = 'Lintasan \u2014 ' + label;
+  }
+
   document.querySelectorAll('#sidebar a').forEach(function(a) {
     a.classList.remove('active');
     a.style.color = 'var(--fg-sidebar)';
