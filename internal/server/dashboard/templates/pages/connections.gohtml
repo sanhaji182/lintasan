@@ -129,12 +129,8 @@
                 </button>
                 <button class="btn-small" style="color:var(--fg-2)" onclick="cs.toggleStatus(this)" :title="conn.is_active ? 'Disable' : 'Enable'">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <template x-if="conn.is_active">
-                      <rect x="2" y="2" width="20" height="20" rx="5"/>
-                    </template>
-                    <template x-if="!conn.is_active">
-                      <circle cx="12" cy="12" r="10"/>
-                    </template>
+                    <rect x-show="conn.is_active" x="2" y="2" width="20" height="20" rx="5"/>
+                    <circle x-show="!conn.is_active" cx="12" cy="12" r="10"/>
                   </svg>
                   <span x-text="conn.is_active ? 'Disable' : 'Enable'"></span>
                 </button>
@@ -218,9 +214,9 @@
                 <button
                   class="btn-small"
                   style="font-size:11px;padding:4px 10px"
-                  :style="activeCategory === cat.key ? 'background:var(--primary);color:#fff;border-color:var(--primary)' : ''"
-                  @click="activeCategory = cat.key"
-                  x-text="cat.label"
+                  :style="activeCategory === cat.id ? 'background:var(--primary);color:#fff;border-color:var(--primary)' : ''"
+                  @click="activeCategory = cat.id"
+                  x-text="cat.name"
                 ></button>
               </template>
             </div>
@@ -497,10 +493,11 @@ function connectionsPage() {
   };
 }
 
-// ── global functions ──
+  // ── global functions ──
 (function() {
   function getData() {
-    var el = document.querySelector('[x-data]');
+    var el = document.querySelector('[x-data^="connectionsPage"]');
+    if (!el) { el = document.querySelector('[x-data]'); }
     return el ? Alpine.$data(el) : null;
   }
 

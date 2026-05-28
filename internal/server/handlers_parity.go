@@ -187,7 +187,33 @@ func providerPresets() []map[string]any { return []map[string]any{
     {"id":"chatgpt-subscription","name":"ChatGPT Subscription","description":"Access GPT-4o via ChatGPT Plus subscription","website":"https://chatgpt.com","category":"other","baseUrl":"https://chatgpt.com/backend-api","format":"openai","chatPath":"/conversations","modelsPath":"","authHeader":"Authorization","authPrefix":"Bearer "},
 } }
 func providerCategories() []map[string]any { return []map[string]any{{"id":"major","name":"Major Providers"},{"id":"aggregator","name":"Aggregators"},{"id":"inference","name":"Fast Inference"},{"id":"chinese","name":"Chinese Providers"},{"id":"indonesia","name":"Indonesia Providers"},{"id":"enterprise","name":"Enterprise & Cloud"},{"id":"media","name":"Media & Audio"},{"id":"other","name":"Other Providers"},{"id":"self-hosted","name":"Self-Hosted"}} }
-func (s *Server) handleProviderPresets(w http.ResponseWriter, r *http.Request){ writeJSON(w, map[string]any{"data":providerPresets(),"categories":providerCategories()}) }
+func (s *Server) handleProviderPresets(w http.ResponseWriter, r *http.Request){ 
+    presets := providerPresets()
+    for i, p := range presets {
+        if _, ok := p["provider"]; !ok {
+            presets[i]["provider"] = p["id"]
+        }
+        if _, ok := p["label"]; !ok {
+            presets[i]["label"] = p["name"]
+        }
+        if _, ok := p["base_url"]; !ok {
+            presets[i]["base_url"] = p["baseUrl"]
+        }
+        if _, ok := p["models_path"]; !ok {
+            presets[i]["models_path"] = p["modelsPath"]
+        }
+        if _, ok := p["auth_header"]; !ok {
+            presets[i]["auth_header"] = p["authHeader"]
+        }
+        if _, ok := p["auth_prefix"]; !ok {
+            presets[i]["auth_prefix"] = p["authPrefix"]
+        }
+        if _, ok := p["chat_path"]; !ok {
+            presets[i]["chat_path"] = p["chatPath"]
+        }
+    }
+    writeJSON(w, map[string]any{"data":presets,"categories":providerCategories()})
+}
 func (s *Server) handleProviderPresetsConfig(w http.ResponseWriter, r *http.Request){ id:=r.URL.Query().Get("id"); for _,p:=range providerPresets(){ if p["id"]==id { writeData(w,p); return } }; writeJSON(w, map[string]any{"data":map[string]any{},"presets":providerPresets(),"formats":[]string{"openai","anthropic","gemini","ollama","custom"}}) }
 
 func (s *Server) handlePresetTest(w http.ResponseWriter, r *http.Request){
