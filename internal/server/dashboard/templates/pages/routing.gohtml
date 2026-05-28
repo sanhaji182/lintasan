@@ -258,7 +258,7 @@
   <!-- ════════════════════════════════════════════ -->
   <!--  New / Edit Combo Modal                        -->
   <!-- ════════════════════════════════════════════ -->
-  <template x-if="comboModal">
+  <div x-show="comboModal" style="display:none" x-cloak>
     <div>
       <div class="modal-backdrop" onclick="rs.closeComboModal()"></div>
       <div class="modal-panel" style="max-width:700px">
@@ -363,12 +363,12 @@
         </form>
       </div>
     </div>
-  </template>
-
+  </div>
+  </div>
   <!-- ════════════════════════════════════════════ -->
   <!--  New / Edit Alias Modal                       -->
   <!-- ════════════════════════════════════════════ -->
-  <template x-if="aliasModal">
+  <div x-show="aliasModal" style="display:none" x-cloak>
     <div>
       <div class="modal-backdrop" onclick="rs.closeAliasModal()"></div>
       <div class="modal-panel" style="max-width:500px">
@@ -422,7 +422,7 @@
         </form>
       </div>
     </div>
-  </template>
+  </div>
 
   <!-- Toasts -->
   <div style="position:fixed;bottom:20px;right:20px;z-index:100;display:flex;flex-direction:column;gap:8px">
