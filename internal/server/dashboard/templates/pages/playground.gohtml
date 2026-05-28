@@ -258,7 +258,7 @@
           <option :value="m.id || m.name" x-text="m.name || m.id"></option>
         </template>
       </select>
-      <button class="btn btn-secondary" onclick="window.playgroundScope.showSettings = !showSettings">
+      <button class="btn-secondary" onclick="window.playgroundScope.showSettings = !showSettings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
@@ -313,7 +313,7 @@
              :class="msg.error ? 'message-bubble-error' : (msg.role === 'user' ? 'message-bubble-user' : 'message-bubble-assistant')"
              x-text="msg.content"></div>
         <div class="message-actions" x-show="msg.role === 'assistant' && !msg.error">
-          <button class="btn btn-ghost btn-sm"
+          <button class="btn-small"
                   onclick="window.playgroundScope.copy(msg.content)"
                   title="Copy to clipboard">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -347,14 +347,14 @@
               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();window.playgroundScope.send()}"
               oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,300)+'px'"
                 :disabled="loading" class="input-textarea"></textarea>
-      <button x-show="!loading" class="btn btn-primary" style="padding: 10px 20px;" onclick="window.playgroundScope.send()" :disabled="!input.trim()">
+      <button x-show="!loading" class="btn-primary" style="padding: 10px 20px;" onclick="window.playgroundScope.send()" :disabled="!input.trim()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="22" y1="2" x2="11" y2="13"/>
           <polygon points="22 2 15 22 11 13 2 9 22 2"/>
         </svg>
         Send
       </button>
-      <button x-show="loading" class="btn btn-danger" style="padding: 10px 20px;" onclick="window.playgroundScope.abort()">
+      <button x-show="loading" class="btn-secondary" style="padding: 10px 20px;color:var(--error);border-color:var(--error)" onclick="window.playgroundScope.abort()">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
         </svg>
@@ -362,7 +362,7 @@
       </button>
     </div>
     <div class="input-actions">
-      <button class="btn btn-ghost btn-sm" onclick="window.playgroundScope.clear()">
+      <button class="btn-small" onclick="window.playgroundScope.clear()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <polyline points="3 6 5 6 21 6"/>
           <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>

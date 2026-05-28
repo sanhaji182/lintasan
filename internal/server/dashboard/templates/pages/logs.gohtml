@@ -23,13 +23,13 @@
       <p style="font-size:13px;color:var(--fg-2);margin:0">Real-time server logs.</p>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
-      <button class="btn btn-sm" :class="level === 'all' ? 'btn-primary' : 'btn-secondary'" onclick="window.logsScope.toggleLevel('all')">All</button>
-      <button class="btn btn-sm" :class="level === 'info' ? 'btn-primary' : 'btn-secondary'" onclick="window.logsScope.toggleLevel('info')">Info</button>
-      <button class="btn btn-sm" :class="level === 'warn' ? 'btn-primary' : 'btn-secondary'" onclick="window.logsScope.toggleLevel('warn')">Warn</button>
-      <button class="btn btn-sm" :class="level === 'error' ? 'btn-primary' : 'btn-secondary'" onclick="window.logsScope.toggleLevel('error')">Error</button>
+      <button class="btn-small" :class="level === 'all' ? 'btn-primary' : 'btn-secondary'" onclick="window.logsScope.toggleLevel('all')">All</button>
+      <button class="btn-small" :class="level === 'info' ? 'btn-primary' : 'btn-secondary'" onclick="window.logsScope.toggleLevel('info')">Info</button>
+      <button class="btn-small" :class="level === 'warn' ? 'btn-primary' : 'btn-secondary'" onclick="window.logsScope.toggleLevel('warn')">Warn</button>
+      <button class="btn-small" :class="level === 'error' ? 'btn-primary' : 'btn-secondary'" onclick="window.logsScope.toggleLevel('error')">Error</button>
       <span style="margin:0 8px"></span>
-      <button class="btn btn-sm btn-secondary" onclick="window.logsScope.paused = !paused" x-text="paused ? 'Resume' : 'Pause'"></button>
-      <button class="btn btn-sm btn-ghost" onclick="window.logsScope.clearLogs()">Clear</button>
+      <button class="btn-small" onclick="window.logsScope.paused = !paused" x-text="paused ? 'Resume' : 'Pause'"></button>
+      <button class="btn-small" onclick="window.logsScope.clearLogs()">Clear</button>
     </div>
   </div>
 

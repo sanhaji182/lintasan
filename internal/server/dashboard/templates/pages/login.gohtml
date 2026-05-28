@@ -7,7 +7,7 @@
     <form hx-post="/api/auth/login" hx-target="this" hx-swap="outerHTML">
       <label class="text-xs font-semibold text-[var(--color-fg-2)]">Master Password</label>
       <input type="password" name="password" placeholder="Enter password..." autocomplete="current-password" class="w-full mt-1 mb-4">
-      <button type="submit" class="btn btn-primary justify-center mt-4 w-full">
+      <button type="submit" class="btn-primary">
         Sign In
       </button>
       <div class="htmx-indicator mt-2 text-center text-sm text-red-500" id="login-error"></div>
