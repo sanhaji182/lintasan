@@ -1624,7 +1624,8 @@ function routingPage() {
     editCombo: function(btn) {
       var d = getData(); if (!d) return;
       var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row);
+      var rows = Array.from(row.parentNode.querySelectorAll('tr'));
+      var idx = rows.indexOf(row);
       var combo = d.combos[idx];
       if (!combo) return;
       d.comboModal = true;
@@ -1703,7 +1704,8 @@ function routingPage() {
     deleteCombo: async function(btn) {
       var d = getData(); if (!d) return;
       var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row);
+      var rows = Array.from(row.parentNode.querySelectorAll('tr'));
+      var idx = rows.indexOf(row);
       var combo = d.combos[idx];
       if (!combo || !combo.id) return;
       if (!confirm('Delete combo "' + combo.name + '"? This cannot be undone.')) return;
@@ -1775,7 +1777,8 @@ function routingPage() {
     editAlias: function(btn) {
       var d = getData(); if (!d) return;
       var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row);
+      var rows = Array.from(row.parentNode.querySelectorAll('tr'));
+      var idx = rows.indexOf(row);
       var alias = d.aliases[idx];
       if (!alias) return;
       d.aliasModal = true;
@@ -1838,7 +1841,8 @@ function routingPage() {
     deleteAlias: async function(btn) {
       var d = getData(); if (!d) return;
       var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row);
+      var rows = Array.from(row.parentNode.querySelectorAll('tr'));
+      var idx = rows.indexOf(row);
       var alias = d.aliases[idx];
       if (!alias) return;
       var id = alias.id || alias.name;
