@@ -31,7 +31,7 @@
         <div>
           <div class="stat-label">Total Keys</div>
           <div x-show="!keys" class="skeleton" style="width:40px;height:24px"></div>
-          <div x-show="keys" x-cloak class="stat-value" x-text="keys.length"></div>
+          <div x-show="keys" x-cloak class="stat-value" x-text="(keys || []).length"></div>
         </div>
       </div>
     </div>
