@@ -129,7 +129,7 @@
       <label
         style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border:2px solid;border-radius:var(--radius);cursor:pointer;transition:all var(--transition)"
         :style="lbStrategy === 'priority' ? 'border-color:var(--primary);background:var(--primary-light)' : 'border-color:var(--border);background:var(--bg-body)'"
-        @click="lbStrategy = 'priority'"
+        onclick="rs.setStrategy('priority')"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
         <span style="font-size:12px;font-weight:600;color:var(--fg-0)">Priority</span>
@@ -140,7 +140,7 @@
       <label
         style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border:2px solid;border-radius:var(--radius);cursor:pointer;transition:all var(--transition)"
         :style="lbStrategy === 'round-robin' ? 'border-color:var(--primary);background:var(--primary-light)' : 'border-color:var(--border);background:var(--bg-body)'"
-        @click="lbStrategy = 'round-robin'"
+        onclick="rs.setStrategy('round-robin')"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <span style="font-size:12px;font-weight:600;color:var(--fg-0)">Round-Robin</span>
@@ -151,7 +151,7 @@
       <label
         style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border:2px solid;border-radius:var(--radius);cursor:pointer;transition:all var(--transition)"
         :style="lbStrategy === 'least-connections' ? 'border-color:var(--primary);background:var(--primary-light)' : 'border-color:var(--border);background:var(--bg-body)'"
-        @click="lbStrategy = 'least-connections'"
+        onclick="rs.setStrategy('least-connections')"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <span style="font-size:12px;font-weight:600;color:var(--fg-0)">Least-Conn</span>
@@ -162,7 +162,7 @@
       <label
         style="display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 12px;border:2px solid;border-radius:var(--radius);cursor:pointer;transition:all var(--transition)"
         :style="lbStrategy === 'latency' ? 'border-color:var(--primary);background:var(--primary-light)' : 'border-color:var(--border);background:var(--bg-body)'"
-        @click="lbStrategy = 'latency'"
+        onclick="rs.setStrategy('latency')"
       >
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         <span style="font-size:12px;font-weight:600;color:var(--fg-0)">Latency</span>
@@ -333,7 +333,7 @@
                     </template>
                   </select>
                   <!-- Remove button -->
-                  <button type="button" class="btn-small" style="color:var(--error);flex-shrink:0;padding:5px 8px" @click="comboForm.models.splice(idx, 1)">
+                  <button type="button" class="btn-small" style="color:var(--error);flex-shrink:0;padding:5px 8px" onclick="rs.removeModelEntry(this)">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   </button>
                 </div>
@@ -645,6 +645,22 @@ function routingPage() {
     },
 
     // ── load balancer ──
+    setStrategy: function(strat) {
+      var d = getData(); if (!d) return;
+      d.lbStrategy = strat;
+    },
+
+    removeModelEntry: function(btn) {
+      var d = getData(); if (!d) return;
+      var entryDiv = btn.closest('div[style*="flex"]');
+      if (!entryDiv) return;
+      var container = entryDiv.parentElement;
+      if (!container) return;
+      var allEntries = container.querySelectorAll(':scope > div[style*="flex"]');
+      var idx = Array.from(allEntries).indexOf(entryDiv);
+      if (idx >= 0) d.comboForm.models.splice(idx, 1);
+    },
+
     saveLoadBalancer: async function() {
       var d = getData(); if (!d) return;
       d.lbSaving = true;
