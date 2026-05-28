@@ -1,197 +1,576 @@
-<div x-data="pluginsData()" x-init="fetchPlugins()">
-  <div class="flex items-center justify-between mb-5">
+<div
+  x-data="pluginsPage()"
+  x-init="fetchStats(); fetchPlugins(); fetchStore()"
+  x-cloak
+  class="fade-in"
+>
+  <!-- ════════════════════════════════════════════ -->
+  <!--  Stats Bar                                      -->
+  <!-- ════════════════════════════════════════════ -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
+    <div class="stat-card fade-in" style="animation-delay:0s">
+      <div class="stat-label">Installed</div>
+      <div class="stat-value" x-text="stats.installed ?? '—'">—</div>
+    </div>
+    <div class="stat-card fade-in" style="animation-delay:0.06s">
+      <div class="stat-label">Active</div>
+      <div class="stat-value" x-text="stats.active ?? '—'" style="color:var(--success)">—</div>
+    </div>
+    <div class="stat-card fade-in" style="animation-delay:0.12s">
+      <div class="stat-label">Store</div>
+      <div class="stat-value" x-text="stats.available ?? '—'">—</div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!--  Top Bar                                       -->
+  <!-- ════════════════════════════════════════════ -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
     <div>
-      <h1 class="text-xl font-bold text-[var(--color-fg-0)]">🧩 Plugins</h1>
-      <p class="text-sm text-[var(--color-fg-2)]">Extend Lintasan with custom plugins.</p>
+      <h1 style="font-size:18px;font-weight:600;color:var(--fg-0);margin:0 0 4px">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:6px;display:inline"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M9 2v20"/><path d="M14 2v20"/><path d="M2 9h20"/><path d="M2 14h20"/></svg>
+        Plugins
+      </h1>
+      <p style="font-size:13px;color:var(--fg-2);margin:0">Extend Lintasan with custom plugins.</p>
     </div>
   </div>
 
-  <!-- Installed Plugins -->
-  <div class="card mb-4">
-    <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Installed Plugins</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Version</th>
-          <th>Description</th>
-          <th>Status</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <template x-if="!installedPlugins">
-          <tr><td colspan="5" class="text-center p-6"><div class="spinner mx-auto"></div></td></tr>
-        </template>
-        <template x-if="installedPlugins">
-          <template x-if="installedPlugins.length === 0">
-            <tr><td colspan="5" class="text-center p-6"><div class="empty-state"><p>No plugins installed</p></div></td></tr>
-          </template>
-        </template>
-        <template x-for="p in installedPlugins" :key="p.id">
+  <!-- ════════════════════════════════════════════ -->
+  <!--  Tab Bar                                        -->
+  <!-- ════════════════════════════════════════════ -->
+  <div style="display:flex;gap:4px;margin-bottom:24px;border-bottom:2px solid var(--border);padding-bottom:0">
+    <button
+      class="btn-secondary"
+      style="border-radius:var(--radius-sm) var(--radius-sm) 0 0;border-bottom:none;padding:10px 20px"
+      :style="activeTab === 'my' ? 'background:var(--bg-card);color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary);margin-bottom:-2px' : ''"
+      @click="activeTab = 'my'"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;display:inline"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M9 2v20"/><path d="M14 2v20"/><path d="M2 9h20"/><path d="M2 14h20"/></svg>
+      My Plugins
+    </button>
+    <button
+      class="btn-secondary"
+      style="border-radius:var(--radius-sm) var(--radius-sm) 0 0;border-bottom:none;padding:10px 20px"
+      :style="activeTab === 'store' ? 'background:var(--bg-card);color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary);margin-bottom:-2px' : ''"
+      @click="activeTab = 'store'"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;display:inline"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+      Store
+    </button>
+    <button
+      class="btn-secondary"
+      style="border-radius:var(--radius-sm) var(--radius-sm) 0 0;border-bottom:none;padding:10px 20px"
+      :style="activeTab === 'ai' ? 'background:var(--bg-card);color:var(--primary);font-weight:600;border-bottom:2px solid var(--primary);margin-bottom:-2px' : ''"
+      @click="activeTab = 'ai'"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;display:inline"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+      AI Generate
+    </button>
+  </div>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!--  TAB: My Plugins                               -->
+  <!-- ════════════════════════════════════════════ -->
+  <div x-show="activeTab === 'my'" class="fade-in">
+    <div class="card">
+      <table>
+        <thead>
           <tr>
-            <td class="text-sm font-medium" x-text="p.name"></td>
-            <td class="text-xs text-[var(--color-fg-2)]" x-text="'v' + (p.version || '0.0.0')"></td>
-            <td class="text-xs text-[var(--color-fg-2)]" x-text="p.description || '—'"></td>
-            <td><span class="badge" :class="p.enabled ? 'badge-success' : 'badge-danger'" x-text="p.enabled ? 'Active' : 'Disabled'"></span></td>
-            <td>
-              <button class="btn btn-ghost btn-sm" onclick="ps.togglePlugin(this)" x-text="p.enabled ? 'Disable' : 'Enable'"></button>
-            </td>
+            <th>Name</th>
+            <th>Version</th>
+            <th>Description</th>
+            <th>Author</th>
+            <th>Status</th>
+            <th></th>
           </tr>
-        </template>
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          <template x-if="installedPlugins === null">
+            <tr>
+              <td colspan="6" style="text-align:center;padding:32px 12px">
+                <div class="spinner" style="margin:0 auto"></div>
+              </td>
+            </tr>
+          </template>
+          <template x-if="installedPlugins !== null && installedPlugins.length === 0">
+            <tr>
+              <td colspan="6" style="text-align:center;padding:0">
+                <div class="empty-state">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:8px;opacity:0.4"><rect x="2" y="2" width="20" height="20" rx="2"/><path d="M9 2v20"/><path d="M14 2v20"/></svg>
+                  <p>No plugins installed.</p>
+                  <p style="font-size:12px;color:var(--fg-3);margin-top:4px">Browse the Store or use AI Generate to create one.</p>
+                </div>
+              </td>
+            </tr>
+          </template>
+          <template x-for="p in installedPlugins" :key="p.id">
+            <tr>
+              <td style="font-size:13px;font-weight:500" x-text="p.name"></td>
+              <td style="font-size:12px;color:var(--fg-2)">
+                <span x-text="'v' + (p.version || '0.0.0')"></span>
+              </td>
+              <td style="font-size:12px;color:var(--fg-2);max-width:250px">
+                <span x-text="p.description || '—'" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block"></span>
+              </td>
+              <td style="font-size:12px;color:var(--fg-2)" x-text="p.author || '—'"></td>
+              <td>
+                <span
+                  class="status-badge"
+                  :class="p.enabled ? 'badge-success' : 'badge-error'"
+                  x-text="p.enabled ? 'Active' : 'Disabled'"
+                ></span>
+              </td>
+              <td>
+                <div style="display:flex;gap:4px">
+                  <button class="btn-small" onclick="gs.togglePlugin(this)" x-text="p.enabled ? 'Disable' : 'Enable'"></button>
+                  <button class="btn-small" style="color:var(--error)" onclick="gs.deletePlugin(this)">Delete</button>
+                </div>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
   </div>
 
-  <!-- Plugin Store -->
-  <div class="card">
-    <h2 class="text-sm font-semibold text-[var(--color-fg-1)] mb-3">Plugin Store</h2>
-    <div x-show="!storePlugins" class="text-center p-6">
-      <div class="spinner mx-auto"></div>
+  <!-- ════════════════════════════════════════════ -->
+  <!--  TAB: Store                                    -->
+  <!-- ════════════════════════════════════════════ -->
+  <div x-show="activeTab === 'store'" class="fade-in">
+    <!-- Category Filters -->
+    <div style="display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap">
+      <template x-for="cat in storeCategories" :key="cat.key">
+        <button
+          class="btn-small"
+          style="font-size:11px;padding:5px 12px"
+          :style="storeActiveCategory === cat.key ? 'background:var(--primary);color:#fff;border-color:var(--primary)' : ''"
+          @click="storeActiveCategory = cat.key"
+          x-text="cat.label"
+        ></button>
+      </template>
     </div>
-    <div x-show="storePlugins" x-cloak>
-      <template x-if="storePlugins.length === 0">
+
+    <!-- Store Grid -->
+    <template x-if="storePlugins === null">
+      <div class="card" style="text-align:center;padding:32px">
+        <div class="spinner" style="margin:0 auto"></div>
+        <p style="font-size:12px;color:var(--fg-3);margin-top:8px">Loading store…</p>
+      </div>
+    </template>
+
+    <template x-if="storePlugins !== null && storePlugins.length === 0">
+      <div class="card">
         <div class="empty-state">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin-bottom:8px;opacity:0.4"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
           <p>No plugins available in the store.</p>
         </div>
-      </template>
-      <template x-if="storePlugins.length > 0">
-        <div class="grid grid-cols-2 gap-3">
-          <template x-for="p in storePlugins" :key="p.name">
-            <div class="card flex items-center justify-between">
-              <div>
-                <div class="text-sm font-medium text-[var(--color-fg-0)]" x-text="p.name"></div>
-                <div class="text-xs text-[var(--color-fg-2)] mt-1" x-text="p.description || ''"></div>
-                <div class="text-xs text-[var(--color-fg-3)] mt-1">
+      </div>
+    </template>
+
+    <template x-if="storePlugins !== null && storePlugins.length > 0">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px">
+        <template x-for="p in storePlugins" :key="p.name">
+          <div
+            class="card"
+            x-show="storeActiveCategory === 'all' || (p.category || 'other') === storeActiveCategory"
+            style="display:flex;flex-direction:column;gap:8px"
+          >
+            <!-- Plugin icon + name -->
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="font-size:24px" x-text="gs.categoryIcon(p.category)"></span>
+              <div style="flex:1;min-width:0">
+                <div style="font-size:14px;font-weight:600;color:var(--fg-0)" x-text="p.name"></div>
+                <div style="font-size:11px;color:var(--fg-3)">
                   <span x-text="'v' + (p.version || '0.0.0')"></span>
-                  <span class="ml-2" x-text="p.author ? 'by ' + p.author : ''"></span>
+                  <span x-show="p.author" style="margin-left:8px" x-text="'by ' + p.author"></span>
                 </div>
               </div>
-              <button class="btn btn-primary btn-sm" onclick="ps.confirmInstall(this)">Install</button>
             </div>
-          </template>
+
+            <!-- Description -->
+            <p style="font-size:12px;color:var(--fg-2);margin:0;line-height:1.5" x-text="p.description || 'No description'"></p>
+
+            <!-- Meta tags -->
+            <div style="display:flex;gap:4px;flex-wrap:wrap">
+              <span
+                x-show="p.category"
+                class="status-badge badge-primary"
+                style="font-size:10px;text-transform:capitalize"
+                x-text="p.category"
+              ></span>
+              <span x-show="p.downloads" class="status-badge" style="font-size:10px;background:var(--bg-body);color:var(--fg-3);border:1px solid var(--border)" x-text="(p.downloads || 0) + ' downloads'"></span>
+            </div>
+
+            <!-- Actions -->
+            <div style="display:flex;gap:8px;align-items:center;justify-content:space-between;margin-top:4px">
+              <span x-show="p.installed" style="font-size:11px;color:var(--success);display:flex;align-items:center;gap:4px">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                Installed
+              </span>
+              <button
+                class="btn-primary"
+                style="padding:6px 14px;font-size:12px;margin-left:auto"
+                onclick="gs.installPlugin(this)"
+                :disabled="p.installed || p.installing"
+              >
+                <span x-show="!p.installing && !p.installed">Install</span>
+                <span x-show="p.installing" x-cloak style="display:flex;align-items:center;gap:4px">
+                  <span class="spinner" style="width:12px;height:12px;border-width:2px"></span>
+                  Installing…
+                </span>
+                <span x-show="p.installed && !p.installing">Installed</span>
+              </button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+  </div>
+
+  <!-- ════════════════════════════════════════════ -->
+  <!--  TAB: AI Generate                              -->
+  <!-- ════════════════════════════════════════════ -->
+  <div x-show="activeTab === 'ai'" class="fade-in">
+    <div class="card">
+      <h2 style="font-size:14px;font-weight:600;color:var(--fg-1);margin-bottom:8px;display:flex;align-items:center;gap:8px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+        Generate a Plugin with AI
+      </h2>
+      <p style="font-size:12px;color:var(--fg-3);margin:0 0 16px">Describe what you want the plugin to do and AI will generate it for you.</p>
+
+      <!-- Textarea -->
+      <div style="margin-bottom:12px">
+        <label class="label-st">Plugin Description</label>
+        <textarea
+          class="input-field"
+          x-model="aiPrompt"
+          placeholder="Describe what your plugin should do...&#10;&#10;Examples:&#10;• Add a /weather command that fetches live weather data&#10;• Filter responses for toxicity before returning them&#10;• Log all completions to a webhook endpoint&#10;• Auto-translate non-English requests"
+          rows="8"
+          style="resize:vertical;font-family:var(--mono);font-size:12px;min-height:160px"
+        ></textarea>
+      </div>
+
+      <!-- Options row -->
+      <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px">
+          <label class="label-st">Plugin Name <span style="color:var(--fg-3);font-weight:400">(optional)</span></label>
+          <input type="text" class="input-field" x-model="aiName" placeholder="e.g., weather-command" />
         </div>
-      </template>
+        <div style="flex:1;min-width:160px">
+          <label class="label-st">Language</label>
+          <select class="input-field" x-model="aiLanguage">
+            <option value="javascript">JavaScript</option>
+            <option value="typescript">TypeScript</option>
+            <option value="python">Python</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Generate button -->
+      <div style="display:flex;align-items:center;gap:12px">
+        <button
+          class="btn-primary"
+          onclick="gs.aiGenerate()"
+          :disabled="!aiPrompt.trim() || aiGenerating"
+        >
+          <span x-show="!aiGenerating" style="display:flex;align-items:center;gap:6px">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            Generate Plugin
+          </span>
+          <span x-show="aiGenerating" x-cloak style="display:flex;align-items:center;gap:6px">
+            <span class="spinner" style="width:14px;height:14px;border-width:2px"></span>
+            Generating…
+          </span>
+        </button>
+
+        <button
+          x-show="aiResult"
+          x-cloak
+          class="btn-secondary"
+          onclick="gs.installGenerated()"
+          :disabled="aiInstalling"
+        >
+          <span x-show="!aiInstalling" style="display:flex;align-items:center;gap:6px">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Install Generated Plugin
+          </span>
+          <span x-show="aiInstalling" x-cloak style="display:flex;align-items:center;gap:6px">
+            <span class="spinner" style="width:14px;height:14px;border-width:2px"></span>
+            Installing…
+          </span>
+        </button>
+      </div>
+
+      <!-- AI Result code display -->
+      <div x-show="aiResult" x-cloak style="margin-top:16px;padding:16px;background:var(--bg-body);border:1px solid var(--border);border-radius:var(--radius-sm);max-height:300px;overflow-y:auto">
+        <p style="font-size:11px;font-weight:600;color:var(--fg-2);margin:0 0 8px;text-transform:uppercase;letter-spacing:0.5px">Generated Code — <span x-text="aiResultName"></span></p>
+        <pre style="font-family:var(--mono);font-size:11px;color:var(--fg-0);margin:0;white-space:pre-wrap;line-height:1.6" x-text="aiResult"></pre>
+      </div>
     </div>
   </div>
 
-  <!-- Install Confirmation Modal -->
-  <template x-if="showConfirm">
-    <div>
-      <div class="modal-backdrop" onclick="ps.hideModal()"></div>
-      <div class="modal-panel">
-        <div class="flex items-center justify-between mb-4">
-          <h2 class="text-base font-semibold text-[var(--color-fg-0)]">Install Plugin</h2>
-          <button class="text-lg text-[var(--color-fg-3)] hover:text-[var(--color-fg-0)]" onclick="ps.hideModal()">&times;</button>
-        </div>
-        <p class="text-sm text-[var(--color-fg-2)] mb-4">
-          Are you sure you want to install <strong x-text="installPlugin?.name"></strong>? It may have access to your API keys and data.
-        </p>
-        <div class="flex gap-2 justify-end">
-          <button class="btn btn-secondary" onclick="ps.hideModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="ps.installPlugin()">Install</button>
-        </div>
-      </div>
-    </div>
-  </template>
+  <!-- ════════════════════════════════════════════ -->
+  <!--  Toasts                                        -->
+  <!-- ════════════════════════════════════════════ -->
+  <div style="position:fixed;bottom:20px;right:20px;z-index:100;display:flex;flex-direction:column;gap:8px">
+    <template x-for="(t, idx) in toasts" :key="idx">
+      <div
+        style="border-radius:var(--radius);padding:12px 20px;font-size:13px;font-weight:500;color:#fff;box-shadow:var(--shadow-md);animation:fadeInScale .3s ease-out;max-width:360px"
+        :style="t.type === 'success' ? 'background:#166534' : 'background:#991b1b'"
+        x-text="t.message"
+        x-init="setTimeout(() => toasts.splice(idx, 1), 3500)"
+      ></div>
+    </template>
+  </div>
 </div>
 
 <script>
+function pluginsPage() {
+  return {
+    // ── state ──
+    activeTab: 'my',
+    installedPlugins: null,
+    storePlugins: null,
+    stats: { installed: 0, active: 0, available: 0 },
+    // Store filters
+    storeCategories: [
+      { key: 'all', label: 'All' },
+      { key: 'utility', label: '🛠 Utility' },
+      { key: 'moderation', label: '🛡 Moderation' },
+      { key: 'logging', label: '📋 Logging' },
+      { key: 'translation', label: '🌐 Translation' },
+      { key: 'cache', label: '⚡ Cache' },
+      { key: 'webhook', label: '🔗 Webhook' },
+      { key: 'other', label: '📦 Other' },
+    ],
+    storeActiveCategory: 'all',
+    // AI generate
+    aiPrompt: '',
+    aiName: '',
+    aiLanguage: 'javascript',
+    aiGenerating: false,
+    aiResult: null,
+    aiResultName: '',
+    aiInstalling: false,
+    toasts: [],
+
+    addToast: function(type, message) {
+      this.toasts.push({ type: type, message: message });
+    },
+  };
+}
+
 (function() {
   function getData() {
     var el = document.querySelector('[x-data]');
     return el ? Alpine.$data(el) : null;
   }
 
+  function updateStats() {
+    var d = getData(); if (!d) return;
+    var installed = (d.installedPlugins || []).length;
+    var active = (d.installedPlugins || []).filter(function(p){ return p.enabled; }).length;
+    var available = (d.storePlugins|| []).length;
+    d.stats = { installed: installed, active: active, available: available };
+  }
+
+  window.fetchStats = function() { updateStats(); };
+
   window.fetchPlugins = async function() {
-    var d = getData();
-    if (!d) { setTimeout(fetchPlugins, 100); return; }
-    var ps = window.ps;
+    var d = getData(); if (!d) { setTimeout(fetchPlugins, 100); return; }
     try {
       var r = await fetch('/api/plugins');
       if (r.ok) {
         var data = await r.json();
-        d.installedPlugins = data.data || data || [];
+        d.installedPlugins = Array.isArray(data) ? data : (data.data || []);
+        updateStats();
       }
-    } catch(e) { console.error('Fetch installed plugins failed', e); }
-
-    try {
-      var r2 = await fetch('/api/plugins/store');
-      if (r2.ok) {
-        var data2 = await r2.json();
-        d.storePlugins = data2.data || data2 || [];
-      }
-    } catch(e) { console.error('Fetch plugin store failed', e); }
+    } catch(e) { console.error('Fetch plugins failed', e); }
   };
 
-  window.ps = {
-    showModal: function() {
-      var d = getData(); if (!d) return;
-      d.showConfirm = true;
-    },
-    hideModal: function() {
-      var d = getData(); if (!d) return;
-      d.showConfirm = false;
-      d.installPlugin = null;
-    },
-    confirmInstall: function(btn) {
-      var d = getData(); if (!d) return;
-      var card = btn.closest('.card');
-      if (!card) return;
-      var nameEl = card.querySelector('[x-text="p.name"]');
-      var name = nameEl ? nameEl.textContent : '';
-      var descEl = card.querySelector('[x-text="p.description || \'\'"]');
-      var description = descEl ? descEl.textContent : '';
-      var verEl = card.querySelector('[x-text="\'v\' + (p.version || \'0.0.0\')"]');
-      var version = verEl ? verEl.textContent.replace(/^v/, '') : '0.0.0';
-      var authorEl = card.querySelector('[x-text="p.author ? \'by \' + p.author : \'\'"]');
-      var author = authorEl ? authorEl.textContent.replace(/^by /, '') : '';
-      var categoryEl = card.querySelector('[x-text="p.category"]');
-      var category = categoryEl ? categoryEl.textContent : '';
-      d.installPlugin = { name: name, version: version, description: description, author: author, category: category };
-      d.showConfirm = true;
-    },
-    installPlugin: async function() {
-      var d = getData(); if (!d) return;
-      if (!d.installPlugin) return;
-      try {
-        var r = await fetch('/api/plugins', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'install',
-            name: d.installPlugin.name,
-            version: d.installPlugin.version,
-            description: d.installPlugin.description,
-            category: d.installPlugin.category,
-            author: d.installPlugin.author
-          })
+  window.fetchStore = async function() {
+    var d = getData(); if (!d) { setTimeout(fetchStore, 100); return; }
+    try {
+      var r = await fetch('/api/plugins/store');
+      if (r.ok) {
+        var data = await r.json();
+        var items = Array.isArray(data) ? data : (data.data || []);
+        // Mark installed plugins
+        var installedIds = (d.installedPlugins || []).map(function(p){ return p.name || p.id; });
+        items.forEach(function(p) {
+          p.installed = installedIds.indexOf(p.name) !== -1;
+          p.installing = false;
         });
-        if (r.ok) {
-          d.showConfirm = false;
-          d.installPlugin = null;
-          await fetchPlugins();
-        }
-      } catch(e) { console.error('Install plugin failed', e); }
+        d.storePlugins = items;
+        updateStats();
+      }
+    } catch(e) { console.error('Fetch store failed', e); }
+  };
+
+  window.gs = {
+    // ── category icon ──
+    categoryIcon: function(cat) {
+      var icons = {
+        'utility': '🛠',
+        'moderation': '🛡',
+        'logging': '📋',
+        'translation': '🌐',
+        'cache': '⚡',
+        'webhook': '🔗',
+        'other': '📦',
+      };
+      return icons[cat] || '🧩';
     },
+
+    // ── toggle ──
     togglePlugin: async function(btn) {
       var d = getData(); if (!d) return;
       var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row) - 1;
+      var idx = Array.from(row.parentNode.children).indexOf(row);
       var p = d.installedPlugins[idx];
       if (!p || !p.id) return;
       try {
         var r = await fetch('/api/plugins/toggle', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: p.id })
+          body: JSON.stringify({ id: p.id }),
         });
         if (r.ok) {
           var data = await r.json();
           p.enabled = data.enabled !== undefined ? data.enabled : !p.enabled;
+          d.addToast('success', p.enabled ? '"' + p.name + '" enabled.' : '"' + p.name + '" disabled.');
+          updateStats();
         }
       } catch(e) { console.error('Toggle plugin failed', e); }
-    }
+    },
+
+    // ── delete ──
+    deletePlugin: async function(btn) {
+      var d = getData(); if (!d) return;
+      var row = btn.closest('tr');
+      var idx = Array.from(row.parentNode.children).indexOf(row);
+      var p = d.installedPlugins[idx];
+      if (!p || !p.id) return;
+      if (!confirm('Delete plugin "' + p.name + '"? This cannot be undone.')) return;
+      try {
+        var r = await fetch('/api/plugins?id=' + encodeURIComponent(p.id), { method: 'DELETE' });
+        if (r.ok) {
+          d.installedPlugins = d.installedPlugins.filter(function(pl){ return pl.id !== p.id; });
+          d.addToast('success', 'Plugin "' + p.name + '" deleted.');
+          updateStats();
+          // Refresh store installed status
+          window.fetchStore();
+        }
+      } catch(e) { console.error('Delete plugin failed', e); }
+    },
+
+    // ── install from store ──
+    installPlugin: async function(btn) {
+      var d = getData(); if (!d) return;
+      var card = btn.closest('.card');
+      if (!card) return;
+      var grid = card.closest('[style*="grid"]');
+      if (!grid) return;
+      var cards = grid.querySelectorAll(':scope > .card');
+      var idx = -1;
+      for (var i = 0; i < cards.length; i++) {
+        if (cards[i] === card) { idx = i; break; }
+      }
+      if (idx < 0) return;
+      var p = d.storePlugins[idx];
+      if (!p || p.installed) return;
+
+      p.installing = true;
+      try {
+        var r = await fetch('/api/plugins', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'install',
+            name: p.name,
+            version: p.version || '0.0.0',
+            description: p.description || '',
+            category: p.category || '',
+            author: p.author || '',
+          }),
+        });
+        if (r.ok) {
+          p.installed = true;
+          p.installing = false;
+          await fetchPlugins();
+          updateStats();
+          d.addToast('success', 'Plugin "' + p.name + '" installed!');
+        } else {
+          p.installing = false;
+          d.addToast('error', 'Failed to install "' + p.name + '".');
+        }
+      } catch(e) {
+        p.installing = false;
+        d.addToast('error', 'Network error installing "' + p.name + '".');
+      }
+    },
+
+    // ── AI generate ──
+    aiGenerate: async function() {
+      var d = getData(); if (!d) return;
+      if (!d.aiPrompt.trim()) return;
+      d.aiGenerating = true;
+      d.aiResult = null;
+      try {
+        var r = await fetch('/api/plugins/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: d.aiPrompt.trim(),
+            name: d.aiName.trim() || 'ai-generated-plugin',
+            language: d.aiLanguage,
+          }),
+        });
+        if (r.ok) {
+          var data = await r.json();
+          d.aiResult = data.code || data.result || '';
+          d.aiResultName = data.name || d.aiName || 'ai-generated-plugin';
+        } else {
+          var err = await r.text().catch(function(){ return ''; });
+          d.addToast('error', 'Generation failed: ' + (err || 'Unknown error'));
+        }
+      } catch(e) {
+        d.addToast('error', 'Network error during generation.');
+      } finally {
+        d.aiGenerating = false;
+      }
+    },
+
+    // ── install generated ──
+    installGenerated: async function() {
+      var d = getData(); if (!d) return;
+      if (!d.aiResult) return;
+      d.aiInstalling = true;
+      try {
+        var r = await fetch('/api/plugins', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'install-generated',
+            name: d.aiResultName,
+            code: d.aiResult,
+            language: d.aiLanguage,
+          }),
+        });
+        if (r.ok) {
+          d.addToast('success', 'Plugin "' + d.aiResultName + '" installed!');
+          await fetchPlugins();
+          updateStats();
+        } else {
+          var err = await r.text().catch(function(){ return ''; });
+          d.addToast('error', 'Install failed: ' + (err || 'Unknown error'));
+        }
+      } catch(e) {
+        d.addToast('error', 'Network error during install.');
+      } finally {
+        d.aiInstalling = false;
+      }
+    },
   };
 })();
 </script>

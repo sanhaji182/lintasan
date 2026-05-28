@@ -1,16 +1,54 @@
-<div x-data="{ showCreateModal: false, editMode: false, editId: '', form: { name: '', url: '', events: 'completion' }, webhooks: null, toasts: [] }" x-init="fetchWebhooks()">
+<div
+  x-data="{
+    webhooks: null, history: null,
+    stats: { total: 0, active: 0, failed24h: 0 },
+    form: { name: '', url: '', secret: '', events: { completion: true, error: true, usage: false, moderation: false } },
+    toasts: []
+  }"
+  x-init="fetchWebhooks()"
+>
   <style>
     .pg-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
-    .pg-title{font-size:20px;font-weight:700;color:var(--color-fg-0);display:flex;align-items:center;gap:8px}
-    .pg-title svg{width:20px;height:20px;color:var(--color-primary);flex-shrink:0}
-    .pg-sub{font-size:13px;color:var(--color-fg-2);margin-top:2px}
-    .modal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-    .modal-title{font-size:15px;font-weight:600;color:var(--color-fg-0)}
-    .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .pg-title{font-size:18px;font-weight:700;color:var(--fg-0);display:flex;align-items:center;gap:8px;margin:0 0 4px}
+    .pg-title svg{width:18px;height:18px;color:var(--primary);flex-shrink:0}
+    .pg-sub{font-size:13px;color:var(--fg-2);margin:0}
+    .stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+    .stat-card{background:var(--bg-card);border-radius:var(--radius);padding:16px 20px;box-shadow:var(--shadow);border:1px solid var(--border)}
+    .stat-label{font-size:11px;color:var(--fg-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;font-weight:500}
+    .stat-value{font-size:22px;font-weight:700;color:var(--fg-0);font-family:var(--mono);letter-spacing:-0.5px}
+    .inline-form{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+    .inline-form .field{display:flex;flex-direction:column;gap:4px;min-width:130px;flex:1}
+    .inline-form .field label{font-size:11px;color:var(--fg-3);font-weight:500;text-transform:uppercase;letter-spacing:0.5px}
+    .inline-form .input-field{width:100%;padding:8px 10px;background:var(--bg-body);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--fg-0);font-size:13px;outline:none;transition:border-color 0.15s}
+    .inline-form .input-field:focus{border-color:var(--primary)}
+    .checkbox-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:20px;min-width:200px}
+    .checkbox-group label{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--fg-1);cursor:pointer;white-space:nowrap}
+    .checkbox-group input[type="checkbox"]{width:14px;height:14px;accent-color:var(--primary)}
+    .btn-row{display:flex;align-items:flex-end;gap:8px}
+    .btn-row .btn-primary{padding:8px 18px;white-space:nowrap}
+    .btn-row .btn-secondary{padding:8px 16px;white-space:nowrap}
+    .toggle-pill{display:inline-flex;align-items:center;height:24px;width:44px;border-radius:12px;cursor:pointer;transition:background 0.2s;position:relative;border:none}
+    .toggle-pill.on{background:var(--success)}
+    .toggle-pill.off{background:var(--border)}
+    .toggle-pill::after{content:'';position:absolute;top:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3)}
+    .toggle-pill.on::after{transform:translateX(20px);left:2px}
+    .toggle-pill.off::after{transform:translateX(0);left:2px}
     .td-ctr{text-align:center;padding:24px}
-    .url-cell{font-size:12px;color:var(--color-fg-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;display:block}
+    .section-title{font-size:13px;font-weight:600;color:var(--fg-1);margin-bottom:12px;display:flex;align-items:center;gap:8px}
+    .section-title svg{width:14px;height:14px;color:var(--fg-3)}
+    .mono-cell{font-size:12px;font-family:var(--mono);color:var(--fg-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px;display:block}
+    .http-badge{font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600;font-family:var(--mono)}
+    .http-2xx{background:var(--success-light);color:var(--success)}
+    .http-4xx{background:var(--warning-light);color:var(--warning)}
+    .http-5xx{background:var(--error-light);color:var(--error)}
+    @media(max-width:768px){
+      .stat-grid{grid-template-columns:repeat(2,1fr);gap:10px}
+      .inline-form{flex-direction:column}
+      .inline-form .field{flex:auto;width:100%}
+    }
   </style>
 
+  <!-- Page Header -->
   <div class="pg-hdr">
     <div>
       <h1 class="pg-title">
@@ -19,39 +57,101 @@
       </h1>
       <p class="pg-sub">Configure webhook endpoints for event notifications.</p>
     </div>
-    <button class="btn btn-primary" onclick="ws.showModal()">+ Add Webhook</button>
+  </div>
+
+  <!-- Stats Bar -->
+  <div class="stat-grid fade-in">
+    <div class="stat-card">
+      <div class="stat-label">Total Webhooks</div>
+      <div class="stat-value" x-text="stats.total">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active</div>
+      <div class="stat-value" x-text="stats.active" style="color:var(--success)">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Failed (24h)</div>
+      <div class="stat-value" x-text="stats.failed24h" style="color:var(--error)">0</div>
+    </div>
+  </div>
+
+  <!-- Inline Add Webhook Form -->
+  <div class="card fade-in" style="margin-bottom:16px">
+    <form onsubmit="event.preventDefault(); whHandler.createWebhook()">
+      <div class="inline-form">
+        <div class="field">
+          <label>Name</label>
+          <input type="text" class="input-field" x-model="form.name" placeholder="Slack Notifications" required>
+        </div>
+        <div class="field">
+          <label>URL</label>
+          <input type="url" class="input-field" x-model="form.url" placeholder="https://hooks.example.com/..." required>
+        </div>
+        <div class="field">
+          <label>Secret</label>
+          <input type="password" class="input-field" x-model="form.secret" placeholder="whsec_...">
+        </div>
+        <div class="checkbox-group">
+          <label><input type="checkbox" x-model="form.events.completion"> Completion</label>
+          <label><input type="checkbox" x-model="form.events.error"> Error</label>
+          <label><input type="checkbox" x-model="form.events.usage"> Usage</label>
+          <label><input type="checkbox" x-model="form.events.moderation"> Moderation</label>
+        </div>
+        <div class="btn-row">
+          <button type="submit" class="btn-primary" :disabled="!form.name.trim() || !form.url.trim()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            Add Webhook
+          </button>
+        </div>
+      </div>
+    </form>
   </div>
 
   <!-- Webhooks Table -->
-  <div class="card">
+  <div class="card fade-in" style="margin-bottom:24px">
+    <div class="section-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
+      Configured Webhooks
+    </div>
     <table>
       <thead>
         <tr>
           <th>Name</th>
           <th>URL</th>
           <th>Events</th>
-          <th>Status</th>
-          <th>Last Triggered</th>
-          <th></th>
+          <th>Active</th>
+          <th style="width:120px">Actions</th>
         </tr>
       </thead>
       <tbody>
         <template x-if="!webhooks">
-          <tr><td colspan="6" class="td-ctr"><div class="spinner" style="margin:0 auto"></div></td></tr>
+          <tr><td colspan="5" class="td-ctr"><div class="spinner" style="margin:0 auto"></div></td></tr>
         </template>
         <template x-if="webhooks && webhooks.length === 0">
-          <tr><td colspan="6" class="td-ctr"><div class="empty-state"><p>No webhooks configured</p></div></td></tr>
+          <tr><td colspan="5" class="td-ctr"><div class="empty-state"><p>No webhooks configured</p></div></td></tr>
         </template>
         <template x-for="wh in webhooks" :key="wh.id">
           <tr>
             <td style="font-size:13px;font-weight:500" x-text="wh.name"></td>
-            <td><span class="url-cell" x-text="wh.url"></span></td>
-            <td><span class="badge badge-default" x-text="wh.events || 'completion'"></span></td>
-            <td><span class="badge" :class="wh.is_active ? 'badge-success' : 'badge-danger'" x-text="wh.is_active ? 'Active' : 'Inactive'"></span></td>
-            <td style="font-size:12px;color:var(--color-fg-3)" x-text="wh.last_triggered || 'Never'"></td>
+            <td><span class="mono-cell" x-text="wh.url"></span></td>
+            <td style="font-size:12px;color:var(--fg-2)">
+              <span x-text="Object.entries(wh.events || {}).filter(([k,v]) => v).map(([k]) => k).join(', ') || '—'"></span>
+            </td>
             <td>
-              <button class="btn btn-ghost btn-sm" onclick="ws.editItem(this)">Edit</button>
-              <button class="btn btn-ghost btn-sm" style="color:var(--color-danger)" onclick="ws.deleteItem(this)">Delete</button>
+              <button class="toggle-pill"
+                :class="wh.is_active ? 'on' : 'off'"
+                :aria-label="wh.is_active ? 'Deactivate' : 'Activate'"
+                @click="whHandler.toggleWebhook(wh)"></button>
+            </td>
+            <td>
+              <div style="display:flex;gap:6px;align-items:center">
+                <button class="btn-secondary" style="padding:4px 10px;font-size:11px" @click="whHandler.testWebhook(wh)">
+                  Test
+                </button>
+                <button class="btn-danger" @click="whHandler.deleteWebhook(wh)" title="Delete webhook">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+              </div>
             </td>
           </tr>
         </template>
@@ -59,40 +159,43 @@
     </table>
   </div>
 
-  <!-- Create/Edit Webhook Modal -->
-  <template x-if="showCreateModal">
-    <div>
-      <div class="modal-backdrop" onclick="ws.hideModal()"></div>
-      <div class="modal-panel">
-        <div class="modal-hdr">
-          <h2 class="modal-title" x-text="editMode ? 'Edit Webhook' : 'Add Webhook'"></h2>
-          <button class="btn-icon" style="font-size:18px" onclick="ws.hideModal()">&times;</button>
-        </div>
-        <form onsubmit="event.preventDefault(); ws.saveItem()">
-          <template x-if="editMode">
-            <input type="hidden" name="id" :value="editId">
-          </template>
-          <label>Name</label>
-          <input type="text" name="name" x-model="form.name" placeholder="e.g., Slack Notifications">
-
-          <label>Webhook URL</label>
-          <input type="url" name="url" x-model="form.url" placeholder="https://hooks.example.com/...">
-
-          <label>Events</label>
-          <select name="events" x-model="form.events">
-            <option value="completion">Completion</option>
-            <option value="error">Error</option>
-            <option value="completion,error">All Events</option>
-          </select>
-
-          <div class="btn-row">
-            <button type="button" class="btn btn-secondary" onclick="ws.hideModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary" :disabled="!form.name.trim() || !form.url.trim()" x-text="editMode ? 'Update' : 'Create'"></button>
-          </div>
-        </form>
-      </div>
+  <!-- History Table -->
+  <div class="card fade-in">
+    <div class="section-title">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+      Delivery History
     </div>
-  </template>
+    <table>
+      <thead>
+        <tr>
+          <th>Webhook</th>
+          <th>Event</th>
+          <th>Status</th>
+          <th>Attempted</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-if="!history">
+          <tr><td colspan="4" class="td-ctr"><div class="spinner" style="margin:0 auto"></div></td></tr>
+        </template>
+        <template x-if="history && history.length === 0">
+          <tr><td colspan="4" class="td-ctr"><div class="empty-state"><p>No delivery history</p></div></td></tr>
+        </template>
+        <template x-for="entry in history" :key="entry.id">
+          <tr>
+            <td style="font-size:13px;font-weight:500" x-text="entry.webhook_name || '—'"></td>
+            <td style="font-size:12px;color:var(--fg-2);text-transform:capitalize" x-text="entry.event || '—'"></td>
+            <td>
+              <span class="http-badge"
+                :class="entry.status_code >= 200 && entry.status_code < 300 ? 'http-2xx' : (entry.status_code >= 400 && entry.status_code < 500 ? 'http-4xx' : 'http-5xx')"
+                x-text="entry.status_code + (entry.status_text ? ' ' + entry.status_text : '')"></span>
+            </td>
+            <td style="font-size:12px;color:var(--fg-3)" x-text="entry.attempted_at || '—'"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </div>
 
   <!-- Toast container -->
   <div>
@@ -100,86 +203,124 @@
       <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
     </template>
   </div>
-</div>
 
-<script>
-(function() {
-  function getData() {
-    var el = document.querySelector('[x-data]');
-    return el ? Alpine.$data(el) : null;
-  }
-
-  window.ws = {
-    showModal: function() {
-      var d = getData(); if (!d) return;
-      d.editMode = false;
-      d.editId = '';
-      d.form = { name: '', url: '', events: 'completion' };
-      d.showCreateModal = true;
-    },
-    hideModal: function() {
-      var d = getData(); if (!d) return;
-      d.showCreateModal = false;
-    },
-    editItem: function(btn) {
-      var d = getData(); if (!d) return;
-      var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row) - 1;
-      var wh = d.webhooks[idx];
-      if (!wh) return;
-      d.editMode = true;
-      d.editId = wh.id;
-      d.form = {
-        name: wh.name || '',
-        url: wh.url || '',
-        events: wh.events || 'completion'
-      };
-      d.showCreateModal = true;
-    },
-    saveItem: async function() {
-      var d = getData(); if (!d) return;
-      try {
-        var method = d.editMode ? 'PUT' : 'POST';
-        var r = await fetch('/api/webhooks', {
-          method: method,
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(d.form)
-        });
-        if (r.ok) {
-          d.showCreateModal = false;
-          d.form = { name: '', url: '', events: 'completion' };
-          d.editMode = false;
-          await fetchWebhooks();
-          d.toasts.push({ type: 'success', message: 'Webhook saved successfully' });
-        }
-      } catch(e) { console.error('Save webhook failed', e); }
-    },
-    deleteItem: async function(btn) {
-      var d = getData(); if (!d) return;
-      var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row) - 1;
-      var wh = d.webhooks[idx];
-      if (!wh || !wh.id) return;
-      if (!confirm('Delete webhook "' + wh.name + '"?')) return;
-      try {
-        var r = await fetch('/api/webhooks?id=' + wh.id, { method: 'DELETE' });
-        if (r.ok) {
-          d.webhooks = d.webhooks.filter(function(w) { return w.id !== wh.id; });
-          d.toasts.push({ type: 'success', message: 'Webhook deleted' });
-        }
-      } catch(e) { console.error('Delete webhook failed', e); }
+  <script>
+  (function() {
+    function getData() {
+      var el = document.querySelector('[x-data]');
+      return el ? Alpine.$data(el) : null;
     }
-  };
 
-  window.fetchWebhooks = async function() {
-    var d = getData();
-    if (!d) { setTimeout(fetchWebhooks, 100); return; }
-    try {
-      var r = await fetch('/api/webhooks');
-      if (r.ok) {
-        d.webhooks = await r.json();
+    function computeStats() {
+      var d = getData(); if (!d || !d.webhooks) return;
+      d.stats.total = d.webhooks.length;
+      d.stats.active = d.webhooks.filter(function(w) { return w.is_active; }).length;
+      d.stats.failed24h = (d.history || [])
+        .filter(function(e) { return e.status_code >= 400; }).length;
+    }
+
+    function buildEventsPayload(eventsObj) {
+      return Object.keys(eventsObj).filter(function(k) { return eventsObj[k]; });
+    }
+
+    window.whHandler = {
+      createWebhook: async function() {
+        var d = getData(); if (!d) return;
+        try {
+          var r = await fetch('/api/webhooks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: d.form.name,
+              url: d.form.url,
+              secret: d.form.secret,
+              events: buildEventsPayload(d.form.events)
+            })
+          });
+          if (r.ok) {
+            d.form = { name: '', url: '', secret: '', events: { completion: true, error: true, usage: false, moderation: false } };
+            await fetchWebhooks();
+            d.toasts.push({ type: 'success', message: 'Webhook created successfully' });
+          } else {
+            d.toasts.push({ type: 'error', message: 'Failed to create webhook' });
+          }
+        } catch(e) { console.error('Create webhook failed', e); }
+      },
+
+      toggleWebhook: async function(wh) {
+        var d = getData(); if (!d || !wh.id) return;
+        var newState = !wh.is_active;
+        try {
+          var r = await fetch('/api/webhooks?id=' + wh.id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_active: newState })
+          });
+          if (r.ok) {
+            wh.is_active = newState;
+            computeStats();
+            d.toasts.push({ type: 'success', message: 'Webhook ' + (newState ? 'activated' : 'deactivated') });
+          }
+        } catch(e) { console.error('Toggle webhook failed', e); }
+      },
+
+      testWebhook: async function(wh) {
+        var d = getData(); if (!d || !wh.id) return;
+        d.toasts.push({ type: 'success', message: 'Test event sent to "' + wh.name + '"' });
+        try {
+          var r = await fetch('/api/webhooks/' + wh.id + '/test', { method: 'POST' });
+          if (r.ok) {
+            await fetchWebhookHistory();
+          }
+        } catch(e) { console.error('Test webhook failed', e); }
+      },
+
+      deleteWebhook: async function(wh) {
+        var d = getData(); if (!d || !wh.id) return;
+        if (!confirm('Delete webhook "' + wh.name + '"? This cannot be undone.')) return;
+        try {
+          var r = await fetch('/api/webhooks?id=' + wh.id, { method: 'DELETE' });
+          if (r.ok) {
+            d.webhooks = d.webhooks.filter(function(w) { return w.id !== wh.id; });
+            computeStats();
+            d.toasts.push({ type: 'success', message: 'Webhook deleted' });
+          }
+        } catch(e) { console.error('Delete webhook failed', e); }
       }
-    } catch(e) { console.error('Webhooks fetch failed', e); }
-  };
-})();
-</script>
+    };
+
+    window.fetchWebhooks = async function() {
+      var d = getData();
+      if (!d) { setTimeout(fetchWebhooks, 100); return; }
+      try {
+        var r = await fetch('/api/webhooks');
+        if (r.ok) {
+          var data = await r.json();
+          d.webhooks = Array.isArray(data) ? data : (data.data || []);
+          computeStats();
+        }
+      } catch(e) { console.error('Webhooks fetch failed', e); }
+    };
+
+    window.fetchWebhookHistory = async function() {
+      var d = getData();
+      if (!d) return;
+      try {
+        var r = await fetch('/api/webhooks/history');
+        if (r.ok) {
+          var data = await r.json();
+          d.history = Array.isArray(data) ? data : (data.data || []);
+          computeStats();
+        }
+      } catch(e) { console.error('History fetch failed', e); }
+    };
+
+    // Fetch history on init too
+    var origInit = fetchWebhooks;
+    fetchWebhooks = async function() {
+      await origInit();
+      await fetchWebhookHistory();
+    };
+  })();
+  </script>
+</div>

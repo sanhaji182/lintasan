@@ -1,15 +1,45 @@
-<div x-data="{ showCreateModal: false, newUserName: '', newUserEmail: '', newUserRole: 'member', users: null, toasts: [] }" x-init="fetchUsers()">
+<div
+  x-data="{ users: null, stats: { total: 0, admins: 0, active: 0, inactive: 0 }, form: { username: '', password: '', email: '', role: 'viewer' }, toasts: [] }"
+  x-init="fetchUsers()"
+>
   <style>
     .pg-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
-    .pg-title{font-size:20px;font-weight:700;color:var(--color-fg-0);display:flex;align-items:center;gap:8px}
-    .pg-title svg{width:20px;height:20px;color:var(--color-primary);flex-shrink:0}
-    .pg-sub{font-size:13px;color:var(--color-fg-2);margin-top:2px}
-    .modal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-    .modal-title{font-size:15px;font-weight:600;color:var(--color-fg-0)}
-    .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+    .pg-title{font-size:18px;font-weight:700;color:var(--fg-0);display:flex;align-items:center;gap:8px;margin:0 0 4px}
+    .pg-title svg{width:18px;height:18px;color:var(--primary);flex-shrink:0}
+    .pg-sub{font-size:13px;color:var(--fg-2);margin:0}
+    .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+    .stat-card{background:var(--bg-card);border-radius:var(--radius);padding:16px 20px;box-shadow:var(--shadow);border:1px solid var(--border)}
+    .stat-label{font-size:11px;color:var(--fg-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;font-weight:500}
+    .stat-value{font-size:22px;font-weight:700;color:var(--fg-0);font-family:var(--mono);letter-spacing:-0.5px}
+    .inline-form{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+    .inline-form .field{display:flex;flex-direction:column;gap:4px;min-width:120px;flex:1}
+    .inline-form .field label{font-size:11px;color:var(--fg-3);font-weight:500;text-transform:uppercase;letter-spacing:0.5px}
+    .inline-form .input-field{width:100%;padding:8px 10px;background:var(--bg-body);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--fg-0);font-size:13px;outline:none;transition:border-color 0.15s}
+    .inline-form .input-field:focus{border-color:var(--primary)}
+    .inline-form select.input-field{cursor:pointer}
+    .btn-row{display:flex;align-items:flex-end;gap:8px}
+    .btn-row .btn-primary{padding:8px 18px;white-space:nowrap}
+    .role-badge{font-size:11px;padding:3px 10px;border-radius:9999px;font-weight:600;text-transform:capitalize}
+    .role-admin{background:var(--error-light);color:var(--error)}
+    .role-editor{background:var(--warning-light);color:var(--warning)}
+    .role-viewer{background:var(--info-light);color:var(--info)}
+    .toggle-pill{display:inline-flex;align-items:center;height:24px;width:44px;border-radius:12px;cursor:pointer;transition:background 0.2s;position:relative;border:none}
+    .toggle-pill.on{background:var(--success)}
+    .toggle-pill.off{background:var(--border)}
+    .toggle-pill::after{content:'';position:absolute;top:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3)}
+    .toggle-pill.on::after{transform:translateX(20px);left:2px}
+    .toggle-pill.off::after{transform:translateX(0);left:2px}
+    .trash-btn{display:flex;align-items:center;justify-content:center;width:30px;height:30px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--error);cursor:pointer;transition:all 0.15s ease}
+    .trash-btn:hover{background:var(--error-light);border-color:var(--error)}
     .td-ctr{text-align:center;padding:24px}
+    @media(max-width:768px){
+      .stat-grid{grid-template-columns:repeat(2,1fr);gap:10px}
+      .inline-form{flex-direction:column}
+      .inline-form .field{flex:auto;width:100%}
+    }
   </style>
 
+  <!-- Page Header -->
   <div class="pg-hdr">
     <div>
       <h1 class="pg-title">
@@ -18,38 +48,100 @@
       </h1>
       <p class="pg-sub">Manage dashboard and API users.</p>
     </div>
-    <button class="btn btn-primary" onclick="us.showModal()">+ Add User</button>
+  </div>
+
+  <!-- Stats Bar -->
+  <div class="stat-grid fade-in">
+    <div class="stat-card">
+      <div class="stat-label">Total Users</div>
+      <div class="stat-value" x-text="stats.total">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Admins</div>
+      <div class="stat-value" x-text="stats.admins" style="color:var(--error)">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Active</div>
+      <div class="stat-value" x-text="stats.active" style="color:var(--success)">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Inactive</div>
+      <div class="stat-value" x-text="stats.inactive" style="color:var(--fg-3)">0</div>
+    </div>
+  </div>
+
+  <!-- Inline Add User Form -->
+  <div class="card fade-in" style="margin-bottom:16px">
+    <form onsubmit="event.preventDefault(); usHandler.createUser()">
+      <div class="inline-form">
+        <div class="field">
+          <label>Username</label>
+          <input type="text" class="input-field" x-model="form.username" placeholder="johndoe" required>
+        </div>
+        <div class="field">
+          <label>Password</label>
+          <input type="password" class="input-field" x-model="form.password" placeholder="••••••••" required>
+        </div>
+        <div class="field">
+          <label>Email</label>
+          <input type="email" class="input-field" x-model="form.email" placeholder="john@example.com" required>
+        </div>
+        <div class="field" style="max-width:130px">
+          <label>Role</label>
+          <select class="input-field" x-model="form.role">
+            <option value="admin">Admin</option>
+            <option value="editor">Editor</option>
+            <option value="viewer">Viewer</option>
+          </select>
+        </div>
+        <div class="btn-row">
+          <button type="submit" class="btn-primary" :disabled="!form.username.trim() || !form.password.trim() || !form.email.trim()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+            Add User
+          </button>
+        </div>
+      </div>
+    </form>
   </div>
 
   <!-- Users Table -->
-  <div class="card">
+  <div class="card fade-in">
     <table>
       <thead>
         <tr>
-          <th>Name</th>
+          <th>Username</th>
           <th>Email</th>
           <th>Role</th>
-          <th>Team</th>
-          <th>Created</th>
-          <th></th>
+          <th>Status</th>
+          <th style="width:50px"></th>
         </tr>
       </thead>
       <tbody>
         <template x-if="!users">
-          <tr><td colspan="6" class="td-ctr"><div class="spinner" style="margin:0 auto"></div></td></tr>
+          <tr><td colspan="5" class="td-ctr"><div class="spinner" style="margin:0 auto"></div></td></tr>
         </template>
         <template x-if="users && users.length === 0">
-          <tr><td colspan="6" class="td-ctr"><div class="empty-state"><p>No users yet</p></div></td></tr>
+          <tr><td colspan="5" class="td-ctr"><div class="empty-state"><p>No users yet</p></div></td></tr>
         </template>
         <template x-for="user in users" :key="user.id">
           <tr>
-            <td style="font-size:13px;font-weight:500" x-text="user.name || '—'"></td>
-            <td style="font-size:12px;color:var(--color-fg-2)" x-text="user.email || '—'"></td>
-            <td><span class="badge" :class="user.role === 'admin' ? 'badge-primary' : 'badge-default'" x-text="user.role || 'member'"></span></td>
-            <td style="font-size:12px;color:var(--color-fg-2)" x-text="user.team_name || '—'"></td>
-            <td style="font-size:12px;color:var(--color-fg-3)" x-text="user.created_at || '—'"></td>
+            <td style="font-size:13px;font-weight:500" x-text="user.username || user.name || '—'"></td>
+            <td style="font-size:12px;color:var(--fg-2)" x-text="user.email || '—'"></td>
             <td>
-              <button class="btn btn-ghost btn-sm" style="color:var(--color-danger)" onclick="us.deleteItem(this)">Remove</button>
+              <span class="role-badge"
+                :class="user.role === 'admin' ? 'role-admin' : (user.role === 'editor' ? 'role-editor' : 'role-viewer')"
+                x-text="user.role || 'viewer'"></span>
+            </td>
+            <td>
+              <button class="toggle-pill"
+                :class="user.is_active ? 'on' : 'off'"
+                :aria-label="user.is_active ? 'Deactivate' : 'Activate'"
+                @click="usHandler.toggleUser(user)"></button>
+            </td>
+            <td>
+              <button class="trash-btn" @click="usHandler.deleteUser(user)" title="Delete user">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+              </button>
             </td>
           </tr>
         </template>
@@ -57,108 +149,95 @@
     </table>
   </div>
 
-  <!-- Create User Modal -->
-  <template x-if="showCreateModal">
-    <div>
-      <div class="modal-backdrop" onclick="us.hideModal()"></div>
-      <div class="modal-panel">
-        <div class="modal-hdr">
-          <h2 class="modal-title">Add User</h2>
-          <button class="btn-icon" style="font-size:18px" onclick="us.hideModal()">&times;</button>
-        </div>
-        <form onsubmit="event.preventDefault(); us.saveItem()">
-          <label>Name</label>
-          <input type="text" name="name" x-model="newUserName" placeholder="Full name">
-          <label>Email</label>
-          <input type="email" name="email" x-model="newUserEmail" placeholder="user@example.com">
-          <label>Role</label>
-          <select name="role" x-model="newUserRole">
-            <option value="member">Member</option>
-            <option value="admin">Admin</option>
-          </select>
-          <div class="btn-row">
-            <button type="button" class="btn btn-secondary" onclick="us.hideModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary" :disabled="!newUserName.trim() || !newUserEmail.trim()">Add User</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  </template>
-
   <!-- Toast container -->
   <div>
     <template x-for="(t, i) in toasts" :key="i">
       <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
     </template>
   </div>
-</div>
 
-<script>
-(function() {
-  function getData() {
-    var el = document.querySelector('[x-data]');
-    return el ? Alpine.$data(el) : null;
-  }
-
-  window.us = {
-    showModal: function() {
-      var d = getData(); if (!d) return;
-      d.newUserName = '';
-      d.newUserEmail = '';
-      d.newUserRole = 'member';
-      d.showCreateModal = true;
-    },
-    hideModal: function() {
-      var d = getData(); if (!d) return;
-      d.showCreateModal = false;
-    },
-    saveItem: async function() {
-      var d = getData(); if (!d) return;
-      try {
-        var r = await fetch('/api/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: d.newUserName,
-            email: d.newUserEmail,
-            role: d.newUserRole || 'member'
-          })
-        });
-        if (r.ok) {
-          d.showCreateModal = false;
-          d.newUserName = '';
-          d.newUserEmail = '';
-          await fetchUsers();
-          d.toasts.push({ type: 'success', message: 'User added successfully' });
-        }
-      } catch(e) { console.error('Create user failed', e); }
-    },
-    deleteItem: async function(btn) {
-      var d = getData(); if (!d) return;
-      var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row) - 1;
-      var user = d.users[idx];
-      if (!user || !user.id) return;
-      if (!confirm('Remove user "' + (user.name || user.email) + '"?')) return;
-      try {
-        var r = await fetch('/api/users?id=' + user.id, { method: 'DELETE' });
-        if (r.ok) {
-          d.users = d.users.filter(function(u) { return u.id !== user.id; });
-          d.toasts.push({ type: 'success', message: 'User removed' });
-        }
-      } catch(e) { console.error('Delete user failed', e); }
+  <script>
+  (function() {
+    function getData() {
+      var el = document.querySelector('[x-data]');
+      return el ? Alpine.$data(el) : null;
     }
-  };
 
-  window.fetchUsers = async function() {
-    var d = getData();
-    if (!d) { setTimeout(fetchUsers, 100); return; }
-    try {
-      var r = await fetch('/api/users');
-      if (r.ok) {
-        d.users = await r.json();
+    function computeStats() {
+      var d = getData(); if (!d || !d.users) return;
+      d.stats.total = d.users.length;
+      d.stats.admins = d.users.filter(function(u) { return u.role === 'admin'; }).length;
+      d.stats.active = d.users.filter(function(u) { return u.is_active; }).length;
+      d.stats.inactive = d.stats.total - d.stats.active;
+    }
+
+    window.usHandler = {
+      createUser: async function() {
+        var d = getData(); if (!d) return;
+        try {
+          var r = await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: d.form.username,
+              password: d.form.password,
+              email: d.form.email,
+              role: d.form.role
+            })
+          });
+          if (r.ok) {
+            d.form = { username: '', password: '', email: '', role: 'viewer' };
+            await fetchUsers();
+            d.toasts.push({ type: 'success', message: 'User added successfully' });
+          } else {
+            d.toasts.push({ type: 'error', message: 'Failed to add user' });
+          }
+        } catch(e) { console.error('Create user failed', e); }
+      },
+
+      toggleUser: async function(user) {
+        var d = getData(); if (!d || !user.id) return;
+        var newState = !user.is_active;
+        try {
+          var r = await fetch('/api/users?id=' + user.id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_active: newState })
+          });
+          if (r.ok) {
+            user.is_active = newState;
+            computeStats();
+            d.toasts.push({ type: 'success', message: 'User ' + (newState ? 'activated' : 'deactivated') });
+          }
+        } catch(e) { console.error('Toggle user failed', e); }
+      },
+
+      deleteUser: async function(user) {
+        var d = getData(); if (!d || !user.id) return;
+        if (!confirm('Delete user "' + (user.username || user.name || user.email) + '"? This cannot be undone.')) return;
+        try {
+          var r = await fetch('/api/users?id=' + user.id, { method: 'DELETE' });
+          if (r.ok) {
+            d.users = d.users.filter(function(u) { return u.id !== user.id; });
+            computeStats();
+            d.toasts.push({ type: 'success', message: 'User deleted' });
+          }
+        } catch(e) { console.error('Delete user failed', e); }
       }
-    } catch(e) { console.error('Users fetch failed', e); }
-  };
-})();
-</script>
+    };
+
+    window.fetchUsers = async function() {
+      var d = getData();
+      if (!d) { setTimeout(fetchUsers, 100); return; }
+      try {
+        var r = await fetch('/api/users');
+        if (r.ok) {
+          var data = await r.json();
+          d.users = Array.isArray(data) ? data : (data.data || []);
+          computeStats();
+        }
+      } catch(e) { console.error('Users fetch failed', e); }
+    };
+  })();
+  </script>
+</div>

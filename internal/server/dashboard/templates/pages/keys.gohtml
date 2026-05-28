@@ -1,160 +1,299 @@
-<div x-data="{ showCreateModal: false, newKeyName: '', keys: null, toasts: [] }" x-init="fetchKeys()">
-  <style>
-    .pg-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
-    .pg-title{font-size:20px;font-weight:700;color:var(--color-fg-0);display:flex;align-items:center;gap:8px}
-    .pg-title svg{width:20px;height:20px;color:var(--color-primary);flex-shrink:0}
-    .pg-sub{font-size:13px;color:var(--color-fg-2);margin-top:2px}
-    .modal-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-    .modal-title{font-size:15px;font-weight:600;color:var(--color-fg-0)}
-    .btn-row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
-    .td-ctr{text-align:center;padding:24px}
-    .key-mono{font-size:12px;font-family:var(--mono);color:var(--color-fg-2)}
-    .copy-btn{display:inline-flex;align-items:center;margin-left:4px}
-    .copy-btn svg{width:14px;height:14px}
-  </style>
-
-  <div class="pg-hdr">
-    <div>
-      <h1 class="pg-title">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-        API Keys
-      </h1>
-      <p class="pg-sub">Manage API keys for authenticating requests.</p>
-    </div>
-    <button class="btn btn-primary" onclick="ks.showCreateModal()">+ Create Key</button>
-  </div>
-
-  <div class="card">
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Key</th>
-          <th>Created</th>
-          <th>Requests</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <template x-if="!keys">
-          <tr><td colspan="5" class="td-ctr"><div class="spinner" style="margin:0 auto"></div></td></tr>
-        </template>
-        <template x-if="keys && keys.length === 0">
-          <tr><td colspan="5" class="td-ctr"><div class="empty-state"><p>No API keys yet</p></div></td></tr>
-        </template>
-        <template x-for="key in keys" :key="key.id">
-          <tr>
-            <td style="font-size:13px;font-weight:500" x-text="key.name"></td>
-            <td>
-              <span class="key-mono" x-text="key.key ? key.key.substring(0, 8) + '...' : '—'"></span>
-              <button class="btn btn-ghost btn-sm copy-btn" onclick="ks.copyKey(this)" title="Copy to clipboard">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-              </button>
-            </td>
-            <td style="font-size:12px;color:var(--color-fg-3)" x-text="key.created_at || '—'"></td>
-            <td style="font-size:12px;color:var(--color-fg-2)" x-text="key.requests || 0"></td>
-            <td>
-              <button class="btn btn-ghost btn-sm" style="color:var(--color-danger)" onclick="ks.deleteKey(this)">Revoke</button>
-            </td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
-  </div>
-
-  <template x-if="showCreateModal">
-    <div>
-      <div class="modal-backdrop" onclick="ks.hideCreateModal()"></div>
-      <div class="modal-panel">
-        <div class="modal-hdr">
-          <h2 class="modal-title">Create API Key</h2>
-          <button class="btn-icon" style="font-size:18px" onclick="ks.hideCreateModal()">&times;</button>
-        </div>
-        <form onsubmit="event.preventDefault(); ks.createKey()">
-          <label>Key Name</label>
-          <input type="text" name="name" x-model="newKeyName" placeholder="e.g., Production, Development">
-          <div class="btn-row">
-            <button type="button" class="btn btn-secondary" onclick="ks.hideCreateModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary" :disabled="!newKeyName.trim()">Create</button>
-          </div>
-        </form>
+<div x-data="keysData()" x-init="fetchKeys()" class="fade-in">
+  <!-- Page Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="width:36px;height:36px;border-radius:10px;background:var(--primary-light);display:flex;align-items:center;justify-content:center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round">
+          <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+        </svg>
+      </div>
+      <div>
+        <h1 style="font-size:18px;font-weight:600;color:var(--fg-0)">API Keys</h1>
+        <p style="font-size:12px;color:var(--fg-3);margin-top:2px">Manage API keys for authenticating requests</p>
       </div>
     </div>
-  </template>
+    <button @click="showForm = !showForm" class="btn-primary" style="padding:10px 18px">
+      <svg x-show="!showForm" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <svg x-show="showForm" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <span x-text="showForm ? 'Cancel' : '+ Create Key'"></span>
+    </button>
+  </div>
 
-  <div>
-    <template x-for="(t, i) in toasts" :key="i">
-      <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
-    </template>
+  <!-- Stats Bar -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
+    <div class="stat-card fade-in" style="animation-delay:0s">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:40px;height:40px;border-radius:10px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round">
+            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+          </svg>
+        </div>
+        <div>
+          <div class="stat-label">Total Keys</div>
+          <div x-show="!keys" class="skeleton" style="width:40px;height:24px"></div>
+          <div x-show="keys" x-cloak class="stat-value" x-text="keys.length"></div>
+        </div>
+      </div>
+    </div>
+    <div class="stat-card fade-in" style="animation-delay:0.06s">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:40px;height:40px;border-radius:10px;background:var(--warning-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="M12 8v4"/><path d="M12 16h.01"/>
+          </svg>
+        </div>
+        <div>
+          <div class="stat-label">With Limits</div>
+          <div x-show="!keys" class="skeleton" style="width:40px;height:24px"></div>
+          <div x-show="keys" x-cloak class="stat-value" x-text="withLimits"></div>
+        </div>
+      </div>
+    </div>
+    <div class="stat-card fade-in" style="animation-delay:0.12s">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:40px;height:40px;border-radius:10px;background:var(--success-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+        </div>
+        <div>
+          <div class="stat-label">Unlimited</div>
+          <div x-show="!keys" class="skeleton" style="width:40px;height:24px"></div>
+          <div x-show="keys" x-cloak class="stat-value" x-text="unlimited"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inline Create Form -->
+  <div x-show="showForm" x-cloak class="card fade-in" style="margin-bottom:24px;border:1px solid var(--primary-light);background:linear-gradient(135deg,var(--primary-light) 0%,var(--bg-card) 60%)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+      </svg>
+      <h2 style="font-size:14px;font-weight:600;color:var(--fg-0)">Create New API Key</h2>
+    </div>
+    <form @submit.prevent="createKey()" style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:16px;align-items:end">
+      <div>
+        <label class="label-st">Key Name *</label>
+        <input type="text" x-model="newKey.name" class="input-field" placeholder="e.g., Production, Development" required style="width:100%">
+      </div>
+      <div>
+        <label class="label-st">Daily Limit <span style="font-weight:400;color:var(--fg-3)">(requests/day)</span></label>
+        <input type="number" x-model="newKey.daily_limit" class="input-field" placeholder="Leave empty for unlimited" min="0" style="width:100%">
+      </div>
+      <div>
+        <label class="label-st">Monthly Limit <span style="font-weight:400;color:var(--fg-3)">(requests/month)</span></label>
+        <input type="number" x-model="newKey.monthly_limit" class="input-field" placeholder="Leave empty for unlimited" min="0" style="width:100%">
+      </div>
+      <button type="submit" class="btn-primary" :disabled="!newKey.name.trim()" style="padding:10px 20px;height:42px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Create
+      </button>
+    </form>
+    <p style="font-size:11px;color:var(--fg-3);margin-top:12px">Leave limits empty for unlimited usage. Limits can be updated later.</p>
+  </div>
+
+  <!-- Keys Table -->
+  <div class="card fade-in" style="animation-delay:0.18s">
+    <div style="overflow-x:auto">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:40px"></th>
+            <th>Name</th>
+            <th>Key</th>
+            <th>Created</th>
+            <th style="width:200px">Daily Limit</th>
+            <th style="width:200px">Monthly Limit</th>
+            <th style="width:80px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-if="!keys">
+            <tr><td colspan="7" style="text-align:center;padding:32px"><div class="spinner" style="margin:0 auto"></div></td></tr>
+          </template>
+          <template x-if="keys && keys.length === 0">
+            <tr><td colspan="7"><div class="empty-state"><p>No API keys yet</p><p style="font-size:12px;color:var(--fg-3);margin-top:4px">Create your first API key to get started</p></div></td></tr>
+          </template>
+          <template x-for="(key, idx) in keys" :key="key.id">
+            <tr>
+              <!-- Icon Badge -->
+              <td>
+                <div style="width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center" :style="'background:' + (key.daily_limit || key.monthly_limit ? 'var(--warning-light)' : 'var(--success-light)')">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" :stroke="key.daily_limit || key.monthly_limit ? 'var(--warning)' : 'var(--success)'" stroke-width="2" stroke-linecap="round">
+                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+                  </svg>
+                </div>
+              </td>
+              <!-- Name -->
+              <td>
+                <div style="font-size:13px;font-weight:600;color:var(--fg-0)" x-text="key.name"></div>
+                <div style="font-size:11px;color:var(--fg-3);margin-top:2px" x-show="key.requests">
+                  <span x-text="(key.requests || 0).toLocaleString()"></span> requests
+                </div>
+              </td>
+              <!-- Key -->
+              <td>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <code class="mono" x-text="key.key ? key.key.substring(0, 8) + '...' : '—'"></code>
+                  <button @click="copyKey(key)" class="btn-secondary" style="padding:4px 8px;width:auto;height:26px" title="Copy to clipboard">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                </div>
+              </td>
+              <!-- Created -->
+              <td>
+                <span style="font-size:12px;color:var(--fg-3)" x-text="key.created_at || '—'"></span>
+              </td>
+              <!-- Daily Limit with Progress -->
+              <td>
+                <template x-if="key.daily_limit">
+                  <div>
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--fg-2);margin-bottom:4px">
+                      <span x-text="(key.requests_today || 0).toLocaleString()"></span>
+                      <span x-text="'/' + key.daily_limit.toLocaleString()"></span>
+                    </div>
+                    <div style="height:6px;border-radius:3px;background:var(--border);overflow:hidden">
+                      <div style="height:100%;border-radius:3px;transition:width 0.3s" :style="'width:' + Math.min(100, ((key.requests_today || 0) / key.daily_limit) * 100) + '%;background:' + (((key.requests_today || 0) / key.daily_limit) > 0.9 ? 'var(--error)' : ((key.requests_today || 0) / key.daily_limit) > 0.7 ? 'var(--warning)' : 'var(--success)')"></div>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="!key.daily_limit">
+                  <span class="status-badge badge-success" style="font-size:10px">Unlimited</span>
+                </template>
+              </td>
+              <!-- Monthly Limit with Progress -->
+              <td>
+                <template x-if="key.monthly_limit">
+                  <div>
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--fg-2);margin-bottom:4px">
+                      <span x-text="(key.requests_month || 0).toLocaleString()"></span>
+                      <span x-text="'/' + key.monthly_limit.toLocaleString()"></span>
+                    </div>
+                    <div style="height:6px;border-radius:3px;background:var(--border);overflow:hidden">
+                      <div style="height:100%;border-radius:3px;transition:width 0.3s" :style="'width:' + Math.min(100, ((key.requests_month || 0) / key.monthly_limit) * 100) + '%;background:' + (((key.requests_month || 0) / key.monthly_limit) > 0.9 ? 'var(--error)' : ((key.requests_month || 0) / key.monthly_limit) > 0.7 ? 'var(--warning)' : 'var(--success)')"></div>
+                    </div>
+                  </div>
+                </template>
+                <template x-if="!key.monthly_limit">
+                  <span class="status-badge badge-success" style="font-size:10px">Unlimited</span>
+                </template>
+              </td>
+              <!-- Actions -->
+              <td>
+                <button @click="deleteKey(key, idx)" class="btn-danger" title="Delete key">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                  </svg>
+                </button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 
 <script>
-(function() {
-  function getData() {
-    var el = document.querySelector('[x-data]');
-    return el ? Alpine.$data(el) : null;
-  }
+function keysData() {
+  return {
+    keys: null,
+    showForm: false,
+    newKey: { name: '', daily_limit: '', monthly_limit: '' },
+    toasts: [],
 
-  window.ks = {
-    showCreateModal: function() { var d = getData(); if (d) d.showCreateModal = true; },
-    hideCreateModal: function() { var d = getData(); if (d) d.showCreateModal = false; },
-
-    copyKey: function(btn) {
-      var d = getData(); if (!d) return;
-      var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row) - 1;
-      var key = d.keys[idx];
-      if (key && key.key) {
-        navigator.clipboard.writeText(key.key).catch(function(){});
-        d.toasts.push({ type: 'success', message: 'Key copied to clipboard' });
-      }
+    get withLimits() {
+      return (this.keys || []).filter(k => k.daily_limit || k.monthly_limit).length;
+    },
+    get unlimited() {
+      return (this.keys || []).filter(k => !k.daily_limit && !k.monthly_limit).length;
     },
 
-    deleteKey: async function(btn) {
-      var d = getData(); if (!d) return;
-      var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row) - 1;
-      var key = d.keys[idx];
-      if (!key || !key.id) return;
-      if (!confirm('Revoke API key \"' + key.name + '\"? This cannot be undone.')) return;
+    async fetchKeys() {
       try {
-        var r = await fetch('/api/keys?id=' + key.id, { method: 'DELETE' });
+        let r = await fetch('/api/keys');
         if (r.ok) {
-          d.keys = d.keys.filter(function(k) { return k.id !== key.id; });
-          d.toasts.push({ type: 'success', message: 'API key revoked' });
+          let data = await r.json();
+          this.keys = Array.isArray(data) ? data : (data.data || []);
         }
-      } catch(e) { console.error('Delete key failed', e); }
+      } catch(e) { console.error('Keys fetch failed', e); }
     },
 
-    createKey: async function() {
-      var d = getData(); if (!d) return;
+    async createKey() {
+      if (!this.newKey.name.trim()) return;
       try {
-        var r = await fetch('/api/keys', {
+        let body = { name: this.newKey.name };
+        if (this.newKey.daily_limit) body.daily_limit = parseInt(this.newKey.daily_limit);
+        if (this.newKey.monthly_limit) body.monthly_limit = parseInt(this.newKey.monthly_limit);
+        let r = await fetch('/api/keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: d.newKeyName })
+          body: JSON.stringify(body)
         });
         if (r.ok) {
-          d.showCreateModal = false;
-          d.newKeyName = '';
-          await fetchKeys();
-          d.toasts.push({ type: 'success', message: 'API key created' });
+          let data = await r.json();
+          let newKey = Array.isArray(data) ? data[data.length-1] : data;
+          if (!Array.isArray(data)) newKey = data;
+          if (this.keys) {
+            this.keys.unshift(newKey);
+          } else {
+            this.keys = [newKey];
+          }
+          this.showForm = false;
+          this.newKey = { name: '', daily_limit: '', monthly_limit: '' };
+          this.showToast('success', 'API key created successfully');
         }
-      } catch(e) { console.error('Create key failed', e); }
+      } catch(e) { console.error('Create key failed', e); this.showToast('error', 'Failed to create key'); }
+    },
+
+    async deleteKey(key, idx) {
+      if (!confirm('Delete API key "' + key.name + '"? This cannot be undone.')) return;
+      try {
+        let r = await fetch('/api/keys?id=' + key.id, { method: 'DELETE' });
+        if (r.ok) {
+          this.keys.splice(idx, 1);
+          this.showToast('success', 'API key deleted');
+        }
+      } catch(e) { console.error('Delete key failed', e); this.showToast('error', 'Failed to delete key'); }
+    },
+
+    async copyKey(key) {
+      if (!key.key) return;
+      try {
+        await navigator.clipboard.writeText(key.key);
+        this.showToast('success', 'Key copied to clipboard');
+      } catch(e) {
+        let inp = document.createElement('input');
+        inp.value = key.key;
+        document.body.appendChild(inp);
+        inp.select();
+        document.execCommand('copy');
+        document.body.removeChild(inp);
+        this.showToast('success', 'Key copied to clipboard');
+      }
+    },
+
+    showToast(type, message) {
+      let toast = { type, message };
+      this.toasts.push(toast);
+      setTimeout(() => {
+        let idx = this.toasts.indexOf(toast);
+        if (idx > -1) this.toasts.splice(idx, 1);
+      }, 3000);
     }
   };
-
-  window.fetchKeys = async function() {
-    var d = getData();
-    if (!d) { setTimeout(fetchKeys, 100); return; }
-    try {
-      var r = await fetch('/api/keys');
-      if (r.ok) {
-        var data = await r.json();
-        d.keys = Array.isArray(data) ? data : (data.data || []);
-      }
-    } catch(e) { console.error('Keys fetch failed', e); }
-  };
-})();
+}
 </script>
+
+<style>
+.btn-secondary { display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:var(--bg-body);color:var(--fg-1);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s ease }
+.btn-secondary:hover { background:var(--border) }
+.btn-danger { display:flex;align-items:center;justify-content:center;width:32px;height:32px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--error);cursor:pointer;transition:all 0.15s ease }
+.btn-danger:hover { background:var(--error-light);border-color:var(--error) }
+.btn-primary { display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:var(--primary);color:#fff;border:none;border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s ease }
+.btn-primary:hover:not(:disabled) { background:var(--primary-hover) }
+.btn-primary:disabled { opacity:0.5;cursor:not-allowed }
+</style>

@@ -1,78 +1,304 @@
-<div x-data="{ saving: false, saved: false, toasts: [] }">
-  <div class="page-header">
+<div
+  x-data="{
+    settings: {
+      token_optimization: { rtk_enabled: true, caveman_mode: 'auto' },
+      api_security: { master_key: '', dashboard_password: '', rate_limit: 60 },
+      caching: { exact: true, semantic: false, stream: true },
+      embedding_cache: { enabled: true, ttl: 3600 },
+      thinking_mode: 'auto',
+      ai_agent_model: ''
+    },
+    models: [],
+    saveTimers: {},
+    savedFields: {},
+    toasts: []
+  }"
+  x-init="fetchSettings()"
+>
+  <style>
+    .pg-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+    .pg-title{font-size:18px;font-weight:700;color:var(--fg-0);display:flex;align-items:center;gap:8px;margin:0 0 4px}
+    .pg-title svg{width:18px;height:18px;color:var(--primary);flex-shrink:0}
+    .pg-sub{font-size:13px;color:var(--fg-2);margin:0}
+    .section-card{margin-bottom:16px}
+    .section-header{display:flex;align-items:center;gap:8px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+    .section-header svg{width:16px;height:16px;color:var(--fg-3);flex-shrink:0}
+    .section-header h2{font-size:14px;font-weight:600;color:var(--fg-0);margin:0}
+    .form-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border-light);gap:16px}
+    .form-row:last-child{border-bottom:none}
+    .form-row-left{display:flex;flex-direction:column;gap:2px;flex:1}
+    .form-label{font-size:13px;font-weight:500;color:var(--fg-0)}
+    .form-hint{font-size:11px;color:var(--fg-3)}
+    .form-row-right{display:flex;align-items:center;gap:10px;flex-shrink:0}
+    .input-field{width:240px;padding:8px 10px;background:var(--bg-body);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--fg-0);font-size:13px;outline:none;transition:border-color 0.15s}
+    .input-field:focus{border-color:var(--primary)}
+    .input-field-sm{width:120px;padding:6px 8px;background:var(--bg-body);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--fg-0);font-size:12px;outline:none;transition:border-color 0.15s;text-align:center}
+    .input-field-sm:focus{border-color:var(--primary)}
+    select.input-field{cursor:pointer}
+    select.input-field-sm{cursor:pointer}
+    .toggle-pill{display:inline-flex;align-items:center;height:24px;width:44px;border-radius:12px;cursor:pointer;transition:background 0.2s;position:relative;border:none;flex-shrink:0}
+    .toggle-pill.on{background:var(--success)}
+    .toggle-pill.off{background:var(--border)}
+    .toggle-pill::after{content:'';position:absolute;top:2px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform 0.2s;box-shadow:0 1px 3px rgba(0,0,0,0.3)}
+    .toggle-pill.on::after{transform:translateX(20px);left:2px}
+    .toggle-pill.off::after{transform:translateX(0);left:2px}
+    .mode-selector{display:flex;gap:4px;background:var(--bg-body);border-radius:var(--radius-sm);padding:3px;border:1px solid var(--border)}
+    .mode-option{padding:5px 14px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;border:none;background:transparent;color:var(--fg-2);transition:all 0.15s}
+    .mode-option.active{background:var(--primary);color:#fff}
+    .mode-option:hover:not(.active){color:var(--fg-0)}
+    .saved-indicator{font-size:11px;color:var(--success);opacity:0;transition:opacity 0.3s;white-space:nowrap}
+    .saved-indicator.visible{opacity:1}
+    .mono{font-family:var(--mono);font-size:12px;color:var(--fg-2);background:var(--bg-body);padding:3px 8px;border-radius:4px}
+    @media(max-width:768px){
+      .form-row{flex-direction:column;align-items:flex-start;gap:8px}
+      .input-field{width:100%}
+      .input-field-sm{width:100%}
+    }
+  </style>
+
+  <!-- Page Header -->
+  <div class="pg-hdr">
     <div>
-      <h1 class="page-title">
+      <h1 class="pg-title">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         Settings
       </h1>
-      <p class="page-desc">Configure your Lintasan instance.</p>
+      <p class="pg-sub">Configure your Lintasan instance. Changes save automatically.</p>
     </div>
   </div>
 
-  <form onsubmit="event.preventDefault(); ss.saveSettings()">
-    <!-- General Section -->
-    <div class="card section-card">
-      <h2 class="section-title">General</h2>
-      <div class="form-group">
-        <label class="form-label">Master Key</label>
-        <input type="password" id="master_key" placeholder="Change master password..." class="form-input">
-        <p class="form-hint">Leave blank to keep current.</p>
+  <!-- Section: Token Optimization -->
+  <div class="card section-card fade-in">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <h2>Token Optimization</h2>
+    </div>
+
+    <!-- RTK Toggle -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Real-time Token Compression (RTK)</span>
+        <span class="form-hint">Intelligently compress repeated token patterns in prompts to reduce API costs.</span>
       </div>
-      <div class="form-group">
-        <label class="form-label">Port</label>
-        <input type="number" id="port" placeholder="8080" class="form-input">
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['token_optimization.rtk_enabled'] }" x-init="savedFields['token_optimization.rtk_enabled'] = false">✓ Saved</span>
+        <button class="toggle-pill"
+          :class="settings.token_optimization.rtk_enabled ? 'on' : 'off'"
+          @click="settings.token_optimization.rtk_enabled = !settings.token_optimization.rtk_enabled; autoSave('token_optimization.rtk_enabled', settings.token_optimization.rtk_enabled)"></button>
       </div>
     </div>
 
-    <!-- Cache Section -->
-    <div class="card section-card" x-data="{ cacheEnabled: true }">
-      <h2 class="section-title">Cache</h2>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" id="cache_enabled" x-model="cacheEnabled">
-          <span class="form-label">Enable Response Caching</span>
-        </label>
+    <!-- Caveman Mode Selector -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Caveman Mode</span>
+        <span class="form-hint">Strip unnecessary tokens from prompts for maximum efficiency. "Auto" applies heuristics, "On" is aggressive, "Off" disables.</span>
       </div>
-      <div class="form-group">
-        <label class="form-label">Cache TTL (seconds)</label>
-        <input type="number" id="cache_ttl" placeholder="3600" min="0" class="form-input">
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['token_optimization.caveman_mode'] }" x-init="savedFields['token_optimization.caveman_mode'] = false">✓ Saved</span>
+        <div class="mode-selector">
+          <button class="mode-option" :class="{ active: settings.token_optimization.caveman_mode === 'off' }"
+            @click="settings.token_optimization.caveman_mode = 'off'; autoSave('token_optimization.caveman_mode', 'off')">Off</button>
+          <button class="mode-option" :class="{ active: settings.token_optimization.caveman_mode === 'auto' }"
+            @click="settings.token_optimization.caveman_mode = 'auto'; autoSave('token_optimization.caveman_mode', 'auto')">Auto</button>
+          <button class="mode-option" :class="{ active: settings.token_optimization.caveman_mode === 'on' }"
+            @click="settings.token_optimization.caveman_mode = 'on'; autoSave('token_optimization.caveman_mode', 'on')">On</button>
+          <button class="mode-option" :class="{ active: settings.token_optimization.caveman_mode === 'aggressive' }"
+            @click="settings.token_optimization.caveman_mode = 'aggressive'; autoSave('token_optimization.caveman_mode', 'aggressive')">Aggressive</button>
+        </div>
       </div>
-      <div class="form-group">
-        <label class="form-label">Cache Similarity Threshold</label>
-        <input type="number" id="cache_threshold" step="0.01" min="0" max="1" placeholder="0.95" class="form-input">
-        <p class="form-hint">Semantic similarity threshold for cache hits (0-1). Higher = stricter matching.</p>
+    </div>
+  </div>
+
+  <!-- Section: API & Security -->
+  <div class="card section-card fade-in">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      <h2>API &amp; Security</h2>
+    </div>
+
+    <!-- Master Key -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Master Key</span>
+        <span class="form-hint">The root API key for full administrative access. Keep this secret.</span>
+      </div>
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['api_security.master_key'] }" x-init="savedFields['api_security.master_key'] = false">✓ Saved</span>
+        <input type="password" class="input-field" x-model="settings.api_security.master_key" placeholder="••••••••"
+          @change="autoSave('api_security.master_key', settings.api_security.master_key)"
+          style="width:280px">
       </div>
     </div>
 
-    <!-- Security Section -->
-    <div class="card section-card" x-data="{ rateLimitEnabled: false }">
-      <h2 class="section-title">Security</h2>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" id="rate_limit_enabled" x-model="rateLimitEnabled">
-          <span class="form-label">Enable Rate Limiting</span>
-        </label>
+    <!-- Dashboard Password -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Dashboard Password</span>
+        <span class="form-hint">Password required to access this dashboard. Leave blank for no authentication.</span>
       </div>
-      <div x-show="rateLimitEnabled" class="form-group">
-        <label class="form-label">Requests per Minute</label>
-        <input type="number" id="rate_limit_rpm" placeholder="60" min="1" class="form-input">
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['api_security.dashboard_password'] }" x-init="savedFields['api_security.dashboard_password'] = false">✓ Saved</span>
+        <input type="password" class="input-field" x-model="settings.api_security.dashboard_password" placeholder="••••••••"
+          @change="autoSave('api_security.dashboard_password', settings.api_security.dashboard_password)"
+          style="width:280px">
       </div>
     </div>
 
-    <!-- Save -->
-    <div class="form-actions">
-      <button type="submit" class="btn btn-primary" :disabled="saving">
-        <span x-show="!saving">
-          Save Settings
-        </span>
-        <span x-show="saving" x-cloak style="display:flex;align-items:center;gap:6px">
-          <span class="spinner-sm"></span>
-          Saving…
-        </span>
-      </button>
-      <span x-show="saved" class="success-msg">Saved</span>
+    <!-- Rate Limit -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Rate Limit</span>
+        <span class="form-hint">Maximum requests per minute per API key. Set to 0 for unlimited.</span>
+      </div>
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['api_security.rate_limit'] }" x-init="savedFields['api_security.rate_limit'] = false">✓ Saved</span>
+        <input type="number" class="input-field-sm" x-model="settings.api_security.rate_limit" min="0" placeholder="60"
+          @change="autoSave('api_security.rate_limit', settings.api_security.rate_limit)"
+          style="width:100px">
+        <span style="font-size:12px;color:var(--fg-3)">req/min</span>
+      </div>
     </div>
-  </form>
+  </div>
+
+  <!-- Section: Caching -->
+  <div class="card section-card fade-in">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      <h2>Caching</h2>
+    </div>
+
+    <!-- Exact Match Cache -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Exact Match Cache</span>
+        <span class="form-hint">Serve identical requests instantly from cache without calling the model.</span>
+      </div>
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['caching.exact'] }" x-init="savedFields['caching.exact'] = false">✓ Saved</span>
+        <button class="toggle-pill"
+          :class="settings.caching.exact ? 'on' : 'off'"
+          @click="settings.caching.exact = !settings.caching.exact; autoSave('caching.exact', settings.caching.exact)"></button>
+      </div>
+    </div>
+
+    <!-- Semantic Cache -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Semantic Cache</span>
+        <span class="form-hint">Cache responses for semantically similar prompts using embedding similarity.</span>
+      </div>
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['caching.semantic'] }" x-init="savedFields['caching.semantic'] = false">✓ Saved</span>
+        <button class="toggle-pill"
+          :class="settings.caching.semantic ? 'on' : 'off'"
+          @click="settings.caching.semantic = !settings.caching.semantic; autoSave('caching.semantic', settings.caching.semantic)"></button>
+      </div>
+    </div>
+
+    <!-- Stream Cache -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Stream Cache</span>
+        <span class="form-hint">Cache streaming responses for replay. Increases storage but improves latency for repeated streaming requests.</span>
+      </div>
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['caching.stream'] }" x-init="savedFields['caching.stream'] = false">✓ Saved</span>
+        <button class="toggle-pill"
+          :class="settings.caching.stream ? 'on' : 'off'"
+          @click="settings.caching.stream = !settings.caching.stream; autoSave('caching.stream', settings.caching.stream)"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section: Embedding Cache -->
+  <div class="card section-card fade-in">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <h2>Embedding Cache</h2>
+    </div>
+
+    <!-- Embedding Cache Enabled -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Enable Embedding Cache</span>
+        <span class="form-hint">Store and reuse embedding vectors to reduce repeated embedding API calls.</span>
+      </div>
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['embedding_cache.enabled'] }" x-init="savedFields['embedding_cache.enabled'] = false">✓ Saved</span>
+        <button class="toggle-pill"
+          :class="settings.embedding_cache.enabled ? 'on' : 'off'"
+          @click="settings.embedding_cache.enabled = !settings.embedding_cache.enabled; autoSave('embedding_cache.enabled', settings.embedding_cache.enabled)"></button>
+      </div>
+    </div>
+
+    <!-- Embedding Cache TTL -->
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Embedding Cache TTL</span>
+        <span class="form-hint">Time-to-live for cached embeddings in seconds.</span>
+      </div>
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['embedding_cache.ttl'] }" x-init="savedFields['embedding_cache.ttl'] = false">✓ Saved</span>
+        <input type="number" class="input-field-sm" x-model="settings.embedding_cache.ttl" min="0" placeholder="3600"
+          @change="autoSave('embedding_cache.ttl', settings.embedding_cache.ttl)"
+          style="width:100px">
+        <span style="font-size:12px;color:var(--fg-3)">seconds</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section: Thinking Mode -->
+  <div class="card section-card fade-in">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20z"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <h2>Thinking Mode</h2>
+    </div>
+
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">AI Thinking Mode</span>
+        <span class="form-hint">Controls whether the AI uses extended reasoning ("thinking") before responding. "Auto" lets the model decide, "Enabled" forces it, "Disabled" suppresses it.</span>
+      </div>
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['thinking_mode'] }" x-init="savedFields['thinking_mode'] = false">✓ Saved</span>
+        <div class="mode-selector">
+          <button class="mode-option" :class="{ active: settings.thinking_mode === 'auto' }"
+            @click="settings.thinking_mode = 'auto'; autoSave('thinking_mode', 'auto')">Auto</button>
+          <button class="mode-option" :class="{ active: settings.thinking_mode === 'enabled' }"
+            @click="settings.thinking_mode = 'enabled'; autoSave('thinking_mode', 'enabled')">Enabled</button>
+          <button class="mode-option" :class="{ active: settings.thinking_mode === 'disabled' }"
+            @click="settings.thinking_mode = 'disabled'; autoSave('thinking_mode', 'disabled')">Disabled</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section: AI Agent Model -->
+  <div class="card section-card fade-in">
+    <div class="section-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <h2>AI Agent Model</h2>
+    </div>
+
+    <div class="form-row">
+      <div class="form-row-left">
+        <span class="form-label">Default Agent Model</span>
+        <span class="form-hint">The AI model used for agent tasks, dashboard chat, and internal operations.</span>
+      </div>
+      <div class="form-row-right">
+        <span class="saved-indicator" :class="{ visible: savedFields['ai_agent_model'] }" x-init="savedFields['ai_agent_model'] = false">✓ Saved</span>
+        <select class="input-field" x-model="settings.ai_agent_model"
+          @change="autoSave('ai_agent_model', settings.ai_agent_model)"
+          style="width:280px">
+          <option value="">— Auto-detect —</option>
+          <template x-for="model in models" :key="model">
+            <option :value="model" x-text="model" :selected="model === settings.ai_agent_model"></option>
+          </template>
+        </select>
+      </div>
+    </div>
+  </div>
 
   <!-- Toast container -->
   <div>
@@ -80,78 +306,91 @@
       <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
     </template>
   </div>
-</div>
 
-<script>
-(function() {
-  function getData() {
-    var el = document.querySelector('[x-data]');
-    return el ? Alpine.$data(el) : null;
-  }
-
-  window.ss = {
-    saveSettings: async function() {
-      var d = getData(); if (!d) return;
-      d.saving = true;
-      d.saved = false;
-      try {
-        var masterKey = document.getElementById('master_key').value;
-        var port = document.getElementById('port').value;
-        var cacheEnabled = document.getElementById('cache_enabled').checked;
-        var cacheTtl = document.getElementById('cache_ttl').value;
-        var cacheThreshold = document.getElementById('cache_threshold').value;
-        var rateLimitEnabled = document.getElementById('rate_limit_enabled').checked;
-        var rateLimitRpm = document.getElementById('rate_limit_rpm').value;
-
-        var body = {
-          master_key: masterKey,
-          port: port ? parseInt(port) : null,
-          cache_enabled: cacheEnabled,
-          cache_ttl: cacheTtl ? parseInt(cacheTtl) : null,
-          cache_threshold: cacheThreshold ? parseFloat(cacheThreshold) : null,
-          rate_limit_enabled: rateLimitEnabled,
-          rate_limit_rpm: rateLimitRpm ? parseInt(rateLimitRpm) : null
-        };
-
-        var r = await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
-        });
-
-        if (r.ok) {
-          d.saved = true;
-          d.toasts.push({ type: 'success', message: 'Settings saved successfully' });
-          setTimeout(function() { d.saved = false; }, 3000);
-        } else {
-          d.toasts.push({ type: 'error', message: 'Failed to save settings' });
-        }
-      } catch(e) {
-        console.error('Save settings failed', e);
-        d.toasts.push({ type: 'error', message: 'Network error' });
-      } finally {
-        d.saving = false;
-      }
+  <script>
+  (function() {
+    function getData() {
+      var el = document.querySelector('[x-data]');
+      return el ? Alpine.$data(el) : null;
     }
-  };
-})();
-</script>
 
-<style>
-.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.page-title { font-size: 18px; font-weight: 700; color: var(--fg-0); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
-.page-desc { font-size: 13px; color: var(--fg-2); }
-.section-card { margin-bottom: 16px; }
-.section-title { font-size: 13px; font-weight: 600; color: var(--fg-1); margin-bottom: 12px; }
-.form-actions { display: flex; align-items: center; gap: 12px; }
-.success-msg { font-size: 13px; color: var(--success); }
-.spinner-sm { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border-light); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 4px; vertical-align: middle; }
-.form-group { margin-bottom: 16px; }
-.form-label { display: block; font-size: 11px; font-weight: 600; color: var(--fg-2); margin-bottom: 4px; }
-.form-input { width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-body); color: var(--fg-0); font-size: 13px; }
-.form-input:focus { outline: none; border-color: var(--primary); }
-.form-hint { font-size: 11px; color: var(--fg-3); margin-top: 4px; }
-.checkbox-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.checkbox-label input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--primary); }
-@keyframes spin { to { transform: rotate(360deg); } }
-</style>
+    // Debounced auto-save: sends PUT /api/settings with the changed key:value
+    var saveTimers = {};
+
+    function autoSave(key, value) {
+      var d = getData(); if (!d) return;
+      // Clear any existing timer for this key
+      if (saveTimers[key]) clearTimeout(saveTimers[key]);
+
+      saveTimers[key] = setTimeout(async function() {
+        try {
+          // Build a flat payload for this field
+          var payload = {};
+          // Support dot-notation keys for nested objects
+          var keys = key.split('.');
+          if (keys.length === 1) {
+            payload[key] = value;
+          } else {
+            // For nested keys like 'token_optimization.rtk_enabled', send the whole section
+            var section = keys[0];
+            payload[section] = JSON.parse(JSON.stringify(d.settings[section]));
+          }
+
+          var r = await fetch('/api/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (r.ok) {
+            d.savedFields[key] = true;
+            setTimeout(function() { d.savedFields[key] = false; }, 2000);
+          } else {
+            console.error('Auto-save failed for', key);
+          }
+        } catch(e) {
+          console.error('Auto-save error for', key, e);
+        }
+      }, 600); // 600ms debounce
+    }
+
+    // Expose autoSave globally
+    window.autoSave = autoSave;
+
+    window.fetchSettings = async function() {
+      var d = getData();
+      if (!d) { setTimeout(fetchSettings, 100); return; }
+      try {
+        var r = await fetch('/api/settings');
+        if (r.ok) {
+          var data = await r.json();
+          if (data && typeof data === 'object') {
+            // Merge remote settings into local defaults
+            if (data.token_optimization) {
+              Object.assign(d.settings.token_optimization, data.token_optimization);
+            }
+            if (data.api_security) {
+              Object.assign(d.settings.api_security, data.api_security);
+            }
+            if (data.caching) {
+              Object.assign(d.settings.caching, data.caching);
+            }
+            if (data.embedding_cache) {
+              Object.assign(d.settings.embedding_cache, data.embedding_cache);
+            }
+            if (data.thinking_mode !== undefined) {
+              d.settings.thinking_mode = data.thinking_mode;
+            }
+            if (data.ai_agent_model !== undefined) {
+              d.settings.ai_agent_model = data.ai_agent_model;
+            }
+            if (data.models && Array.isArray(data.models)) {
+              d.models = data.models;
+            }
+          }
+        }
+      } catch(e) { console.error('Settings fetch failed', e); }
+    };
+  })();
+  </script>
+</div>

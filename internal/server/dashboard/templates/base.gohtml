@@ -1,451 +1,286 @@
 <!DOCTYPE html>
-<html lang="en" hx-boost="true">
+<html lang="en" data-theme="dark">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Lintasan — {{.Title}}</title>
-  <link rel="stylesheet" href="/static/app.css">
-  <script src="/static/htmx.min.js"></script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            'primary': 'var(--color-primary)',
-            'primary-hover': 'var(--color-primary-hover)',
-            'primary-light': 'var(--color-primary-light)',
-            'fg-0': 'var(--color-fg-0)',
-            'fg-1': 'var(--color-fg-1)',
-            'fg-2': 'var(--color-fg-2)',
-            'fg-3': 'var(--color-fg-3)',
-            'bg-body': 'var(--color-bg-body)',
-            'bg-card': 'var(--color-bg-card)',
-            'bg-card-hover': 'var(--color-bg-card-hover)',
-            'bg-input': 'var(--color-bg-input)',
-            'bg-modal': 'var(--color-bg-modal)',
-            'border-color': 'var(--color-border)',
-            'border-focus': 'var(--color-border-focus)',
-            'danger': 'var(--color-danger)',
-            'danger-hover': 'var(--color-danger-hover)',
-            'success': 'var(--color-success)',
-            'warning': 'var(--color-warning)',
-          }
-        }
-      }
-    }
-  </script>
-  <style>
-    /* ── Sidebar CSS Variables ── */
-    :root {
-      --sidebar-w: 260px;
-      --bg-sidebar: #ffffff;
-      --bg-sidebar-hover: #f1f5f9;
-      --fg-sidebar: #334155;
-      --fg-sidebar-muted: #94a3b8;
-      --sidebar-border: #e2e8f0;
-      --sidebar-logo-text: #1e293b;
-      --radius-sm: 8px;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lintasan — {{.PageTitle}}</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%233c50e0'/><text x='50' y='72' text-anchor='middle' fill='white' font-size='52' font-weight='700' font-family='system-ui'>L</text></svg>">
+<style>
+/* ===== Ocean Theme CSS (Node.js parity) ===== */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --font:'Inter',system-ui,-apple-system,sans-serif;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+  --bg-body:#0f1419;
+  --bg-card:#1a2332;
+  --bg-sidebar:#111827;
+  --bg-sidebar-hover:#1f2937;
+  --fg-sidebar:#e2e8f0;
+  --fg-sidebar-muted:#64748b;
+  --sidebar-border:#1e293b;
+  --sidebar-logo-text:#f1f5f9;
+  --fg-0:#f1f5f9;
+  --fg-1:#cbd5e1;
+  --fg-2:#94a3b8;
+  --fg-3:#64748b;
+  --border:#1e293b;
+  --border-light:#1e293b;
+  --primary:#3c50e0;
+  --primary-hover:#4f63e8;
+  --primary-glow:rgba(60,80,224,0.2);
+  --primary-light:rgba(60,80,224,0.12);
+  --success:#10b981;
+  --success-light:rgba(16,185,129,0.12);
+  --warning:#f59e0b;
+  --warning-light:rgba(245,158,11,0.12);
+  --error:#ef4444;
+  --error-light:rgba(239,68,68,0.12);
+  --info:#3b82f6;
+  --info-light:rgba(59,130,246,0.12);
+  --purple:#8b5cf6;
+  --purple-light:rgba(139,92,246,0.12);
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.3);
+  --shadow:0 2px 8px rgba(0,0,0,0.4);
+  --shadow-md:0 8px 24px rgba(0,0,0,0.5);
+  --shadow-lg:0 16px 48px rgba(0,0,0,0.6);
+  --radius:12px;
+  --radius-sm:8px;
+  --radius-lg:16px;
+  --transition:0.2s cubic-bezier(0.4,0,0.2,1);
+}
+[data-theme="light"]{
+  --bg-body:#f1f5f9;
+  --bg-card:#ffffff;
+  --bg-sidebar:#ffffff;
+  --bg-sidebar-hover:#f1f5f9;
+  --fg-sidebar:#334155;
+  --fg-sidebar-muted:#94a3b8;
+  --sidebar-border:#e2e8f0;
+  --sidebar-logo-text:#1e293b;
+  --fg-0:#1e293b;
+  --fg-1:#334155;
+  --fg-2:#64748b;
+  --fg-3:#94a3b8;
+  --border:#e2e8f0;
+  --border-light:#f1f5f9;
+  --primary-light:rgba(60,80,224,0.08);
+  --success-light:#ecfdf5;
+  --warning-light:#fffbeb;
+  --error-light:#fef2f2;
+  --info-light:#eff6ff;
+  --purple-light:#f5f3ff;
+  --shadow-sm:0 1px 2px rgba(0,0,0,0.04);
+  --shadow:0 2px 8px rgba(0,0,0,0.06);
+  --shadow-md:0 8px 24px rgba(0,0,0,0.08);
+  --shadow-lg:0 16px 48px rgba(0,0,0,0.1);
+}
+body{font-family:var(--font);background:var(--bg-body);color:var(--fg-0);-webkit-font-smoothing:antialiased;line-height:1.6;overflow-x:hidden}
+input,select,textarea,button{font-family:var(--font)}
+::selection{background:var(--primary);color:#fff}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--fg-3)}
+@keyframes fadeInUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeInScale{from{opacity:0;transform:scale(0.95)}to{opacity:1;transform:scale(1)}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+@keyframes glow{0%,100%{box-shadow:0 0 4px var(--primary-glow)}50%{box-shadow:0 0 16px var(--primary-glow)}}
+@keyframes dotPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:0.7}}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.fade-in{animation:fadeInUp 0.4s ease-out both}
+.skeleton{background:linear-gradient(90deg,var(--border-light) 25%,var(--border) 50%,var(--border-light) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:var(--radius-sm)}
+.card{background:var(--bg-card);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.btn-primary{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:var(--primary);color:#fff;border:none;border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s ease}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-secondary{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:var(--bg-body);color:var(--fg-1);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s ease}
+.btn-danger{display:flex;align-items:center;justify-content:center;width:30px;height:30px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--error);cursor:pointer;transition:all 0.15s ease}
+.btn-small{padding:5px 12px;background:var(--bg-body);color:var(--fg-1);border:1px solid var(--border);border-radius:4px;font-size:11px;font-weight:500;cursor:pointer}
+.input-field{width:100%;padding:9px 12px;background:var(--bg-body);border:1px solid var(--border);border-radius:6px;color:var(--fg-0);font-size:13px;outline:none;transition:border-color 0.15s}
+.input-field:focus{border-color:var(--primary)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;padding:12px 16px;font-weight:500;color:var(--fg-3);font-size:11px;border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:0.5px}
+td{padding:14px 16px;vertical-align:middle}
+tr{border-bottom:1px solid var(--border);transition:background 0.1s}
+tr:hover{background:var(--bg-body)}
+.label-st{display:block;font-size:12px;color:var(--fg-2);margin-bottom:6px;font-weight:500}
+.mono{font-family:var(--mono);font-size:12px;color:var(--fg-2);background:var(--bg-body);padding:3px 8px;border-radius:4px}
+.stat-card{background:var(--bg-card);border-radius:var(--radius);padding:16px 20px;box-shadow:var(--shadow);border:1px solid var(--border)}
+.stat-label{font-size:11px;color:var(--fg-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px;font-weight:500}
+.stat-value{font-size:22px;font-weight:700;color:var(--fg-0);font-family:var(--mono);letter-spacing:-0.5px}
+.status-badge{font-size:11px;padding:4px 10px;border-radius:9999px;font-weight:600}
+.badge-success{background:var(--success-light);color:var(--success)}
+.badge-error{background:var(--error-light);color:var(--error)}
+.badge-primary{background:var(--primary-light);color:var(--primary)}
+.empty-state{padding:48px;text-align:center}
+.toast{position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;z-index:1000;animation:fadeInUp 0.3s ease;box-shadow:var(--shadow-md)}
+.toast-success{background:var(--success);color:#fff}
+.toast-error{background:var(--error);color:#fff}
 
-    /* Dark mode overrides when .dark class is on <html> */
-    html.dark {
-      --color-bg-body: #0f1117;
-      --color-bg-card: #1a1d27;
-      --color-bg-card-hover: #22252f;
-      --color-bg-input: #22252f;
-      --color-border: #2a2e3a;
-      --color-fg-0: #e4e6ed;
-      --color-fg-1: #c8cad3;
-      --color-fg-2: #9095a8;
-      --color-fg-3: #656b7c;
-      --bg-sidebar: #111827;
-      --bg-sidebar-hover: #1f2937;
-      --fg-sidebar: #e2e8f0;
-      --fg-sidebar-muted: #64748b;
-      --sidebar-border: #1e293b;
-      --sidebar-logo-text: #f1f5f9;
-    }
-    html.dark body { background: #0f1117; color: #e4e6ed; }
-    html.dark .card { background: #1a1d27; border-color: #2a2e3a; }
-    html.dark .btn-secondary { background: #22252f; color: #c8cad3; }
-    html.dark table th { border-color: #2a2e3a; }
-    html.dark table td { border-color: #2a2e3a; }
-    html.dark tr:hover td { background: #22252f; }
-    html.dark .skeleton { background: linear-gradient(90deg, #22252f 25%, #2a2e3a 50%, #22252f 75%); background-size: 200% 100%; }
-    html.dark .badge-success { background: rgba(62,207,142,0.15); color: #3ecf8e; }
-    html.dark .badge-danger { background: rgba(239,83,80,0.15); color: #ef5350; }
-    html.dark .bg-\\[var\\(--color-bg-input\\)\\] { background: #22252f; }
-    html.dark .text-\\[var\\(--color-fg-0\\)\\] { color: #e4e6ed; }
-    html.dark .text-\\[var\\(--color-fg-1\\)\\] { color: #c8cad3; }
-    html.dark .text-\\[var\\(--color-fg-2\\)\\] { color: #9095a8; }
-    html.dark .text-\\[var\\(--color-fg-3\\)\\] { color: #656b7c; }
-
-    /* ── Sidebar Layout ── */
-    .layout { display: flex; min-height: 100vh; }
-    .sidebar {
-      width: var(--sidebar-w);
-      min-height: 100vh;
-      background: var(--bg-sidebar);
-      border-right: 1px solid var(--sidebar-border);
-      position: fixed;
-      left: 0; top: 0; bottom: 0;
-      overflow-y: auto;
-      z-index: 50;
-      display: flex;
-      flex-direction: column;
-      padding: 0;
-    }
-    .sidebar-logo {
-      padding: 20px 16px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      border-bottom: 1px solid var(--sidebar-border);
-    }
-    .sidebar-logo-icon {
-      width: 36px; height: 36px;
-      border-radius: 10px;
-      background: linear-gradient(135deg, var(--color-primary, #3c50e0) 0%, #6366f1 100%);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #fff;
-      font-size: 16px;
-      font-weight: 700;
-      flex-shrink: 0;
-    }
-    .sidebar-logo-title {
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--sidebar-logo-text);
-      line-height: 1.2;
-    }
-    .sidebar-logo-version {
-      font-size: 11px;
-      color: var(--fg-sidebar-muted);
-      font-family: 'JetBrains Mono', ui-monospace, monospace;
-    }
-    .sidebar-nav {
-      flex: 1;
-      padding: 12px 10px;
-    }
-    .sidebar-group {
-      margin-bottom: 20px;
-    }
-    .sidebar-group-title {
-      font-size: 10px;
-      font-weight: 600;
-      color: var(--fg-sidebar-muted);
-      padding: 0 10px;
-      margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-    }
-    .sidebar-item {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      border-radius: var(--radius-sm);
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--fg-sidebar);
-      cursor: pointer;
-      margin-bottom: 2px;
-      transition: all 0.15s;
-      border-left: 3px solid transparent;
-      text-decoration: none;
-      position: relative;
-    }
-    .sidebar-item:hover {
-      background: var(--bg-sidebar-hover);
-    }
-    .sidebar-item.active {
-      color: var(--color-primary);
-      background: var(--color-primary-light);
-      font-weight: 600;
-      border-left-color: var(--color-primary);
-    }
-    /* Dot pulse animation on active link */
-    .sidebar-item.active::after {
-      content: '';
-      position: absolute;
-      right: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--color-primary);
-      animation: dotPulse 2s ease-in-out infinite;
-    }
-    @keyframes dotPulse {
-      0%, 100% { opacity: 0.4; transform: translateY(-50%) scale(0.8); }
-      50% { opacity: 1; transform: translateY(-50%) scale(1); }
-    }
-    .sidebar-item svg {
-      flex-shrink: 0;
-      opacity: 0.7;
-    }
-    .sidebar-item.active svg {
-      opacity: 1;
-    }
-    .sidebar-footer {
-      padding: 12px 16px;
-      border-top: 1px solid var(--sidebar-border);
-    }
-    .sidebar-theme-btn {
-      width: 100%;
-      padding: 10px 12px;
-      background: var(--bg-sidebar-hover);
-      border: 1px solid var(--sidebar-border);
-      border-radius: var(--radius-sm);
-      color: var(--fg-sidebar);
-      font-size: 13px;
-      cursor: pointer;
-      font-weight: 500;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      transition: all 0.15s;
-    }
-    .sidebar-theme-btn:hover {
-      background: var(--bg-sidebar);
-    }
-    .main-content {
-      flex: 1;
-      margin-left: var(--sidebar-w);
-      padding: 24px;
-    }
-
-    @media (max-width: 768px) {
-      .sidebar { transform: translateX(-100%); transition: transform 0.3s; }
-      .sidebar.open { transform: translateX(0); }
-      .main-content { margin-left: 0; }
-    }
-
-    [x-cloak] { display: none !important; }
-  </style>
+@media(max-width:768px){
+  #sidebar{transform:translateX(-100%);transition:transform 0.3s ease}
+  #sidebar.open{transform:translateX(0)}
+  #main-area{margin-left:0!important}
+  .stat-grid-4{grid-template-columns:repeat(2,1fr)!important;gap:12px!important}
+  .chart-grid{grid-template-columns:1fr!important}
+}
+</style>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
-<body class="layout">
-
-  <!-- ═══════ Sidebar ═══════ -->
-  <aside class="sidebar" id="sidebar">
-    <!-- Logo -->
-    <div class="sidebar-logo">
-      <div class="sidebar-logo-icon">L</div>
+<body>
+<div style="display:flex;min-height:100vh">
+  <!-- Sidebar -->
+  <aside id="sidebar" style="width:260px;min-height:100vh;background:var(--bg-sidebar);display:flex;flex-direction:column;position:fixed;left:0;top:0;bottom:0;overflow-y:auto;z-index:50;border-right:1px solid var(--sidebar-border);box-shadow:var(--shadow-sm);transition:transform 0.3s ease">
+    <div style="padding:20px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--sidebar-border)">
+      <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--primary) 0%,#6366f1 100%);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px var(--primary-glow);flex-shrink:0">
+        <span style="color:#fff;font-size:16px;font-weight:700">L</span>
+      </div>
       <div>
-        <div class="sidebar-logo-title">Lintasan</div>
-        <div class="sidebar-logo-version">v1.0.0</div>
+        <h2 style="font-size:14px;font-weight:700;color:var(--sidebar-logo-text);letter-spacing:-0.2px">Lintasan</h2>
+        <p style="font-size:11px;color:var(--fg-sidebar-muted);font-family:var(--mono)">v2.0.0</p>
       </div>
     </div>
-
-    <!-- Navigation -->
-    <nav class="sidebar-nav">
-      <div class="sidebar-group">
-        <p class="sidebar-group-title">MENU</p>
-
-        <!-- Overview -->
-        <a href="/dashboard" class="sidebar-item {{if eq .Title "overview"}}active{{end}}"
-           hx-get="/dashboard" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-          Overview
+    <nav style="flex:1;padding:12px 10px">
+      {{range .NavGroups}}
+      <div style="margin-bottom:20px">
+        <p style="font-size:10px;font-weight:600;color:var(--fg-sidebar-muted);padding:0 10px;margin-bottom:6px;letter-spacing:0.8px;text-transform:uppercase">{{.Title}}</p>
+        {{range .Items}}
+        <a href="{{.Path}}" hx-get="{{.Path}}" hx-target="#page-content" hx-push-url="true" hx-swap="innerHTML"
+           style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;color:var(--fg-sidebar);cursor:pointer;margin-bottom:2px;text-decoration:none;transition:all 0.15s ease;border-left:3px solid transparent"
+           onmouseover="this.style.background='var(--bg-sidebar-hover)'" onmouseout="if(!this.classList.contains('active'))this.style.background='transparent'"
+           onclick="document.querySelectorAll('#sidebar a').forEach(a=>{a.classList.remove('active');a.style.color='var(--fg-sidebar)';a.style.background='transparent';a.style.fontWeight='500';a.style.borderLeftColor='transparent'});this.classList.add('active');this.style.color='var(--primary)';this.style.background='var(--primary-light)';this.style.fontWeight='600';this.style.borderLeftColor='var(--primary)'">
+          <span style="opacity:0.7;display:flex">{{.SVG}}</span>
+          {{.Label}}
         </a>
-
-        <!-- Accounts -->
-        <a href="/dashboard/connections" class="sidebar-item {{if eq .Title "connections"}}active{{end}}"
-           hx-get="/dashboard/connections" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-          Accounts
-        </a>
-
-        <!-- Routing -->
-        <a href="/dashboard/routing" class="sidebar-item {{if eq .Title "routing"}}active{{end}}"
-           hx-get="/dashboard/routing" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>
-          Routing
-        </a>
-
-        <!-- Fallback -->
-        <a href="/dashboard/fallback" class="sidebar-item {{if eq .Title "fallback"}}active{{end}}"
-           hx-get="/dashboard/fallback" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          Fallback
-        </a>
-
-        <!-- Logs -->
-        <a href="/dashboard/logs" class="sidebar-item {{if eq .Title "logs"}}active{{end}}"
-           hx-get="/dashboard/logs" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          Logs
-        </a>
-
-        <!-- Usage -->
-        <a href="/dashboard/usage" class="sidebar-item {{if eq .Title "usage"}}active{{end}}"
-           hx-get="/dashboard/usage" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          Usage
-        </a>
-
-        <!-- Analytics -->
-        <a href="/dashboard/analytics" class="sidebar-item {{if eq .Title "analytics"}}active{{end}}"
-           hx-get="/dashboard/analytics" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-          Analytics
-        </a>
-
-        <!-- Metrics -->
-        <a href="/dashboard/metrics" class="sidebar-item {{if eq .Title "metrics"}}active{{end}}"
-           hx-get="/dashboard/metrics" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
-          Metrics
-        </a>
+        {{end}}
       </div>
-
-      <div class="sidebar-group">
-        <p class="sidebar-group-title">MANAGE</p>
-
-        <!-- API Keys -->
-        <a href="/dashboard/keys" class="sidebar-item {{if eq .Title "keys"}}active{{end}}"
-           hx-get="/dashboard/keys" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
-          API Keys
-        </a>
-
-        <!-- Teams -->
-        <a href="/dashboard/teams" class="sidebar-item {{if eq .Title "teams"}}active{{end}}"
-           hx-get="/dashboard/teams" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          Teams
-        </a>
-
-        <!-- Users -->
-        <a href="/dashboard/users" class="sidebar-item {{if eq .Title "users"}}active{{end}}"
-           hx-get="/dashboard/users" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-          Users
-        </a>
-
-        <!-- Webhooks -->
-        <a href="/dashboard/webhooks" class="sidebar-item {{if eq .Title "webhooks"}}active{{end}}"
-           hx-get="/dashboard/webhooks" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 16.98h-5.99c-1.1 0-1.95.94-2.48 1.9A4 4 0 0 1 2 17c.01-.7.2-1.4.57-2"/><path d="m6 17 3.13-5.78c.53-.97.1-2.18-.5-3.1a4 4 0 1 1 6.89-4.06"/><path d="m12 6 3.13 5.73C15.66 12.7 16.9 13 18 13h.98"/><path d="M19 11v4"/><path d="M17 13h4"/></svg>
-          Webhooks
-        </a>
-
-        <!-- Backup -->
-        <a href="/dashboard/backup" class="sidebar-item {{if eq .Title "backup"}}active{{end}}"
-           hx-get="/dashboard/backup" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Backup
-        </a>
-
-        <!-- Settings -->
-        <a href="/dashboard/settings" class="sidebar-item {{if eq .Title "settings"}}active{{end}}"
-           hx-get="/dashboard/settings" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Settings
-        </a>
-
-        <!-- Plugins -->
-        <a href="/dashboard/plugins" class="sidebar-item {{if eq .Title "plugins"}}active{{end}}"
-           hx-get="/dashboard/plugins" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
-          Plugins
-        </a>
-
-        <!-- Playground -->
-        <a href="/dashboard/playground" class="sidebar-item {{if eq .Title "playground"}}active{{end}}"
-           hx-get="/dashboard/playground" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-          Playground
-        </a>
-
-        <!-- Docs -->
-        <a href="/dashboard/docs" class="sidebar-item {{if eq .Title "docs"}}active{{end}}"
-           hx-get="/dashboard/docs" hx-target="#content" hx-swap="outerHTML" hx-push-url="true">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-          Docs
-        </a>
-      </div>
+      {{end}}
     </nav>
-
-    <!-- Footer: Dark Mode Toggle -->
-    <div class="sidebar-footer">
-      <button class="sidebar-theme-btn" onclick="toggleSidebarTheme()" id="sidebar-theme-btn">
-        <span id="theme-icon">☀️</span>
-        <span id="theme-label">Dark Mode</span>
+    <div style="padding:12px 16px;border-top:1px solid var(--sidebar-border)">
+      <button onclick="toggleTheme()" style="width:100%;padding:10px 12px;background:var(--bg-sidebar-hover);border:1px solid var(--sidebar-border);border-radius:var(--radius-sm);color:var(--fg-sidebar);font-size:13px;cursor:pointer;font-weight:500;display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px">
+        <span id="theme-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span>
+        <span id="theme-label">Light Mode</span>
       </button>
     </div>
   </aside>
 
-  <!-- ═══════ Main Content Area ═══════ -->
-  <main id="content" class="main-content" hx-swap="outerHTML">
-    {{.Content}}
-  </main>
+  <!-- Backdrop -->
+  <div id="sidebar-backdrop" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:49;opacity:0;transition:opacity 0.3s" onclick="closeSidebar()"></div>
 
-    <!-- ═══════ Scripts ═══════ -->
-  <!-- Alpine (synchronous — must load before inline scripts) -->
-  <script src="/static/alpine.min.js"></script>
-  <script>
-    // ── Sidebar Dark Mode Toggle ──
-    (function() {
-      const STORAGE_KEY = 'lintasan-theme';
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored === 'dark') {
-        document.documentElement.classList.add('dark');
-        document.body.style.background = '#0f1117';
-        document.body.style.color = '#e4e6ed';
-      }
+  <!-- Main -->
+  <div style="flex:1;margin-left:260px" id="main-area">
+    <!-- Header -->
+    <header style="height:60px;background:var(--bg-card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;z-index:40;backdrop-filter:blur(12px)">
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="hamburger-btn" onclick="toggleSidebar()" style="display:none;align-items:center;justify-content:center;width:44px;height:44px;border:none;background:transparent;cursor:pointer;border-radius:var(--radius-sm);color:var(--fg-0)" id="hamburger">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        <span style="font-size:15px;font-weight:600;color:var(--fg-0)">{{.PageTitle}}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="display:flex;align-items:center;gap:6px;background:var(--bg-body);padding:5px 10px;border-radius:var(--radius-sm);border:1px solid var(--border)">
+          <div style="width:6px;height:6px;border-radius:50%;background:var(--success);animation:dotPulse 2s infinite"></div>
+          <span style="font-size:12px;color:var(--fg-2);font-family:var(--mono)">Port 20181</span>
+        </div>
+        <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,var(--primary) 0%,#6366f1 100%);display:flex;align-items:center;justify-content:center;cursor:pointer" title="Admin">
+          <span style="color:#fff;font-size:12px;font-weight:600">SR</span>
+        </div>
+      </div>
+    </header>
+    <main id="page-content" style="padding:24px">
+      {{.Content}}
+    </main>
+  </div>
+</div>
 
-      window.toggleSidebarTheme = function() {
-        const isDark = document.documentElement.classList.toggle('dark');
-        if (isDark) {
-          document.body.style.background = '#0f1117';
-          document.body.style.color = '#e4e6ed';
-          localStorage.setItem(STORAGE_KEY, 'dark');
-        } else {
-          document.body.style.background = '';
-          document.body.style.color = '';
-          localStorage.setItem(STORAGE_KEY, 'light');
-        }
-        updateThemeButton(isDark);
-      };
+<script>
+var sidebarOpen = false;
+var theme = localStorage.getItem('sr-theme') || 'dark';
+document.documentElement.setAttribute('data-theme', theme);
+updateThemeUI();
 
-      function updateThemeButton(isDark) {
-        const icon = document.getElementById('theme-icon');
-        const label = document.getElementById('theme-label');
-        if (icon && label) {
-          icon.textContent = isDark ? '☀️' : '🌙';
-          label.textContent = isDark ? 'Light Mode' : 'Dark Mode';
-        }
-      }
+function toggleTheme() {
+  theme = theme === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('sr-theme', theme);
+  document.documentElement.setAttribute('data-theme', theme);
+  updateThemeUI();
+}
 
-      // Init button state
-      updateThemeButton(document.documentElement.classList.contains('dark'));
-    })();
+function updateThemeUI() {
+  var icon = document.getElementById('theme-icon');
+  var label = document.getElementById('theme-label');
+  if (theme === 'dark') {
+    icon.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>';
+    label.textContent = 'Light Mode';
+  } else {
+    icon.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
+    label.textContent = 'Dark Mode';
+  }
+}
 
-    // ── HTMX + Alpine bridge: start() re-scans entire doc after swaps ──
-    (function() {
-      function boot() {
-        if (!window.Alpine) { setTimeout(boot, 50); return; }
-        try { Alpine.start(); } catch(e) {}
-      }
-      if (document.readyState !== 'loading') setTimeout(boot, 10);
-      document.addEventListener('DOMContentLoaded', boot);
-      document.addEventListener('htmx:afterSettle', function() {
-        if (window.Alpine) { try { Alpine.start(); } catch(e) {} }
-        var d = document.documentElement.classList.contains('dark');
-        var i = document.getElementById('theme-icon');
-        var l = document.getElementById('theme-label');
-        if (i) i.textContent = d ? '☀️' : '🌙';
-        if (l) l.textContent = d ? 'Light Mode' : 'Dark Mode';
-      });
-    })();
-  </script>
-  <script src="/static/app.js"></script>
+function toggleSidebar() {
+  sidebarOpen = !sidebarOpen;
+  var sidebar = document.getElementById('sidebar');
+  var backdrop = document.getElementById('sidebar-backdrop');
+  if (sidebarOpen) {
+    sidebar.classList.add('open');
+    backdrop.style.display = 'block';
+    setTimeout(function(){ backdrop.style.opacity = '1'; }, 10);
+  } else {
+    sidebar.classList.remove('open');
+    backdrop.style.opacity = '0';
+    setTimeout(function(){ backdrop.style.display = 'none'; }, 300);
+  }
+}
+
+function closeSidebar() {
+  sidebarOpen = false;
+  document.getElementById('sidebar').classList.remove('open');
+  var backdrop = document.getElementById('sidebar-backdrop');
+  backdrop.style.opacity = '0';
+  setTimeout(function(){ backdrop.style.display = 'none'; }, 300);
+}
+
+// Mark active nav item
+document.addEventListener('htmx:afterSettle', function() {
+  var path = window.location.pathname;
+  document.querySelectorAll('#sidebar a').forEach(function(a) {
+    a.classList.remove('active');
+    a.style.color = 'var(--fg-sidebar)';
+    a.style.background = 'transparent';
+    a.style.fontWeight = '500';
+    a.style.borderLeftColor = 'transparent';
+    var href = a.getAttribute('href');
+    if (href === path || (path === '/dashboard/' && href === '/dashboard')) {
+      a.classList.add('active');
+      a.style.color = 'var(--primary)';
+      a.style.background = 'var(--primary-light)';
+      a.style.fontWeight = '600';
+      a.style.borderLeftColor = 'var(--primary)';
+    }
+  });
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+  var path = window.location.pathname;
+  document.querySelectorAll('#sidebar a').forEach(function(a) {
+    var href = a.getAttribute('href');
+    if (href === path || (path.endsWith('/') && href === path.slice(0,-1))) {
+      a.classList.add('active');
+      a.style.color = 'var(--primary)';
+      a.style.background = 'var(--primary-light)';
+      a.style.fontWeight = '600';
+      a.style.borderLeftColor = 'var(--primary)';
+    }
+  });
+
+  // Show hamburger on mobile
+  if (window.innerWidth <= 768) {
+    document.getElementById('hamburger').style.display = 'flex';
+  }
+});
+</script>
 </body>
 </html>

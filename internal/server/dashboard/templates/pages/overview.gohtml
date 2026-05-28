@@ -1,89 +1,146 @@
-<div x-data="overviewData()" x-init="fetchStats.call($data); window.statsscope = $data" class="fade-in">
-  <div class="dashboard-header">
-    <h1>Overview</h1>
-    <div style="display:flex;align-items:center;gap:16px;">
+<div x-data="overviewStats()" x-init="fetchData.call($data)" class="fade-in">
+  <!-- Page Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/>
+      </svg>
+      <h1 style="font-size:18px;font-weight:600;color:var(--fg-0)">Overview</h1>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
       <span style="font-size:12px;color:var(--fg-3)">Auto-refreshes every 30s</span>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:12px;color:var(--fg-2)">Port <span x-text="port" style="font-family:var(--mono);font-weight:500"></span></span>
-        <div style="width:32px;height:32px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">SR</div>
-      </div>
+      <div style="width:8px;height:8px;border-radius:50%;background:var(--success);animation:dotPulse 2s infinite"></div>
     </div>
   </div>
 
-  <!-- Hero: Base URL -->
-  <div class="card" style="background:linear-gradient(135deg,var(--primary-light) 0%,var(--bg-card) 100%);border:1px solid var(--primary-light);margin-bottom:24px">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px">
+  <!-- Base URL Card -->
+  <div class="card" style="background:linear-gradient(135deg,var(--primary-light) 0%,var(--bg-card) 60%);border:1px solid var(--primary-light);margin-bottom:24px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:14px">
-        <div style="width:40px;height:40px;border-radius:10px;background:var(--primary);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;color:#fff">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        <div style="width:44px;height:44px;border-radius:12px;background:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 12px var(--primary-glow)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">
+            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+          </svg>
         </div>
         <div>
-          <p style="font-size:12px;font-weight:600;color:var(--fg-2);margin:0 0 4px;text-transform:uppercase;letter-spacing:.5px">Base URL</p>
-          <code style="font-size:14px;font-family:var(--mono);color:var(--fg-0);font-weight:600" x-text="baseUrl"></code>
-          <p style="font-size:11px;color:var(--fg-3);margin:4px 0 0">Use this URL as your <code style="font-family:var(--mono);font-size:11px;color:var(--primary);background:var(--primary-light);padding:1px 5px;border-radius:3px">baseURL</code> in SDKs</p>
+          <p style="font-size:11px;font-weight:600;color:var(--fg-2);margin:0 0 4px;text-transform:uppercase;letter-spacing:0.5px">Base URL</p>
+          <code style="font-size:15px;font-family:var(--mono);color:var(--fg-0);font-weight:600" x-text="baseUrl"></code>
+          <p style="font-size:11px;color:var(--fg-3);margin:4px 0 0">Use this URL as your <code style="font-family:var(--mono);font-size:11px;color:var(--primary);background:var(--primary-light);padding:1px 6px;border-radius:4px">baseURL</code> in SDKs</p>
         </div>
       </div>
-      <button onclick="window.overviewScope.copyUrl()" class="btn" :class="copied ? 'btn-success' : 'btn-secondary'" style="flex-shrink:0">
+      <button @click="copyUrl()" class="btn-primary" :class="copied ? 'btn-success' : ''" style="flex-shrink:0;padding:10px 18px">
         <span x-show="!copied">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         </span>
         <span x-show="copied">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
         </span>
-        <span x-text="copied ? 'Copied!' : 'Copy'"></span>
+        <span x-text="copied ? 'Copied!' : 'Copy URL'"></span>
       </button>
     </div>
   </div>
 
-  <!-- Token Metric Row -->
-  <div class="metric-grid-4">
-    <div class="metric-card fade-in" style="animation-delay:0s">
-      <div class="metric-label">Tokens Today</div>
-      <div class="metric-value" x-text="(stats?.tokensToday ?? 0).toLocaleString()">—</div>
-      <div class="metric-sub">Processed in last 24h</div>
+  <!-- Animated Metric Cards Row -->
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px" class="fade-in" style="animation-delay:0s">
+    <!-- Total Requests -->
+    <div class="card fade-in" style="animation-delay:0s;position:relative;overflow:hidden">
+      <div style="position:absolute;top:-20px;right:-10px;width:80px;height:80px;background:var(--primary-light);border-radius:50%;opacity:0.5"></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+        <div style="width:36px;height:36px;border-radius:10px;background:var(--primary-light);display:flex;align-items:center;justify-content:center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round">
+            <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+          </svg>
+        </div>
+      </div>
+      <div class="stat-label">Total Requests</div>
+      <div x-show="!stats" class="skeleton" style="width:80px;height:28px;margin-top:4px"></div>
+      <div x-show="stats" x-cloak class="stat-value" x-text="(stats?.totalRequests ?? 0).toLocaleString()"></div>
+      <div style="font-size:11px;color:var(--fg-3);margin-top:6px">All time</div>
     </div>
-    <div class="metric-card fade-in" style="animation-delay:0.06s">
-      <div class="metric-label">This Month</div>
-      <div class="metric-value" x-text="(stats?.tokensMonth ?? 0).toLocaleString()">—</div>
-      <div class="metric-sub">Total token usage</div>
+
+    <!-- Cache Hit Rate -->
+    <div class="card fade-in" style="animation-delay:0.06s;position:relative;overflow:hidden">
+      <div style="position:absolute;top:-20px;right:-10px;width:80px;height:80px;background:var(--success-light);border-radius:50%;opacity:0.5"></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+        <div style="width:36px;height:36px;border-radius:10px;background:var(--success-light);display:flex;align-items:center;justify-content:center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+          </svg>
+        </div>
+      </div>
+      <div class="stat-label">Cache Hit Rate</div>
+      <div x-show="!stats" class="skeleton" style="width:60px;height:28px;margin-top:4px"></div>
+      <div x-show="stats" x-cloak class="stat-value" x-text="(stats?.cacheHitRate ?? 0).toFixed(1) + '%'" :style="'color:' + (stats?.cacheHitRate > 70 ? 'var(--success)' : 'var(--fg-0)')"></div>
+      <div style="font-size:11px;color:var(--fg-3);margin-top:6px">Cached responses</div>
     </div>
-    <div class="metric-card fade-in" style="animation-delay:0.12s">
-      <div class="metric-label">Cache Saved</div>
-      <div class="metric-value" x-text="(stats?.tokensSaved ?? 0).toLocaleString()">—</div>
-      <div class="metric-sub">Tokens saved via cache</div>
+
+    <!-- Tokens Today -->
+    <div class="card fade-in" style="animation-delay:0.12s;position:relative;overflow:hidden">
+      <div style="position:absolute;top:-20px;right:-10px;width:80px;height:80px;background:var(--purple-light);border-radius:50%;opacity:0.5"></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+        <div style="width:36px;height:36px;border-radius:10px;background:var(--purple-light);display:flex;align-items:center;justify-content:center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2" stroke-linecap="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+        </div>
+      </div>
+      <div class="stat-label">Tokens Today</div>
+      <div x-show="!stats" class="skeleton" style="width:80px;height:28px;margin-top:4px"></div>
+      <div x-show="stats" x-cloak class="stat-value" x-text="(stats?.tokensToday ?? 0).toLocaleString()"></div>
+      <div style="font-size:11px;color:var(--fg-3);margin-top:6px">Last 24 hours</div>
     </div>
-    <div class="metric-card fade-in" style="animation-delay:0.18s">
-      <div class="metric-label">Compressed</div>
-      <div class="metric-value" x-text="(stats?.tokensCompressed ?? 0).toLocaleString()">—</div>
-      <div class="metric-sub">Prompt compression savings</div>
+
+    <!-- Avg Latency -->
+    <div class="card fade-in" style="animation-delay:0.18s;position:relative;overflow:hidden">
+      <div style="position:absolute;top:-20px;right:-10px;width:80px;height:80px;background:var(--warning-light);border-radius:50%;opacity:0.5"></div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+        <div style="width:36px;height:36px;border-radius:10px;background:var(--warning-light);display:flex;align-items:center;justify-content:center">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+        </div>
+      </div>
+      <div class="stat-label">Avg Latency</div>
+      <div x-show="!stats" class="skeleton" style="width:70px;height:28px;margin-top:4px"></div>
+      <div x-show="stats" x-cloak class="stat-value" x-text="(stats?.avgLatency ?? 0).toFixed(0) + ' ms'"></div>
+      <div style="font-size:11px;color:var(--fg-3);margin-top:6px">Response time</div>
     </div>
   </div>
 
   <!-- Charts Row -->
-  <div class="chart-grid" style="margin-bottom:24px">
-    <div class="card">
-      <h2 style="font-size:14px;font-weight:600;color:var(--fg-1);margin-bottom:16px">Request Volume <span style="color:var(--fg-3);font-weight:400">(7 days)</span></h2>
+  <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:20px;margin-bottom:24px" class="chart-grid">
+    <!-- Bar Chart: Request Volume -->
+    <div class="card fade-in" style="animation-delay:0.2s">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:14px;font-weight:600;color:var(--fg-1)">Request Volume <span style="font-weight:400;color:var(--fg-3)">(7 days)</span></h2>
+        <div style="display:flex;gap:12px;font-size:11px">
+          <span style="display:flex;align-items:center;gap:4px;color:var(--fg-3)"><span style="width:8px;height:8px;border-radius:2px;background:var(--primary)"></span> Requests</span>
+        </div>
+      </div>
       <div x-show="!stats" class="skeleton" style="height:200px;width:100%"></div>
-      <div x-show="stats" x-cloak>
+      <div x-show="stats" x-cloak style="position:relative">
         <canvas id="volume-chart" height="200" style="width:100%"></canvas>
       </div>
     </div>
-    <div class="card">
+
+    <!-- Donut Chart: Cache Performance -->
+    <div class="card fade-in" style="animation-delay:0.24s">
       <h2 style="font-size:14px;font-weight:600;color:var(--fg-1);margin-bottom:16px">Cache Performance</h2>
       <div x-show="!stats" class="skeleton" style="height:200px;width:100%"></div>
       <div x-show="stats" x-cloak style="display:flex;flex-direction:column;align-items:center">
         <canvas id="cache-donut" height="150" style="max-width:180px"></canvas>
         <div style="text-align:center;margin-top:12px">
-          <div style="font-size:24px;font-weight:700;font-family:var(--mono);color:var(--fg-0)" x-text="(stats?.cacheHitRate ?? 0).toFixed(1) + '%'"></div>
+          <div style="font-size:26px;font-weight:700;font-family:var(--mono);color:var(--fg-0)" x-text="(stats?.cacheHitRate ?? 0).toFixed(1) + '%'"></div>
           <div style="font-size:12px;color:var(--fg-3)">cache hit rate</div>
         </div>
-        <div style="display:flex;gap:20px;margin-top:8px;font-size:12px">
+        <div style="display:flex;gap:20px;margin-top:12px;font-size:12px">
           <div style="display:flex;align-items:center;gap:6px">
-            <span style="width:8px;height:8px;border-radius:2px;background:var(--primary)"></span>
+            <span style="width:10px;height:10px;border-radius:3px;background:var(--primary)"></span>
             <span style="color:var(--fg-2)">Hits: <span style="font-weight:600;font-family:var(--mono)" x-text="(stats?.cachedRequests ?? 0).toLocaleString()"></span></span>
           </div>
           <div style="display:flex;align-items:center;gap:6px">
-            <span style="width:8px;height:8px;border-radius:2px;background:var(--border)"></span>
+            <span style="width:10px;height:10px;border-radius:3px;background:var(--border)"></span>
             <span style="color:var(--fg-2)">Misses: <span style="font-weight:600;font-family:var(--mono)" x-text="((stats?.totalRequests ?? 0) - (stats?.cachedRequests ?? 0)).toLocaleString()"></span></span>
           </div>
         </div>
@@ -91,84 +148,132 @@
     </div>
   </div>
 
-  <!-- Features + Provider Health Row -->
-  <div class="metric-grid-2" style="margin-bottom:24px">
-    <div class="card">
-      <h2 style="font-size:14px;font-weight:600;color:var(--fg-1);margin-bottom:16px">Features</h2>
-      <div x-show="!stats" class="skeleton" style="height:120px;width:100%"></div>
-      <div x-show="stats" x-cloak class="stagger">
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+  <!-- Features Grid + Provider Health -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px" class="metric-grid-2">
+    <!-- Features -->
+    <div class="card fade-in" style="animation-delay:0.28s">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--fg-1)" stroke-width="2" stroke-linecap="round">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+        </svg>
+        <h2 style="font-size:14px;font-weight:600;color:var(--fg-1)">Features</h2>
+      </div>
+      <div x-show="!stats" class="skeleton" style="height:100px;width:100%"></div>
+      <div x-show="stats" x-cloak>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px">
           <template x-for="f in (stats?.features || [])" :key="f.name">
-            <div style="padding:10px 14px;border-radius:var(--radius-sm);background:var(--bg-body);display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border-light)">
-              <span style="font-size:13px;color:var(--fg-1);font-weight:500" x-text="f.name"></span>
-              <span class="badge" :class="f.enabled ? 'badge-success' : 'badge'" x-text="f.enabled ? 'Enabled' : 'Off'"></span>
+            <div style="padding:12px 14px;border-radius:var(--radius-sm);background:var(--bg-body);display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border)">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="width:6px;height:6px;border-radius:50%" :style="'background:' + (f.enabled ? 'var(--success)' : 'var(--fg-3)')"></span>
+                <span style="font-size:13px;color:var(--fg-1);font-weight:500" x-text="f.name"></span>
+              </div>
+              <span class="status-badge" :class="f.enabled ? 'badge-success' : 'badge-error'" style="font-size:10px;padding:3px 8px" x-text="f.enabled ? 'Active' : 'Off'"></span>
             </div>
           </template>
         </div>
+        <template x-if="stats && (!stats.features || stats.features.length === 0)">
+          <div class="empty-state"><p style="color:var(--fg-3)">No features configured</p></div>
+        </template>
       </div>
     </div>
-    <div class="card">
-      <h2 style="font-size:14px;font-weight:600;color:var(--fg-1);margin-bottom:16px">Provider Health</h2>
-      <div x-show="!stats" class="skeleton" style="height:120px;width:100%"></div>
-      <div x-show="stats" x-cloak>
+
+    <!-- Provider Health -->
+    <div class="card fade-in" style="animation-delay:0.32s">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--fg-1)" stroke-width="2" stroke-linecap="round">
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+        </svg>
+        <h2 style="font-size:14px;font-weight:600;color:var(--fg-1)">Provider Health</h2>
+        <span style="font-size:11px;color:var(--fg-3);font-weight:400" x-show="stats?.providers?.length > 0" x-text="'(' + stats.providers.length + ')'"></span>
+      </div>
+      <div x-show="!stats" class="skeleton" style="height:100px;width:100%"></div>
+      <div x-show="stats" x-cloak style="max-height:200px;overflow-y:auto">
         <template x-for="p in (stats?.providers || [])" :key="p.name">
-          <div style="padding:12px 14px;border-radius:var(--radius-sm);background:var(--bg-body);margin-bottom:8px;border:1px solid var(--border-light)">
+          <div style="padding:12px 14px;border-radius:var(--radius-sm);background:var(--bg-body);margin-bottom:8px;border:1px solid var(--border)">
             <div style="display:flex;align-items:center;justify-content:space-between">
               <div style="display:flex;align-items:center;gap:10px">
-                <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0" :style="{background: p.healthy ? 'var(--success)' : 'var(--error)'}"></span>
+                <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0" :style="'background:' + (p.healthy ? 'var(--success)' : 'var(--error)') + ';box-shadow:0 0 6px ' + (p.healthy ? 'var(--success)' : 'var(--error)')"></span>
                 <div>
                   <div style="font-size:13px;font-weight:600;color:var(--fg-0)" x-text="p.name"></div>
-                  <div style="font-size:11px;color:var(--fg-3);text-transform:uppercase" x-text="p.format || ''"></div>
+                  <div style="font-size:10px;color:var(--fg-3);text-transform:uppercase;letter-spacing:0.5px" x-text="p.format || 'API'"></div>
                 </div>
               </div>
-              <div style="display:flex;align-items:center;gap:8px">
+              <div style="display:flex;align-items:center;gap:10px">
                 <span style="font-size:12px;color:var(--fg-3);font-family:var(--mono)" x-show="p.latency > 0" x-text="(p.latency || 0).toFixed(0) + 'ms'"></span>
-                <span class="badge" :class="p.healthy ? 'badge-success' : 'badge-error'" x-text="p.healthy ? 'Healthy' : 'Down'"></span>
+                <span class="status-badge" :class="p.healthy ? 'badge-success' : 'badge-error'" style="font-size:10px;padding:3px 8px" x-text="p.healthy ? 'Healthy' : 'Down'"></span>
               </div>
             </div>
           </div>
         </template>
         <template x-if="stats && (!stats.providers || stats.providers.length === 0)">
-          <div class="empty-state"><p>No providers configured</p></div>
+          <div class="empty-state"><p style="color:var(--fg-3)">No providers configured</p></div>
         </template>
       </div>
     </div>
   </div>
 
-  <!-- Recent Requests -->
-  <div class="card">
+  <!-- Token Stats Row -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
+    <div class="card fade-in" style="animation-delay:0.36s;padding:16px 20px">
+      <div class="stat-label">Monthly Tokens</div>
+      <div x-show="!stats" class="skeleton" style="width:90px;height:24px;margin-top:6px"></div>
+      <div x-show="stats" x-cloak style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--fg-0);margin-top:4px" x-text="(stats?.tokensMonth ?? 0).toLocaleString()"></div>
+    </div>
+    <div class="card fade-in" style="animation-delay:0.4s;padding:16px 20px">
+      <div class="stat-label">Cache Savings</div>
+      <div x-show="!stats" class="skeleton" style="width:90px;height:24px;margin-top:6px"></div>
+      <div x-show="stats" x-cloak style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--success);margin-top:4px" x-text="(stats?.tokensSaved ?? 0).toLocaleString()"></div>
+    </div>
+    <div class="card fade-in" style="animation-delay:0.44s;padding:16px 20px">
+      <div class="stat-label">Compressed</div>
+      <div x-show="!stats" class="skeleton" style="width:90px;height:24px;margin-top:6px"></div>
+      <div x-show="stats" x-cloak style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--purple);margin-top:4px" x-text="(stats?.tokensCompressed ?? 0).toLocaleString()"></div>
+    </div>
+  </div>
+
+  <!-- Recent Requests Table -->
+  <div class="card fade-in" style="animation-delay:0.48s">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
       <h2 style="font-size:14px;font-weight:600;color:var(--fg-1)">Recent Requests</h2>
-      <a href="/dashboard/logs" style="font-size:13px;color:var(--primary);text-decoration:none;font-weight:500">View all →</a>
+      <a href="/dashboard/logs" style="font-size:13px;color:var(--primary);text-decoration:none;font-weight:500;display:flex;align-items:center;gap:4px">
+        View all
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+      </a>
     </div>
-    <div class="responsive-table">
+    <div class="responsive-table" style="overflow-x:auto">
       <table>
         <thead>
           <tr>
-            <th>Time</th>
+            <th style="width:140px">Time</th>
             <th>Model</th>
             <th>Provider</th>
-            <th>Status</th>
+            <th style="width:80px">Status</th>
             <th>Tokens</th>
-            <th>Duration</th>
+            <th style="width:90px">Duration</th>
           </tr>
         </thead>
         <tbody>
           <template x-if="!logs">
-            <tr><td colspan="6"><div style="padding:32px 0;text-align:center"><div class="spinner" style="margin:0 auto"></div></div></td></tr>
+            <tr><td colspan="6" style="text-align:center;padding:32px"><div class="spinner" style="margin:0 auto"></div></td></tr>
           </template>
-          <template x-if="logs &amp;&amp; logs.length === 0">
+          <template x-if="logs && logs.length === 0">
             <tr><td colspan="6"><div class="empty-state"><p>No requests yet</p><p style="font-size:12px;color:var(--fg-3);margin-top:4px">Send your first API request to get started</p></div></td></tr>
           </template>
-          <template x-for="l in logs" :key="l.timestamp">
+          <template x-for="l in (logs || []).slice(0, 10)" :key="l.timestamp">
             <tr>
               <td style="font-family:var(--mono);font-size:12px;color:var(--fg-3)" x-text="l.timestamp || '—'"></td>
               <td style="font-size:13px;font-weight:500;color:var(--fg-0)" x-text="l.model || '—'"></td>
               <td style="font-size:12px;color:var(--fg-2)" x-text="l.provider || '—'"></td>
               <td>
-                <span class="badge" :class="(l.status >= 200 &amp;&amp; l.status < 300) ? 'badge-success' : 'badge-error'" x-text="l.status || '—'"></span>
+                <span class="status-badge" :class="(l.status >= 200 && l.status < 300) ? 'badge-success' : 'badge-error'" x-text="l.status || '—'"></span>
               </td>
-              <td style="font-family:var(--mono);font-size:12px;color:var(--fg-2)" x-text="'In:' + (l.tokens_in || 0) + ' / Out:' + (l.tokens_out || 0)"></td>
+              <td>
+                <span style="font-family:var(--mono);font-size:12px;color:var(--fg-2)">
+                  <span style="color:var(--fg-3)">In:</span> <span x-text="(l.tokens_in || 0).toLocaleString()"></span>
+                  <span style="color:var(--fg-3);margin:0 4px">/</span>
+                  <span style="color:var(--fg-3)">Out:</span> <span x-text="(l.tokens_out || 0).toLocaleString()"></span>
+                </span>
+              </td>
               <td style="font-family:var(--mono);font-size:12px;color:var(--fg-3)" x-text="(l.latency_ms || 0) + 'ms'"></td>
             </tr>
           </template>
@@ -179,15 +284,14 @@
 </div>
 
 <script>
-function overviewData() {
+function overviewStats() {
   return {
     stats: null,
     logs: null,
     copied: false,
-    port: window.location.port || '',
     baseUrl: (window.location.protocol + '//' + window.location.hostname + (window.location.port ? ':' + window.location.port : '') + '/api/v1'),
 
-    async fetchStats() {
+    async fetchData() {
       try {
         let r = await fetch('/api/overview-stats');
         if (r.ok) {
@@ -204,7 +308,7 @@ function overviewData() {
         if (r.ok) { this.logs = await r.json(); }
       } catch(e) { console.error('Logs fetch failed', e); }
 
-      setTimeout(() => this.fetchStats(), 30000);
+      setTimeout(() => this.fetchData(), 30000);
     },
 
     async copyUrl() {
@@ -251,7 +355,7 @@ function overviewData() {
       let grad = ctx.createLinearGradient(0, h-pad.bottom, 0, pad.top);
       grad.addColorStop(0, primaryColor);
       grad.addColorStop(1, '#6366f1');
-      let isDark = document.documentElement.classList.contains('dark');
+      let isDark = document.documentElement.getAttribute('data-theme') !== 'light';
       let lc = isDark ? '#9095a8' : '#64748b';
       let ld = isDark ? '#656b7c' : '#94a3b8';
       values.forEach((v,i) => {
@@ -259,7 +363,7 @@ function overviewData() {
         let x = pad.left + gap + i*(bw+gap);
         let y = h - pad.bottom - bh;
         let r = Math.max(0, Math.min(4, bw/2));
-        ctx.fillStyle = primaryColor;
+        ctx.fillStyle = grad;
         if (r > 0 && bw > 4) {
           ctx.beginPath();
           ctx.moveTo(x, y+r);
@@ -303,7 +407,7 @@ function overviewData() {
       let total = this.stats.totalRequests || 1;
       let cached = this.stats.cachedRequests || 0;
       let hitRate = (cached/total)*100;
-      let isDark = document.documentElement.classList.contains('dark');
+      let isDark = document.documentElement.getAttribute('data-theme') !== 'light';
       let sa = -Math.PI/2;
       let ha = (hitRate/100)*2*Math.PI;
       ctx.beginPath();
@@ -324,6 +428,11 @@ function overviewData() {
     }
   };
 }
-
-
 </script>
+
+<style>
+.btn-success { background: var(--success) !important; }
+.btn-success:hover { background: #0ea271 !important; }
+@keyframes dotPulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.4);opacity:0.7} }
+@media(max-width:1024px) { .chart-grid { grid-template-columns:1fr !important } }
+</style>

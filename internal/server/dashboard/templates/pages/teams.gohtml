@@ -1,198 +1,396 @@
-<div x-data="{ showCreateModal: false, editMode: false, editId: '', newTeamName: '', newRateLimit: '', teams: null, toasts: [] }" x-init="fetchTeams()">
-  <div class="page-header">
-    <div>
-      <h1 class="page-title">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        Teams
-      </h1>
-      <p class="page-desc">Manage teams and their rate limits.</p>
+<div x-data="teamsData()" x-init="fetchTeams()" class="fade-in">
+  <!-- Page Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="width:36px;height:36px;border-radius:10px;background:var(--primary-light);display:flex;align-items:center;justify-content:center">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      </div>
+      <div>
+        <h1 style="font-size:18px;font-weight:600;color:var(--fg-0)">Teams</h1>
+        <p style="font-size:12px;color:var(--fg-3);margin-top:2px">Manage teams, members, and their permissions</p>
+      </div>
     </div>
-    <button class="btn btn-primary" onclick="ts.showModal()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-      Create Team
+    <button @click="showForm = !showForm" class="btn-primary" style="padding:10px 18px">
+      <svg x-show="!showForm" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      <svg x-show="showForm" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <span x-text="showForm ? 'Cancel' : '+ Create Team'"></span>
     </button>
   </div>
 
-  <!-- Teams Table -->
-  <div class="card">
-    <table>
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Members</th>
-          <th>Rate Limit</th>
-          <th>Created</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <template x-if="!teams">
-          <tr><td colspan="5" class="text-center"><div class="spinner mx-auto"></div></td></tr>
-        </template>
-        <template x-if="teams && teams.length === 0">
-          <tr><td colspan="5" class="text-center"><div class="empty-state"><p>No teams yet</p></div></td></tr>
-        </template>
-        <template x-for="team in teams" :key="team.id">
-          <tr>
-            <td class="cell-name" x-text="team.name"></td>
-            <td class="cell-meta" x-text="team.members || 0"></td>
-            <td class="cell-meta" x-text="team.rate_limit ? team.rate_limit + '/min' : 'Unlimited'"></td>
-            <td class="cell-date" x-text="team.created_at || '—'"></td>
-            <td class="cell-actions">
-              <button class="btn btn-ghost btn-sm" onclick="ts.editTeam(this)">Edit</button>
-              <button class="btn btn-ghost btn-sm btn-danger-text" onclick="ts.deleteItem(this)">Delete</button>
-            </td>
-          </tr>
-        </template>
-      </tbody>
-    </table>
-  </div>
-
-  <!-- Create/Edit Team Modal -->
-  <template x-if="showCreateModal">
-    <div>
-      <div class="modal-backdrop" onclick="ts.hideModal()"></div>
-      <div class="modal-panel">
-        <div class="modal-header">
-          <h2 class="modal-title" x-text="editMode ? 'Edit Team' : 'Create Team'"></h2>
-          <button class="btn-icon" onclick="ts.hideModal()">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-          </button>
+  <!-- Stats Bar -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px">
+    <div class="stat-card fade-in" style="animation-delay:0s">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:40px;height:40px;border-radius:10px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
         </div>
-        <form onsubmit="event.preventDefault(); ts.saveItem()">
-          <template x-if="editMode">
-            <input type="hidden" name="id" :value="editId">
-          </template>
-          <label class="form-label">Team Name</label>
-          <input type="text" name="name" x-model="newTeamName" placeholder="e.g., Engineering, Support" class="form-input">
-          <label class="form-label">Rate Limit (requests/min)</label>
-          <input type="number" name="rate_limit" x-model="newRateLimit" placeholder="Leave empty for unlimited" min="0" class="form-input">
-          <div class="modal-actions">
-            <button type="button" class="btn btn-secondary" onclick="ts.hideModal()">Cancel</button>
-            <button type="submit" class="btn btn-primary" :disabled="!newTeamName.trim()" x-text="editMode ? 'Update' : 'Create'"></button>
-          </div>
-        </form>
+        <div>
+          <div class="stat-label">Total Teams</div>
+          <div x-show="!teams" class="skeleton" style="width:40px;height:24px"></div>
+          <div x-show="teams" x-cloak class="stat-value" x-text="teams.length"></div>
+        </div>
       </div>
     </div>
-  </template>
+    <div class="stat-card fade-in" style="animation-delay:0.06s">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:40px;height:40px;border-radius:10px;background:var(--purple-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--purple)" stroke-width="2" stroke-linecap="round">
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+          </svg>
+        </div>
+        <div>
+          <div class="stat-label">Total Members</div>
+          <div x-show="!teams" class="skeleton" style="width:40px;height:24px"></div>
+          <div x-show="teams" x-cloak class="stat-value" x-text="totalMembers"></div>
+        </div>
+      </div>
+    </div>
+    <div class="stat-card fade-in" style="animation-delay:0.12s">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:40px;height:40px;border-radius:10px;background:var(--success-light);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+        </div>
+        <div>
+          <div class="stat-label">Active Teams</div>
+          <div x-show="!teams" class="skeleton" style="width:40px;height:24px"></div>
+          <div x-show="teams" x-cloak class="stat-value" x-text="activeTeams"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-  <!-- Toast container -->
-  <div>
-    <template x-for="(t, i) in toasts" :key="i">
-      <div class="toast" :class="'toast-' + t.type" x-init="setTimeout(() => toasts.splice(i, 1), 3000)" x-text="t.message"></div>
-    </template>
+  <!-- Inline Create Form -->
+  <div x-show="showForm" x-cloak class="card fade-in" style="margin-bottom:24px;border:1px solid var(--primary-light);background:linear-gradient(135deg,var(--primary-light) 0%,var(--bg-card) 60%)">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+        <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+      </svg>
+      <h2 style="font-size:14px;font-weight:600;color:var(--fg-0)">Create New Team</h2>
+    </div>
+    <form @submit.prevent="createTeam()" style="display:grid;grid-template-columns:1fr 2fr auto;gap:16px;align-items:end">
+      <div>
+        <label class="label-st">Team Name *</label>
+        <input type="text" x-model="newTeam.name" class="input-field" placeholder="e.g., Engineering, Support" required style="width:100%">
+      </div>
+      <div>
+        <label class="label-st">Description</label>
+        <input type="text" x-model="newTeam.description" class="input-field" placeholder="Brief description of the team" style="width:100%">
+      </div>
+      <button type="submit" class="btn-primary" :disabled="!newTeam.name.trim()" style="padding:10px 20px;height:42px">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Create
+      </button>
+    </form>
+  </div>
+
+  <!-- Left-Right Split: Table + Detail Panel -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;min-height:400px" class="split-grid">
+    <!-- Teams Table -->
+    <div class="card fade-in" style="animation-delay:0.18s">
+      <h2 style="font-size:14px;font-weight:600;color:var(--fg-1);margin-bottom:16px">All Teams</h2>
+      <div style="overflow-x:auto;max-height:500px;overflow-y:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Team</th>
+              <th style="width:80px">Members</th>
+              <th style="width:90px">Status</th>
+              <th style="width:60px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-if="!teams">
+              <tr><td colspan="4" style="text-align:center;padding:32px"><div class="spinner" style="margin:0 auto"></div></td></tr>
+            </template>
+            <template x-if="teams && teams.length === 0">
+              <tr><td colspan="4"><div class="empty-state"><p>No teams yet</p><p style="font-size:12px;color:var(--fg-3);margin-top:4px">Create your first team to get started</p></div></td></tr>
+            </template>
+            <template x-for="(team, idx) in teams" :key="team.id">
+              <tr @click="selectTeam(team)" style="cursor:pointer" :style="selectedTeam?.id === team.id ? 'background:var(--primary-light)' : ''">
+                <td>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div style="width:32px;height:32px;border-radius:8px;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:600;flex-shrink:0" x-text="(team.name || 'T').charAt(0).toUpperCase()"></div>
+                    <div>
+                      <div style="font-size:13px;font-weight:600;color:var(--fg-0)" x-text="team.name"></div>
+                      <div style="font-size:11px;color:var(--fg-3)" x-text="team.description || 'No description'"></div>
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <span style="font-size:12px;color:var(--fg-2);font-family:var(--mono)" x-text="team.members?.length || 0"></span>
+                </td>
+                <td>
+                  <span class="status-badge" :class="team.active !== false ? 'badge-success' : 'badge-error'" x-text="team.active !== false ? 'Active' : 'Inactive'"></span>
+                </td>
+                <td>
+                  <button @click.stop="deleteTeam(team, idx)" class="btn-danger" style="width:28px;height:28px" title="Delete team">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                      <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Detail Panel -->
+    <div class="card fade-in" style="animation-delay:0.24s">
+      <template x-if="!selectedTeam">
+        <div class="empty-state" style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;min-height:300px">
+          <div style="width:64px;height:64px;border-radius:16px;background:var(--border);display:flex;align-items:center;justify-content:center;margin-bottom:16px">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--fg-3)" stroke-width="2" stroke-linecap="round">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <p style="font-size:14px;color:var(--fg-2);font-weight:500">Select a team to view details</p>
+          <p style="font-size:12px;color:var(--fg-3);margin-top:4px">Click on a team from the list</p>
+        </div>
+      </template>
+
+      <template x-if="selectedTeam">
+        <div>
+          <!-- Team Header -->
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="width:48px;height:48px;border-radius:12px;background:var(--primary);display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;font-weight:700" x-text="(selectedTeam.name || 'T').charAt(0).toUpperCase()"></div>
+              <div>
+                <h2 style="font-size:16px;font-weight:600;color:var(--fg-0)" x-text="selectedTeam.name"></h2>
+                <p style="font-size:12px;color:var(--fg-3);margin-top:2px" x-text="selectedTeam.description || 'No description'"></p>
+              </div>
+            </div>
+            <span class="status-badge" :class="selectedTeam.active !== false ? 'badge-success' : 'badge-error'" x-text="selectedTeam.active !== false ? 'Active' : 'Inactive'"></span>
+          </div>
+
+          <!-- Team Stats -->
+          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:20px">
+            <div style="padding:12px;border-radius:var(--radius-sm);background:var(--bg-body);border:1px solid var(--border)">
+              <div style="font-size:10px;color:var(--fg-3);text-transform:uppercase;letter-spacing:0.5px;font-weight:500">Members</div>
+              <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--fg-0);margin-top:4px" x-text="selectedTeam.members?.length || 0"></div>
+            </div>
+            <div style="padding:12px;border-radius:var(--radius-sm);background:var(--bg-body);border:1px solid var(--border)">
+              <div style="font-size:10px;color:var(--fg-3);text-transform:uppercase;letter-spacing:0.5px;font-weight:500">Usage Today</div>
+              <div style="font-size:20px;font-weight:700;font-family:var(--mono);color:var(--fg-0);margin-top:4px" x-text="(selectedTeam.usage_today || 0).toLocaleString()"></div>
+            </div>
+          </div>
+
+          <!-- Members List -->
+          <div style="margin-bottom:16px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <h3 style="font-size:13px;font-weight:600;color:var(--fg-1)">Members</h3>
+              <button @click="showAddMember = !showAddMember" class="btn-secondary" style="padding:4px 10px;font-size:11px;height:28px">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Add
+              </button>
+            </div>
+
+            <!-- Add Member Form -->
+            <div x-show="showAddMember" x-cloak style="margin-bottom:12px;padding:12px;border-radius:var(--radius-sm);background:var(--bg-body);border:1px solid var(--primary-light)">
+              <form @submit.prevent="addMember()" style="display:flex;gap:8px">
+                <input type="email" x-model="newMember.email" class="input-field" placeholder="Email address" style="flex:1">
+                <select x-model="newMember.role" class="input-field" style="width:100px">
+                  <option value="member">Member</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button type="submit" class="btn-primary" style="padding:8px 12px;height:36px">Add</button>
+              </form>
+            </div>
+
+            <!-- Members List -->
+            <div style="max-height:200px;overflow-y:auto">
+              <template x-if="!selectedTeam.members || selectedTeam.members.length === 0">
+                <div style="text-align:center;padding:20px;color:var(--fg-3);font-size:12px">No members yet</div>
+              </template>
+              <template x-for="member in (selectedTeam.members || [])" :key="member.id || member.email">
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:10px;border-radius:var(--radius-sm);background:var(--bg-body);margin-bottom:6px;border:1px solid var(--border)">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <!-- Avatar -->
+                    <div style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#fff;flex-shrink:0" :style="'background:linear-gradient(135deg,' + avatarColor(member.email) + ')'" x-text="getInitials(member.name || member.email)"></div>
+                    <div>
+                      <div style="font-size:13px;font-weight:500;color:var(--fg-0)" x-text="member.name || member.email"></div>
+                      <div style="font-size:11px;color:var(--fg-3)" x-text="member.email"></div>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <!-- Role Badge -->
+                    <span class="status-badge" :class="member.role === 'admin' ? 'badge-primary' : 'badge-success'" style="font-size:10px" x-text="member.role === 'admin' ? 'Admin' : 'Member'"></span>
+                    <!-- Remove -->
+                    <button @click="removeMember(member)" style="width:24px;height:24px;border:none;background:none;color:var(--fg-3);cursor:pointer;border-radius:4px;display:flex;align-items:center;justify-content:center" title="Remove member">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Usage Display -->
+          <div style="border-top:1px solid var(--border);padding-top:16px">
+            <h3 style="font-size:13px;font-weight:600;color:var(--fg-1);margin-bottom:12px">Usage This Month</h3>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+              <div style="text-align:center;padding:12px;border-radius:var(--radius-sm);background:var(--bg-body);border:1px solid var(--border)">
+                <div style="font-size:18px;font-weight:700;font-family:var(--mono);color:var(--fg-0)" x-text="(selectedTeam.usage_month || 0).toLocaleString()"></div>
+                <div style="font-size:10px;color:var(--fg-3);margin-top:4px">Requests</div>
+              </div>
+              <div style="text-align:center;padding:12px;border-radius:var(--radius-sm);background:var(--bg-body);border:1px solid var(--border)">
+                <div style="font-size:18px;font-weight:700;font-family:var(--mono);color:var(--success)" x-text="(selectedTeam.tokens_month || 0).toLocaleString()"></div>
+                <div style="font-size:10px;color:var(--fg-3);margin-top:4px">Tokens</div>
+              </div>
+              <div style="text-align:center;padding:12px;border-radius:var(--radius-sm);background:var(--bg-body);border:1px solid var(--border)">
+                <div style="font-size:18px;font-weight:700;font-family:var(--mono);color:var(--primary)" x-text="selectedTeam.cost_month ? '$' + selectedTeam.cost_month.toFixed(2) : '$0.00'"></div>
+                <div style="font-size:10px;color:var(--fg-3);margin-top:4px">Cost</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
   </div>
 </div>
 
 <script>
-(function() {
-  function getData() {
-    var el = document.querySelector('[x-data]');
-    return el ? Alpine.$data(el) : null;
-  }
+function teamsData() {
+  return {
+    teams: null,
+    selectedTeam: null,
+    showForm: false,
+    showAddMember: false,
+    newTeam: { name: '', description: '' },
+    newMember: { email: '', role: 'member' },
+    toasts: [],
 
-  window.ts = {
-    showModal: function() {
-      var d = getData(); if (!d) return;
-      d.editMode = false;
-      d.editId = '';
-      d.newTeamName = '';
-      d.newRateLimit = '';
-      d.showCreateModal = true;
+    get totalMembers() {
+      return (this.teams || []).reduce((sum, t) => sum + (t.members?.length || 0), 0);
     },
-    hideModal: function() {
-      var d = getData(); if (!d) return;
-      d.showCreateModal = false;
+    get activeTeams() {
+      return (this.teams || []).filter(t => t.active !== false).length;
     },
-    editTeam: function(btn) {
-      var d = getData(); if (!d) return;
-      var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row) - 1;
-      var team = d.teams[idx];
-      if (!team) return;
-      d.editMode = true;
-      d.editId = team.id;
-      d.newTeamName = team.name;
-      d.newRateLimit = team.rate_limit || '';
-      d.showCreateModal = true;
-    },
-    saveItem: async function() {
-      var d = getData(); if (!d) return;
+
+    async fetchTeams() {
       try {
-        var method = d.editMode ? 'PUT' : 'POST';
-        var r = await fetch('/api/teams', {
-          method: method,
+        let r = await fetch('/api/teams');
+        if (r.ok) {
+          let data = await r.json();
+          this.teams = Array.isArray(data) ? data : (data.data || []);
+        }
+      } catch(e) { console.error('Teams fetch failed', e); }
+    },
+
+    async createTeam() {
+      if (!this.newTeam.name.trim()) return;
+      try {
+        let r = await fetch('/api/teams', {
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: d.newTeamName,
-            rate_limit: d.newRateLimit ? parseInt(d.newRateLimit) : null
-          })
+          body: JSON.stringify(this.newTeam)
         });
         if (r.ok) {
-          d.showCreateModal = false;
-          d.newTeamName = '';
-          d.newRateLimit = '';
-          d.editMode = false;
-          await fetchTeams();
-          d.toasts.push({ type: 'success', message: 'Team saved successfully' });
+          let data = await r.json();
+          let newTeam = Array.isArray(data) ? data[data.length-1] : data;
+          if (!this.teams) this.teams = [];
+          this.teams.unshift(newTeam);
+          this.showForm = false;
+          this.newTeam = { name: '', description: '' };
+          this.showToast('success', 'Team created successfully');
         }
-      } catch(e) { console.error('Save team failed', e); }
+      } catch(e) { console.error('Create team failed', e); this.showToast('error', 'Failed to create team'); }
     },
-    deleteItem: async function(btn) {
-      var d = getData(); if (!d) return;
-      var row = btn.closest('tr');
-      var idx = Array.from(row.parentNode.children).indexOf(row) - 1;
-      var team = d.teams[idx];
-      if (!team || !team.id) return;
-      if (!confirm('Delete team "' + team.name + '"?')) return;
+
+    async deleteTeam(team, idx) {
+      if (!confirm('Delete team "' + team.name + '"? This cannot be undone.')) return;
       try {
-        var r = await fetch('/api/teams?id=' + team.id, { method: 'DELETE' });
+        let r = await fetch('/api/teams?id=' + team.id, { method: 'DELETE' });
         if (r.ok) {
-          d.teams = d.teams.filter(function(t) { return t.id !== team.id; });
-          d.toasts.push({ type: 'success', message: 'Team deleted' });
+          this.teams.splice(idx, 1);
+          if (this.selectedTeam?.id === team.id) this.selectedTeam = null;
+          this.showToast('success', 'Team deleted');
         }
-      } catch(e) { console.error('Delete team failed', e); }
+      } catch(e) { console.error('Delete team failed', e); this.showToast('error', 'Failed to delete team'); }
+    },
+
+    selectTeam(team) {
+      this.selectedTeam = team;
+      this.showAddMember = false;
+    },
+
+    async addMember() {
+      if (!this.newMember.email.trim() || !this.selectedTeam) return;
+      try {
+        let r = await fetch('/api/teams/' + this.selectedTeam.id + '/members', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(this.newMember)
+        });
+        if (r.ok) {
+          let data = await r.json();
+          if (!this.selectedTeam.members) this.selectedTeam.members = [];
+          this.selectedTeam.members.push(data);
+          this.newMember = { email: '', role: 'member' };
+          this.showAddMember = false;
+          this.showToast('success', 'Member added');
+        }
+      } catch(e) { console.error('Add member failed', e); this.showToast('error', 'Failed to add member'); }
+    },
+
+    async removeMember(member) {
+      if (!confirm('Remove ' + (member.name || member.email) + ' from this team?')) return;
+      try {
+        let r = await fetch('/api/teams/' + this.selectedTeam.id + '/members?email=' + encodeURIComponent(member.email), { method: 'DELETE' });
+        if (r.ok && this.selectedTeam.members) {
+          let idx = this.selectedTeam.members.indexOf(member);
+          if (idx > -1) this.selectedTeam.members.splice(idx, 1);
+          this.showToast('success', 'Member removed');
+        }
+      } catch(e) { console.error('Remove member failed', e); this.showToast('error', 'Failed to remove member'); }
+    },
+
+    getInitials(name) {
+      if (!name) return '?';
+      return name.split(' ').map(n => n.charAt(0)).join('').substring(0, 2).toUpperCase();
+    },
+
+    avatarColor(email) {
+      if (!email) return '#3c50e0';
+      let hash = 0;
+      for (let i = 0; i < email.length; i++) {
+        hash = email.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      let colors = ['#3c50e0', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4', '#6366f1'];
+      return colors[Math.abs(hash) % colors.length];
+    },
+
+    showToast(type, message) {
+      let toast = { type, message };
+      this.toasts.push(toast);
+      setTimeout(() => {
+        let idx = this.toasts.indexOf(toast);
+        if (idx > -1) this.toasts.splice(idx, 1);
+      }, 3000);
     }
   };
-
-  window.fetchTeams = async function() {
-    var d = getData();
-    if (!d) { setTimeout(fetchTeams, 100); return; }
-    try {
-      var r = await fetch('/api/teams');
-      if (r.ok) {
-        d.teams = await r.json();
-      }
-    } catch(e) { console.error('Teams fetch failed', e); }
-  };
-})();
+}
 </script>
 
 <style>
-.page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-.page-title { font-size: 18px; font-weight: 700; color: var(--fg-0); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
-.page-desc { font-size: 13px; color: var(--fg-2); }
-.cell-name { font-size: 13px; font-weight: 600; }
-.cell-meta { font-size: 12px; color: var(--fg-2); }
-.cell-date { font-size: 12px; color: var(--fg-3); }
-.cell-actions { display: flex; gap: 4px; }
-.modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.modal-title { font-size: 15px; font-weight: 600; color: var(--fg-0); }
-.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
-.btn-icon { background: none; border: none; padding: 4px; cursor: pointer; color: var(--fg-2); display: flex; align-items: center; justify-content: center; }
-.btn-icon:hover { color: var(--fg-0); }
-.btn-danger-text { color: var(--error) !important; }
-.form-group { margin-bottom: 16px; }
-.form-label { display: block; font-size: 11px; font-weight: 600; color: var(--fg-2); margin-bottom: 4px; }
-.form-input { width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-body); color: var(--fg-0); font-size: 13px; }
-.form-input:focus { outline: none; border-color: var(--primary); }
-.form-hint { font-size: 11px; color: var(--fg-3); margin-top: 4px; }
-.checkbox-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.checkbox-label input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--primary); }
-.section-card { margin-bottom: 16px; }
-.section-title { font-size: 13px; font-weight: 600; color: var(--fg-1); margin-bottom: 12px; }
-.form-actions { display: flex; align-items: center; gap: 12px; }
-.success-msg { font-size: 13px; color: var(--success); }
-.spinner-sm { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border-light); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 4px; vertical-align: middle; }
-@keyframes spin { to { transform: rotate(360deg); } }
+.btn-primary { display:inline-flex;align-items:center;gap:6px;padding:8px 16px;background:var(--primary);color:#fff;border:none;border-radius:var(--radius-sm);font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s ease }
+.btn-primary:hover:not(:disabled) { background:var(--primary-hover) }
+.btn-primary:disabled { opacity:0.5;cursor:not-allowed }
+.btn-secondary { display:inline-flex;align-items:center;gap:4px;padding:6px 12px;background:var(--bg-body);color:var(--fg-1);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;font-weight:500;cursor:pointer;transition:all 0.15s ease }
+.btn-secondary:hover { background:var(--border) }
+.btn-danger { display:flex;align-items:center;justify-content:center;width:28px;height:28px;background:none;border:1px solid var(--border);border-radius:6px;color:var(--error);cursor:pointer;transition:all 0.15s ease }
+.btn-danger:hover { background:var(--error-light);border-color:var(--error) }
+.badge-primary { background:var(--primary-light);color:var(--primary) }
+@media(max-width:1024px) { .split-grid { grid-template-columns:1fr !important } }
 </style>
