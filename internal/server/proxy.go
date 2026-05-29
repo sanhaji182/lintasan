@@ -44,32 +44,37 @@ type ProxyHandler struct {
 	quota  *quota.QuotaTracker
 	client *http.Client
 
-	rl         *ratelimit.Limiter          // rate limiter
-	fb         *fallback.Engine            // fallback chain engine
-	cmb        *combo.Engine               // hybrid combo engine
-	lb         *lb.LoadBalancer            // load balancer
-	breakers   map[string]*circuit.Breaker // per-connection circuit breakers
-	breakerMu  sync.RWMutex               // protects breakers map
-	mem        *memory.MemoryStore         // vector memory (nil if Redis unavailable)
-	compressor *compress.Compressor        // context compression
-	qf         *quality.Filter             // quality filter for multi-shot
-	mlr        mlrouter.ModelPair          // ML router model pair config
+	rl            *ratelimit.Limiter          // rate limiter
+	fb            *fallback.Engine            // fallback chain engine
+	cmb           *combo.Engine               // hybrid combo engine
+	lb            *lb.LoadBalancer            // load balancer
+	breakers      map[string]*circuit.Breaker // per-connection circuit breakers
+	breakerMu     sync.RWMutex                // protects breakers map
+	mem           *memory.MemoryStore         // vector memory (nil if Redis unavailable)
+	compressor    *compress.Compressor        // context compression
+	qf            *quality.Filter             // quality filter for multi-shot
+	mlr           mlrouter.ModelPair          // ML router model pair config
+	telemetry     *proxyTelemetry             // structured telemetry counters
+	qualityMu     sync.RWMutex                // protects qualityScores
+	qualityScores map[string]connQualityScore // quality feedback loop per connection
 }
 
 func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 	ph := &ProxyHandler{
-		cfg: cfg,
-		db:  database,
-		pm:  plugin.NewManager(database.Conn()),
-		wm:  webhook.NewManager(database.Conn()),
+		cfg:   cfg,
+		db:    database,
+		pm:    plugin.NewManager(database.Conn()),
+		wm:    webhook.NewManager(database.Conn()),
 		quota: quota.NewTracker(database.Conn()),
 		client: &http.Client{
 			Timeout: 300 * time.Second,
 			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 10,
-				IdleConnTimeout:     90 * time.Second,
-				TLSClientConfig:     &tls.Config{InsecureSkipVerify: false},
+				MaxIdleConns:          256,
+				MaxIdleConnsPerHost:   64,
+				MaxConnsPerHost:       128,
+				IdleConnTimeout:       180 * time.Second,
+				ResponseHeaderTimeout: 30 * time.Second,
+				TLSClientConfig:       &tls.Config{InsecureSkipVerify: false},
 			},
 		},
 	}
@@ -109,6 +114,10 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 		}
 	}
 
+	ph.telemetry = newProxyTelemetry()
+	ph.qualityScores = map[string]connQualityScore{}
+	go ph.prewarmConnectionPool()
+
 	return ph
 }
 
@@ -127,7 +136,9 @@ type Connection struct {
 
 func (p *ProxyHandler) getSetting(key, def string) string {
 	val, err := p.db.GetSetting(key)
-	if err != nil || val == "" { return def }
+	if err != nil || val == "" {
+		return def
+	}
 	return val
 }
 
@@ -135,7 +146,9 @@ func (p *ProxyHandler) getSetting(key, def string) string {
 // Used during initialization before ProxyHandler is fully constructed.
 func (p *ProxyHandler) getSettingFromDB(database *db.DB, key, def string) string {
 	val, err := database.GetSetting(key)
-	if err != nil || val == "" { return def }
+	if err != nil || val == "" {
+		return def
+	}
 	return val
 }
 
@@ -263,9 +276,26 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		http.Error(w, `{"error":"model is required"}`, http.StatusBadRequest)
 		return
 	}
-	
+
 	stream, _ := req["stream"].(bool)
 	messages, _ := req["messages"].([]any)
+	taskClass := classifyTask(model, messages)
+	routeProfile := pickRouteProfile(taskClass, r.Header.Get("User-Agent"))
+	directMode := p.isDirectEquivalentMode(r)
+	modeLabel := "intelligent"
+	if directMode {
+		modeLabel = "direct-equivalent"
+	}
+	w.Header().Set("X-Lintasan-Task-Class", taskClass)
+	w.Header().Set("X-Lintasan-Route-Profile", routeProfile)
+	w.Header().Set("X-Lintasan-Mode", modeLabel)
+
+	if deduped, removed := dedupMessages(messages); removed > 0 {
+		messages = deduped
+		req["messages"] = deduped
+		w.Header().Set("X-Lintasan-Deduped", fmt.Sprintf("%d", removed))
+	}
+	p.applyTaskBudgetGuardrail(req, taskClass)
 
 	// P7.4 Self-Review Loop — triggered by X-Lintasan-Reflect header
 	// Must be BEFORE any upstream call so the reflect loop owns the full request flow
@@ -299,14 +329,16 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			return
 		}
 	}
-	
-	// Global max_tokens floor — reasoning models need room after system prompt
-	if mt, ok := req["max_tokens"].(float64); !ok || mt < 8192 {
-		req["max_tokens"] = 16384.0
+
+	// Global max_tokens floor — only when not in direct-equivalent mode.
+	if !directMode {
+		if mt, ok := req["max_tokens"].(float64); !ok || mt < 1024 {
+			req["max_tokens"] = 1024.0
+		}
 	}
-	
+
 	// Optimizer
-	if p.getSetting("prompt_optimizer_enabled", "false") == "true" {
+	if !directMode && p.getSetting("prompt_optimizer_enabled", "false") == "true" {
 		msgs, saved := optimizer.OptimizeMessages(messages)
 		req["messages"] = msgs
 		_ = saved
@@ -315,7 +347,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	// Vector Memory — Prompt Injection
 	// Search for similar past successes and inject as system context.
 	var injectedMemories []memory.Memory
-	if p.mem != nil && p.mem.Available() {
+	if !directMode && p.mem != nil && p.mem.Available() {
 		promptText := buildPromptText(messages)
 		if promptText != "" {
 			queryEmb := memory.Embed(promptText)
@@ -343,9 +375,9 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			}
 		}
 	}
-	
+
 	// Exact Hash Cache (fastest — check before semantic)
-	exactCacheEnabled := p.getSetting("exact_cache_enabled", "true") == "true"
+	exactCacheEnabled := !directMode && p.getSetting("exact_cache_enabled", "true") == "true"
 	if exactCacheEnabled {
 		params := map[string]any{
 			"temperature": req["temperature"],
@@ -353,7 +385,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			"top_p":       req["top_p"],
 		}
 		if respBody, ok := cache.GetExactMatch(p.db.Conn(), model, messages, params); ok {
-			p.logRequest(model, "exact-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, "")
+			p.logRequest(model, "exact-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, "", taskClass, modeLabel)
 			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Cache-Control", "no-cache")
@@ -374,34 +406,34 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Stream Cache (check before semantic for streaming requests)
-	streamCacheEnabled := p.getSetting("stream_cache_enabled", "true") == "true"
+	streamCacheEnabled := !directMode && p.getSetting("stream_cache_enabled", "true") == "true"
 	if stream && streamCacheEnabled {
 		if chunks, totalTokens, ok := cache.GetStreamMatch(p.db.Conn(), model, messages); ok {
-			p.logRequest(model, "stream-cache", "cache", 200, time.Since(start).Milliseconds(), 0, totalTokens, true, "")
+			p.logRequest(model, "stream-cache", "cache", 200, time.Since(start).Milliseconds(), 0, totalTokens, true, "", taskClass, modeLabel)
 			cache.ReplayStream(w, chunks)
 			return
 		}
 	}
 
 	// Semantic Cache
-	semanticEnabled := p.getSetting("semantic_cache_enabled", "true") == "true"
+	semanticEnabled := !directMode && p.getSetting("semantic_cache_enabled", "true") == "true"
 	if semanticEnabled {
 		if respBody, score, ok := cache.GetSemanticMatch(p.db.Conn(), model, messages, 0.75); ok {
-			p.logRequest(model, "semantic-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, fmt.Sprintf("score=%.3f", score))
-			
+			p.logRequest(model, "semantic-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, fmt.Sprintf("score=%.3f", score), taskClass, modeLabel)
+
 			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Cache-Control", "no-cache")
 				w.Header().Set("Connection", "keep-alive")
 				w.WriteHeader(200)
-				
+
 				// SSE cache replay format
 				// In Node.js version we replay full SSE events, here we send as one big event
 				// For real UI parsing we need to structure this similar to OpenAI chunks
-				
+
 				w.Write([]byte("data: " + respBody + "\n\n"))
 				w.Write([]byte("data: [DONE]\n\n"))
-				
+
 				if flusher, ok := w.(http.Flusher); ok {
 					flusher.Flush()
 				}
@@ -430,6 +462,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			}
 		}
 	}
+	candidates = p.reorderCandidatesForTask(candidates, taskClass, routeProfile)
 	req["model"] = resolvedModel
 	body, _ = json.Marshal(req)
 
@@ -478,6 +511,63 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
+	if p.shouldHedge(stream, directMode, candidates) {
+		if hedgeConn, hedgeResp, hedgeErr := p.doHedgedUpstream(r, candidates, body); hedgeErr == nil && hedgeResp != nil {
+			defer hedgeResp.Body.Close()
+			w.Header().Set("X-Lintasan-Hedge", "hit")
+			for k, v := range hedgeResp.Header {
+				for _, vv := range v {
+					w.Header().Add(k, vv)
+				}
+			}
+			if compressionStats.WasCompressed {
+				w.Header().Set("X-Lintasan-Compressed", "true")
+				w.Header().Set("X-Lintasan-Original-Tokens", fmt.Sprintf("%d", compressionStats.OriginalTokens))
+				w.Header().Set("X-Lintasan-Compressed-Tokens", fmt.Sprintf("%d", compressionStats.CompressedTokens))
+				w.Header().Set("X-Lintasan-Compression-Ratio", fmt.Sprintf("%.2f", compressionStats.CompressionRatio))
+				w.Header().Set("X-Lintasan-Messages-Before", fmt.Sprintf("%d", compressionStats.MessagesBefore))
+				w.Header().Set("X-Lintasan-Messages-After", fmt.Sprintf("%d", compressionStats.MessagesAfter))
+			}
+			var tokensIn, tokensOut int
+			if ct := hedgeResp.Header.Get("x-tokens-input"); ct != "" {
+				fmt.Sscanf(ct, "%d", &tokensIn)
+			}
+			if ct := hedgeResp.Header.Get("x-tokens-output"); ct != "" {
+				fmt.Sscanf(ct, "%d", &tokensOut)
+			}
+			b, _ := io.ReadAll(hedgeResp.Body)
+			if p.pm != nil {
+				if transformedResp, err := p.pm.ExecuteResponseHook(r.Context(), hedgeConn.ID, resolvedModel, b); err == nil {
+					b = transformedResp
+				}
+			}
+			if hedgeConn.Format == "commandcode" {
+				b = translateCCAlphaToOpenAI(b)
+			}
+			b = reasoning.ExtractReasoningContent(b)
+			b = normalizeOpenAIResponseBody(b)
+			if tokensOut == 0 {
+				tokensOut = len(b) / 4
+			}
+			if tokensIn == 0 {
+				tokensIn = len(body) / 4
+			}
+			if hedgeResp.StatusCode == 200 {
+				quota.RecordQuota(p.db.Conn(), hedgeConn.ID, tokensIn+tokensOut)
+			}
+			w.WriteHeader(hedgeResp.StatusCode)
+			w.Write(b)
+			p.logRequest(resolvedModel, hedgeConn.ID, hedgeConn.Name, hedgeResp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
+			if semanticEnabled && hedgeResp.StatusCode == 200 {
+				cache.SaveSemanticMatch(p.db.Conn(), model, messages, string(b), 3600)
+			}
+			p.autoIndex(r, model, messages, string(b), tokensIn, tokensOut)
+			return
+		} else if hedgeErr != nil {
+			w.Header().Set("X-Lintasan-Hedge", "miss")
+		}
+	}
+
 	var lastErr string
 	var lastStatusCode int
 	for i, conn := range candidates {
@@ -486,7 +576,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		if !breaker.Allow() {
 			lastErr = fmt.Sprintf("circuit breaker open for %s", conn.ID)
 			lastStatusCode = 503
-			p.logRequest(resolvedModel, conn.ID, conn.Name, 503, time.Since(start).Milliseconds(), 0, 0, false, lastErr)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, 503, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				p.fb.RecordEvent(resolvedModel, "", fallback.ReasonCircuit, 503)
 			}
@@ -521,7 +611,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		if retryErr != nil {
 			lastErr = retryErr.Error()
 			breaker.Failure()
-			p.logRequest(resolvedModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				if should, reason := fallback.ShouldTriggerFallback(502, false, false); should {
 					p.fb.RecordEvent(resolvedModel, "", reason, 502)
@@ -538,7 +628,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
 			breaker.Failure()
-			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				if should, reason := fallback.ShouldTriggerFallback(resp.StatusCode, false, false); should {
 					p.fb.RecordEvent(resolvedModel, "", reason, resp.StatusCode)
@@ -552,7 +642,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
 			breaker.Failure()
-			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				p.fb.RecordEvent(resolvedModel, "", fallback.Reason429, resp.StatusCode)
 			}
@@ -631,7 +721,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 				quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
 			}
 
-			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "")
+			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
 
 			if comboName != "" && resp.StatusCode == 200 {
 				p.cmb.RecordSuccess(comboName)
@@ -670,6 +760,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		// Reasoning extraction: DeepSeek V4 Pro puts answer in reasoning_content not content
 		b = reasoning.ExtractReasoningContent(b)
+		b = normalizeOpenAIResponseBody(b)
 
 		// Approximate token counts for non-stream
 		if tokensOut == 0 {
@@ -686,7 +777,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		w.WriteHeader(resp.StatusCode)
 		w.Write(b)
-		p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "")
+		p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
 
 		if comboName != "" && resp.StatusCode == 200 {
 			p.cmb.RecordSuccess(comboName)
@@ -694,7 +785,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		if p.wm != nil {
 			p.wm.Fire("request.success", map[string]interface{}{
-				"model": resolvedModel,
+				"model":  resolvedModel,
 				"status": resp.StatusCode,
 			})
 		}
@@ -738,7 +829,9 @@ func (p *ProxyHandler) findConnectionByID(id string) (*Connection, error) {
 
 func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte) (*http.Response, error) {
 	chatPath := conn.ChatPath
-	if chatPath == "" { chatPath = "/v1/chat/completions" }
+	if chatPath == "" {
+		chatPath = "/v1/chat/completions"
+	}
 	upstreamURL := strings.TrimRight(conn.BaseURL, "/") + chatPath
 
 	// Format translation: OpenAI body → commandcode body
@@ -753,11 +846,21 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 	}
 
 	upReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, strings.NewReader(string(requestBody)))
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	upReq.Header.Set("Content-Type", "application/json")
-	authHeader := conn.AuthHeader; if authHeader == "" { authHeader = "Authorization" }
-	authPrefix := conn.AuthPrefix; if authPrefix == "" { authPrefix = "Bearer " }
-	if conn.APIKey != "" { upReq.Header.Set(authHeader, authPrefix+conn.APIKey) }
+	authHeader := conn.AuthHeader
+	if authHeader == "" {
+		authHeader = "Authorization"
+	}
+	authPrefix := conn.AuthPrefix
+	if authPrefix == "" {
+		authPrefix = "Bearer "
+	}
+	if conn.APIKey != "" {
+		upReq.Header.Set(authHeader, authPrefix+conn.APIKey)
+	}
 	if xcc := r.Header.Get("X-Command-Code-Version"); xcc != "" {
 		upReq.Header.Set("X-Command-Code-Version", xcc)
 	}
@@ -978,27 +1081,39 @@ func translateCCAlphaToOpenAI(raw []byte) []byte {
 
 func (p *ProxyHandler) resolveRoute(model string) ([]*Connection, string, string, error) {
 	model = p.resolveAlias(model)
-	if conns, resolved, ok := p.resolveCombo(model); ok && len(conns) > 0 { return conns, resolved, model, nil }
+	if conns, resolved, ok := p.resolveCombo(model); ok && len(conns) > 0 {
+		return conns, resolved, model, nil
+	}
 	conn, err := p.findConnectionForModel(model)
-	if err != nil { return nil, model, "", err }
+	if err != nil {
+		return nil, model, "", err
+	}
 	return []*Connection{conn}, model, "", nil
 }
 
 func (p *ProxyHandler) resolveAlias(model string) string {
 	v, _ := p.db.GetSetting("aliases")
-	if v == "" { return model }
+	if v == "" {
+		return model
+	}
 
 	// Try array format: [{name: "X", target: "Y"}, ...]
 	var arr []any
 	if json.Unmarshal([]byte(v), &arr) == nil {
 		for _, item := range arr {
 			m, _ := item.(map[string]any)
-			if m == nil { continue }
+			if m == nil {
+				continue
+			}
 			name, _ := m["name"].(string)
 			alias, _ := m["alias"].(string)
 			if name == model || alias == model {
-				if target, _ := m["target"].(string); target != "" { return target }
-				if mod, _ := m["model"].(string); mod != "" { return mod }
+				if target, _ := m["target"].(string); target != "" {
+					return target
+				}
+				if mod, _ := m["model"].(string); mod != "" {
+					return mod
+				}
 			}
 		}
 		return model
@@ -1009,8 +1124,12 @@ func (p *ProxyHandler) resolveAlias(model string) string {
 	if json.Unmarshal([]byte(v), &m) == nil {
 		if raw, ok := m[model]; ok {
 			switch t := raw.(type) {
-			case string: return t
-			case map[string]any: if s, _ := t["model"].(string); s != "" { return s }
+			case string:
+				return t
+			case map[string]any:
+				if s, _ := t["model"].(string); s != "" {
+					return s
+				}
 			}
 		}
 	}
@@ -1043,16 +1162,41 @@ func (p *ProxyHandler) resolveCombo(name string) ([]*Connection, string, bool) {
 	return out, resolvedModel, true
 }
 
-func stringSlice(v any) []string { arr, _ := v.([]any); out := []string{}; for _, x := range arr { if s, ok := x.(string); ok { out = append(out, s) } }; return out }
+func stringSlice(v any) []string {
+	arr, _ := v.([]any)
+	out := []string{}
+	for _, x := range arr {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
 
 func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*Connection {
 	query := `SELECT c.id, c.name, c.base_url, c.api_key, c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority FROM discovered_models m JOIN connections c ON m.connection_id=c.id WHERE m.model_id=? AND m.is_active=1 AND c.is_active=1`
 	args := []any{model}
-	if len(ids) > 0 { ph:=make([]string,len(ids)); for i,id:=range ids{ph[i]="?"; args=append(args,id)}; query += " AND c.id IN ("+strings.Join(ph,",")+")" }
+	if len(ids) > 0 {
+		ph := make([]string, len(ids))
+		for i, id := range ids {
+			ph[i] = "?"
+			args = append(args, id)
+		}
+		query += " AND c.id IN (" + strings.Join(ph, ",") + ")"
+	}
 	query += " ORDER BY c.priority DESC"
-	rows, err := p.db.Conn().Query(query, args...); if err != nil { return nil }; defer rows.Close()
+	rows, err := p.db.Conn().Query(query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
 	var out []*Connection
-	for rows.Next(){ var c Connection; if rows.Scan(&c.ID,&c.Name,&c.BaseURL,&c.APIKey,&c.Format,&c.ChatPath,&c.AuthHeader,&c.AuthPrefix,&c.IsActive,&c.Priority)==nil{ out=append(out,&c) } }
+	for rows.Next() {
+		var c Connection
+		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.Format, &c.ChatPath, &c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority) == nil {
+			out = append(out, &c)
+		}
+	}
 	return out
 }
 
@@ -1091,62 +1235,139 @@ func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
 	return &conn, nil
 }
 
-func (p *ProxyHandler) logRequest(model, connID, provider string, status int, latencyMs int64, tokensIn, tokensOut int, cached bool, errMsg string) {
-	cachedInt := 0; if cached { cachedInt = 1 }
+func (p *ProxyHandler) logRequest(model, connID, provider string, status int, latencyMs int64, tokensIn, tokensOut int, cached bool, errMsg, taskClass, mode string) {
+	cachedInt := 0
+	if cached {
+		cachedInt = 1
+	}
 	id := uuid.New().String()
 	p.db.Conn().Exec(`
 		INSERT INTO request_logs (id, connection_id, provider, model, status, input_tokens, output_tokens, latency_ms, cached, error, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
 	`, id, connID, provider, model, status, tokensIn, tokensOut, latencyMs, cachedInt, errMsg)
+	if p.telemetry != nil {
+		p.telemetry.Observe(provider, taskClass, mode, latencyMs, status, cached)
+	}
+	if connID != "" {
+		p.observeQuality(connID, status, latencyMs)
+	}
 }
 
 func (p *ProxyHandler) HandleEmbeddings(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
-	if err != nil { http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest); return }
+	if err != nil {
+		http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
+		return
+	}
 	defer r.Body.Close()
 
 	var req map[string]any
-	if err := json.Unmarshal(body, &req); err != nil { http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest); return }
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, `{"error":"invalid JSON body"}`, http.StatusBadRequest)
+		return
+	}
 
 	model, _ := req["model"].(string)
-	if model == "" { model = "text-embedding-3-small" }
+	if model == "" {
+		model = "text-embedding-3-small"
+	}
 
 	conn, err := p.findConnectionForModel(model)
 	if err != nil {
 		conn, err = p.getFirstConnection()
-		if err != nil { http.Error(w, fmt.Sprintf(`{"error":"no connection found for model %s"}`, model), http.StatusNotFound); return }
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"no connection found for model %s"}`, model), http.StatusNotFound)
+			return
+		}
 	}
 
 	upstreamURL := strings.TrimRight(conn.BaseURL, "/") + "/v1/embeddings"
 	upReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, strings.NewReader(string(body)))
-	if err != nil { http.Error(w, `{"error":"failed to create upstream request"}`, http.StatusInternalServerError); return }
+	if err != nil {
+		http.Error(w, `{"error":"failed to create upstream request"}`, http.StatusInternalServerError)
+		return
+	}
 
 	upReq.Header.Set("Content-Type", "application/json")
-	authHeader := conn.AuthHeader; if authHeader == "" { authHeader = "Authorization" }
-	authPrefix := conn.AuthPrefix; if authPrefix == "" { authPrefix = "Bearer " }
-	if conn.APIKey != "" { upReq.Header.Set(authHeader, authPrefix+conn.APIKey) }
+	authHeader := conn.AuthHeader
+	if authHeader == "" {
+		authHeader = "Authorization"
+	}
+	authPrefix := conn.AuthPrefix
+	if authPrefix == "" {
+		authPrefix = "Bearer "
+	}
+	if conn.APIKey != "" {
+		upReq.Header.Set(authHeader, authPrefix+conn.APIKey)
+	}
 
 	resp, err := p.client.Do(upReq)
-	if err != nil { http.Error(w, fmt.Sprintf(`{"error":"upstream error: %s"}`, err.Error()), http.StatusBadGateway); return }
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"upstream error: %s"}`, err.Error()), http.StatusBadGateway)
+		return
+	}
 	defer resp.Body.Close()
 
-	for k, v := range resp.Header { for _, vv := range v { w.Header().Add(k, vv) } }
+	for k, v := range resp.Header {
+		for _, vv := range v {
+			w.Header().Add(k, vv)
+		}
+	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
 
-func (p *ProxyHandler) proxyPath(w http.ResponseWriter, r *http.Request, upstreamPath string){
-    body,_:=io.ReadAll(r.Body); var reqBody io.Reader=bytes.NewReader(body)
-    conn,err:=p.getFirstConnection(); if err!=nil{http.Error(w,`{"error":"no active connections"}`,404);return}
-    upReq,err:=http.NewRequestWithContext(r.Context(),"POST",strings.TrimRight(conn.BaseURL,"/")+upstreamPath,reqBody); if err!=nil{http.Error(w,err.Error(),500);return}
-    upReq.Header.Set("Content-Type", r.Header.Get("Content-Type")); if upReq.Header.Get("Content-Type")==""{upReq.Header.Set("Content-Type","application/json")}
-    if conn.APIKey!=""{h:=conn.AuthHeader; if h==""{h="Authorization"}; pfx:=conn.AuthPrefix; if pfx==""{pfx="Bearer "}; upReq.Header.Set(h,pfx+conn.APIKey)}
-    resp,err:=p.client.Do(upReq); if err!=nil{http.Error(w,fmt.Sprintf(`{"error":"upstream error: %s"}`,err.Error()),502);return}; defer resp.Body.Close()
-    for k,v:=range resp.Header{for _,vv:=range v{w.Header().Add(k,vv)}}; w.WriteHeader(resp.StatusCode); io.Copy(w,resp.Body)
+func (p *ProxyHandler) proxyPath(w http.ResponseWriter, r *http.Request, upstreamPath string) {
+	body, _ := io.ReadAll(r.Body)
+	var reqBody io.Reader = bytes.NewReader(body)
+	conn, err := p.getFirstConnection()
+	if err != nil {
+		http.Error(w, `{"error":"no active connections"}`, 404)
+		return
+	}
+	upReq, err := http.NewRequestWithContext(r.Context(), "POST", strings.TrimRight(conn.BaseURL, "/")+upstreamPath, reqBody)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	upReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
+	if upReq.Header.Get("Content-Type") == "" {
+		upReq.Header.Set("Content-Type", "application/json")
+	}
+	if conn.APIKey != "" {
+		h := conn.AuthHeader
+		if h == "" {
+			h = "Authorization"
+		}
+		pfx := conn.AuthPrefix
+		if pfx == "" {
+			pfx = "Bearer "
+		}
+		upReq.Header.Set(h, pfx+conn.APIKey)
+	}
+	resp, err := p.client.Do(upReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"upstream error: %s"}`, err.Error()), 502)
+		return
+	}
+	defer resp.Body.Close()
+	for k, v := range resp.Header {
+		for _, vv := range v {
+			w.Header().Add(k, vv)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	io.Copy(w, resp.Body)
 }
-func (p *ProxyHandler) HandleImages(w http.ResponseWriter,r *http.Request){ p.proxyPath(w,r,"/v1/images/generations") }
-func (p *ProxyHandler) HandleAudioSpeech(w http.ResponseWriter,r *http.Request){ p.proxyPath(w,r,"/v1/audio/speech") }
-func (p *ProxyHandler) HandleAudioTranscriptions(w http.ResponseWriter,r *http.Request){ p.proxyPath(w,r,"/v1/audio/transcriptions") }
+func (p *ProxyHandler) HandleImages(w http.ResponseWriter, r *http.Request) {
+	p.proxyPath(w, r, "/v1/images/generations")
+}
+func (p *ProxyHandler) HandleAudioSpeech(w http.ResponseWriter, r *http.Request) {
+	p.proxyPath(w, r, "/v1/audio/speech")
+}
+func (p *ProxyHandler) HandleAudioTranscriptions(w http.ResponseWriter, r *http.Request) {
+	p.proxyPath(w, r, "/v1/audio/transcriptions")
+}
 
 // buildPromptText extracts the user-facing text from chat messages for memory embedding.
 func buildPromptText(messages []any) string {
@@ -1188,7 +1409,7 @@ func (p *ProxyHandler) handleReflectLoop(r *http.Request, model string, messages
 	if verifyRaw == "" {
 		verifyRaw = "text"
 	}
-	
+
 	// Parse verify mode: "pytest:/tmp/test_X.py:/tmp/buggy_X.py"
 	var verifyMode string
 	var testFile, codeModule string
@@ -1236,7 +1457,7 @@ func (p *ProxyHandler) handleReflectLoop(r *http.Request, model string, messages
 		}
 
 		reqBody := map[string]any{
-			"model":    model,
+			"model": model,
 			"messages": []map[string]any{
 				{"role": "user", "content": prompt},
 			},

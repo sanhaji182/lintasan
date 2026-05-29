@@ -28,18 +28,18 @@ type Server struct {
 	db          *db.DB
 	mux         *http.ServeMux
 	proxy       *ProxyHandler
-	memHandler  *MemoryHandler          // vector memory API handler
-	mitmProxy   *mitm.MITMProxy         // MITM bridge for IDE interception
-	oauthMgr    *auth.OAuthManager      // OAuth session manager
-	userMgr     *auth.UserManager       // Dashboard user manager
-	authHandler *auth.AuthHandler       // HTTP auth handlers
-	pluginMgr   *plugin.Manager         // JS plugin engine (also in proxy.pm)
-	discoverer  *discover.Discoverer    // auto model discovery
-	fpScanner   *freeproviders.Scanner  // free provider scanner
-	rtkComp     *rtk.Compressor         // RTK token compressor
-	webSearch   *websearch.Engine       // web search engine
-	mcpServer   *mcp.Server             // MCP protocol server
-	mitmOnce    sync.Once               // ensures MITM starts exactly once
+	memHandler  *MemoryHandler         // vector memory API handler
+	mitmProxy   *mitm.MITMProxy        // MITM bridge for IDE interception
+	oauthMgr    *auth.OAuthManager     // OAuth session manager
+	userMgr     *auth.UserManager      // Dashboard user manager
+	authHandler *auth.AuthHandler      // HTTP auth handlers
+	pluginMgr   *plugin.Manager        // JS plugin engine (also in proxy.pm)
+	discoverer  *discover.Discoverer   // auto model discovery
+	fpScanner   *freeproviders.Scanner // free provider scanner
+	rtkComp     *rtk.Compressor        // RTK token compressor
+	webSearch   *websearch.Engine      // web search engine
+	mcpServer   *mcp.Server            // MCP protocol server
+	mitmOnce    sync.Once              // ensures MITM starts exactly once
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
@@ -189,6 +189,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/stats", s.handleStats)
 	s.mux.HandleFunc("GET /api/logs", s.handleLogs)
 	s.mux.HandleFunc("GET /api/analytics", s.handleAnalytics)
+	s.mux.HandleFunc("GET /api/telemetry", s.handleTelemetry)
 	s.mux.HandleFunc("GET /api/usage", s.handleUsage)
 	s.mux.HandleFunc("GET /api/backup", s.handleBackup)
 	s.mux.HandleFunc("POST /api/backup", s.handleBackupAction)
@@ -275,13 +276,33 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 		// Check master key
 		masterKey, _ := s.db.GetSetting("master_key")
-		if masterKey == "" {
-			// No key set, allow all (first-run)
-			next.ServeHTTP(w, r)
-			return
+
+		// Check JWT first — always attempt (takes priority over master key)
+		if s.userMgr != nil {
+			if cookie, cookieErr := r.Cookie("lintasan_token"); cookieErr == nil && cookie.Value != "" {
+				if user, err := s.userMgr.ValidateToken(cookie.Value); err == nil {
+					ctx := context.WithValue(r.Context(), auth.UserContextKey, user)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+			}
+			authHeader := r.Header.Get("Authorization")
+			if strings.HasPrefix(authHeader, "Bearer ") {
+				if user, err := s.userMgr.ValidateToken(strings.TrimPrefix(authHeader, "Bearer ")); err == nil {
+					ctx := context.WithValue(r.Context(), auth.UserContextKey, user)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
+			}
 		}
 
 		authHeader := r.Header.Get("Authorization")
+
+		// No master key set — allow all remaining (first-run, dashboard accessible)
+		if masterKey == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
 
 		// Validate Bearer token — master key
 		if authHeader == "Bearer "+masterKey {
