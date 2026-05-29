@@ -36,6 +36,9 @@ func (d *DB) Conn() *sql.DB {
 }
 
 func (d *DB) migrate() error {
+	// Drop old broken semantic_cache table if it exists (never functional, safe to drop)
+	d.conn.Exec(`DROP TABLE IF EXISTS semantic_cache`)
+	
 	// Compatible with Node.js Lintasan schema
 	migrations := []string{
 		`CREATE TABLE IF NOT EXISTS settings (
@@ -93,12 +96,38 @@ func (d *DB) migrate() error {
 			expires_at TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS semantic_cache (
-			id TEXT PRIMARY KEY,
-			hash TEXT NOT NULL,
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			model TEXT NOT NULL,
-			response BLOB NOT NULL,
+			fingerprint TEXT NOT NULL,
+			messages_hash TEXT NOT NULL,
+			response TEXT NOT NULL,
 			hits INTEGER DEFAULT 0,
-			created_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now')),
+			expires_at DATETIME NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_semantic_cache_model_expires ON semantic_cache(model, expires_at)`,
+		`CREATE TABLE IF NOT EXISTS response_cache (
+			hash TEXT PRIMARY KEY,
+			provider TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL,
+			request_body TEXT NOT NULL,
+			response_body TEXT NOT NULL,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME NOT NULL,
+			hit_count INTEGER DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS stream_response_cache (
+			hash TEXT PRIMARY KEY,
+			model TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT '',
+			request_body TEXT NOT NULL,
+			chunks TEXT NOT NULL,
+			total_tokens INTEGER DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			expires_at DATETIME NOT NULL,
+			hit_count INTEGER DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS oauth_sessions (
 			id TEXT PRIMARY KEY,

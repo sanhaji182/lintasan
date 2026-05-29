@@ -386,8 +386,8 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	// Semantic Cache
 	semanticEnabled := p.getSetting("semantic_cache_enabled", "true") == "true"
 	if semanticEnabled {
-		if respBody, ok := cache.GetSemanticMatch(p.db.Conn(), model, messages, 0.92); ok {
-			p.logRequest(model, "cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, "")
+		if respBody, score, ok := cache.GetSemanticMatch(p.db.Conn(), model, messages, 0.75); ok {
+			p.logRequest(model, "semantic-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, fmt.Sprintf("score=%.3f", score))
 			
 			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
