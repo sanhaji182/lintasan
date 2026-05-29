@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"crypto/tls"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +21,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/combo"
 	"github.com/sanhaji182/lintasan-go/internal/compress"
 	"github.com/sanhaji182/lintasan-go/internal/config"
+	"github.com/sanhaji182/lintasan-go/internal/cost"
 	"github.com/sanhaji182/lintasan-go/internal/db"
 	"github.com/sanhaji182/lintasan-go/internal/fallback"
 	"github.com/sanhaji182/lintasan-go/internal/lb"
@@ -54,6 +56,7 @@ type ProxyHandler struct {
 	compressor    *compress.Compressor        // context compression
 	qf            *quality.Filter             // quality filter for multi-shot
 	mlr           mlrouter.ModelPair          // ML router model pair config
+	costCalc      *cost.Calculator            // cost calculator for cost-based routing
 	telemetry     *proxyTelemetry             // structured telemetry counters
 	qualityMu     sync.RWMutex                // protects qualityScores
 	qualityScores map[string]connQualityScore // quality feedback loop per connection
@@ -116,9 +119,45 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 
 	ph.telemetry = newProxyTelemetry()
 	ph.qualityScores = map[string]connQualityScore{}
+	ph.costCalc = cost.NewCalculator()
+	ph.loadQuotaLimits(database)
 	go ph.prewarmConnectionPool()
 
 	return ph
+}
+
+// loadQuotaLimits reads the operator-configured "quota_limits" setting and
+// installs per-connection daily token limits into the quota tracker. Without
+// this, QuotaTracker.Allow() always returns true (no limit configured) and the
+// quota gate in the request loop is a silent no-op. Format (JSON object):
+//
+//	{ "<connID>": { "max_tokens_per_day": 1000000, "max_tokens_per_month": 0,
+//	                "max_requests_per_day": 0, "max_requests_per_month": 0 }, ... }
+func (p *ProxyHandler) loadQuotaLimits(database *db.DB) {
+	if p.quota == nil {
+		return
+	}
+	raw, err := database.GetSetting("quota_limits")
+	if err != nil || raw == "" {
+		return
+	}
+	var limits map[string]struct {
+		MaxTokensPerDay     int64 `json:"max_tokens_per_day"`
+		MaxTokensPerMonth   int64 `json:"max_tokens_per_month"`
+		MaxRequestsPerDay   int64 `json:"max_requests_per_day"`
+		MaxRequestsPerMonth int64 `json:"max_requests_per_month"`
+	}
+	if err := json.Unmarshal([]byte(raw), &limits); err != nil {
+		return
+	}
+	for connID, l := range limits {
+		p.quota.SetLimit(connID, &quota.QuotaLimit{
+			MaxTokensPerDay:     l.MaxTokensPerDay,
+			MaxTokensPerMonth:   l.MaxTokensPerMonth,
+			MaxRequestsPerDay:   l.MaxRequestsPerDay,
+			MaxRequestsPerMonth: l.MaxRequestsPerMonth,
+		})
+	}
 }
 
 type Connection struct {
@@ -281,6 +320,18 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	messages, _ := req["messages"].([]any)
 	taskClass := classifyTask(model, messages)
 	routeProfile := pickRouteProfile(taskClass, r.Header.Get("User-Agent"))
+
+	// ML routing (Gap #1): when the caller targets the ML sentinel model
+	// ("ml-auto"/"smart") or the operator enables ml_router_enabled globally,
+	// pick cheap-vs-expensive from the 15-feature complexity score instead of
+	// the literal model. Header X-Lintasan-ML-Tier records the decision.
+	if mlModel, tier, ok := p.applyMLRouting(model, messages); ok {
+		w.Header().Set("X-Lintasan-ML-Tier", tier)
+		w.Header().Set("X-Lintasan-ML-Model", mlModel)
+		model = mlModel
+		req["model"] = mlModel
+	}
+
 	directMode := p.isDirectEquivalentMode(r)
 	modeLabel := "intelligent"
 	if directMode {
@@ -593,6 +644,22 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 
+		// Quota gating (Gap #3): skip a connection whose daily token budget is
+		// already exhausted, BEFORE spending an upstream call on it. Allow()
+		// returns true when the connection has no configured limit, so this is a
+		// no-op until an operator sets a quota limit for the connection.
+		estTokens := len(body) / 4
+		if p.quota != nil && !p.quota.Allow(conn.ID, estTokens) {
+			lastErr = fmt.Sprintf("quota exhausted for %s", conn.ID)
+			lastStatusCode = 429
+			p.logRequest(resolvedModel, conn.ID, conn.Name, 429, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			if p.fb != nil {
+				p.fb.RecordEvent(resolvedModel, "", fallback.Reason429, 429)
+			}
+			w.Header().Set("X-Lintasan-Quota-Skip", conn.ID)
+			continue
+		}
+
 		// Retry wrapper around upstream call
 		var resp *http.Response
 		retryErr := retry.Do(r.Context(), retry.DefaultConfig(), func() (bool, error) {
@@ -725,6 +792,9 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 			if comboName != "" && resp.StatusCode == 200 {
 				p.cmb.RecordSuccess(comboName)
+				if combo.AutoAliasExists(comboName) {
+					combo.RecordAutoSuccess(comboName, conn.ID)
+				}
 			}
 
 			if semanticEnabled && resp.StatusCode == 200 {
@@ -781,6 +851,9 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		if comboName != "" && resp.StatusCode == 200 {
 			p.cmb.RecordSuccess(comboName)
+			if combo.AutoAliasExists(comboName) {
+				combo.RecordAutoSuccess(comboName, conn.ID)
+			}
 		}
 
 		if p.wm != nil {
@@ -1081,6 +1154,26 @@ func translateCCAlphaToOpenAI(raw []byte) []byte {
 
 func (p *ProxyHandler) resolveRoute(model string) ([]*Connection, string, string, error) {
 	model = p.resolveAlias(model)
+
+	// Auto-combo (Gap #2): "auto", "auto/coding", "auto/fast", "auto/cheap"
+	// resolve to the live connection ranked best-first by the 6-factor scorer
+	// (health, quota, cost, latency, success, freshness). Falls through to the
+	// normal path if no providers can be assembled.
+	if combo.AutoAliasExists(model) {
+		if conns, resolved, ok := p.resolveAutoCombo(model); ok && len(conns) > 0 {
+			return conns, resolved, model, nil
+		}
+	}
+
+	// Tiered fallback (Gap #5): the "tiered" alias orders candidates by tier —
+	// subscription → api_key → cheap → free — and auto-downgrades when a tier is
+	// exhausted. Built from live providers grouped by cost.
+	if model == "tiered" || model == "tier" {
+		if conns, resolved, ok := p.resolveTieredCombo(); ok && len(conns) > 0 {
+			return conns, resolved, model, nil
+		}
+	}
+
 	if conns, resolved, ok := p.resolveCombo(model); ok && len(conns) > 0 {
 		return conns, resolved, model, nil
 	}
@@ -1088,7 +1181,216 @@ func (p *ProxyHandler) resolveRoute(model string) ([]*Connection, string, string
 	if err != nil {
 		return nil, model, "", err
 	}
-	return []*Connection{conn}, model, "", nil
+	candidates := []*Connection{conn}
+
+	// Model-level fallback (Gap #6): append connections that serve the
+	// configured fallback models for this model. When every connection for the
+	// primary model fails, the request loop continues onto these instead of
+	// giving up — fallback across MODELS, not just across connections of the
+	// same model. Deduplicated by connection ID.
+	candidates = p.appendModelFallbacks(candidates, model)
+	return candidates, model, "", nil
+}
+
+// appendModelFallbacks expands a candidate list with connections serving the
+// fallback models configured for `model` (via the fallback engine's model
+// chains). Existing connection IDs are not duplicated.
+func (p *ProxyHandler) appendModelFallbacks(candidates []*Connection, model string) []*Connection {
+	if p.fb == nil {
+		return candidates
+	}
+	fallbackModels := p.fb.GetModelFallback(model)
+	if len(fallbackModels) == 0 {
+		return candidates
+	}
+	seen := map[string]bool{}
+	for _, c := range candidates {
+		seen[c.ID] = true
+	}
+	for _, fm := range fallbackModels {
+		if fm == "" || fm == model {
+			continue
+		}
+		for _, c := range p.connectionsForModelAndIDs(fm, nil) {
+			if c == nil || seen[c.ID] {
+				continue
+			}
+			seen[c.ID] = true
+			candidates = append(candidates, c)
+		}
+	}
+	return candidates
+}
+
+// resolveAutoCombo builds a Provider list from all active connections that
+// expose at least one model, scores them with combo.ResolveAuto for the given
+// auto mode, and returns the connections ordered best-first. The resolved model
+// is the top provider's model so the upstream request targets a concrete model.
+func (p *ProxyHandler) resolveAutoCombo(mode string) ([]*Connection, string, bool) {
+	providers, connByID, modelByID := p.buildAutoProviders()
+	if len(providers) == 0 {
+		return nil, mode, false
+	}
+	ranked := combo.ResolveAuto(mode, providers)
+	if len(ranked) == 0 {
+		return nil, mode, false
+	}
+	var out []*Connection
+	for _, pr := range ranked {
+		if c, ok := connByID[pr.ID]; ok {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return nil, mode, false
+	}
+	resolvedModel := modelByID[ranked[0].ID]
+	if resolvedModel == "" {
+		resolvedModel = ranked[0].Model
+	}
+	return out, resolvedModel, true
+}
+
+// resolveTieredCombo orders candidates across tiers (subscription → api_key →
+// cheap → free) using combo.AutoBuildCombo, which groups live providers by
+// cost-per-token. The current (highest-priority non-exhausted) tier's providers
+// come first, then remaining tiers as fallback. This gives the request loop a
+// tier-ordered candidate list so it naturally downgrades on failure.
+func (p *ProxyHandler) resolveTieredCombo() ([]*Connection, string, bool) {
+	providers, connByID, modelByID := p.buildAutoProviders()
+	if len(providers) == 0 {
+		return nil, "tiered", false
+	}
+	tc := combo.AutoBuildCombo(providers)
+	if tc == nil {
+		return nil, "tiered", false
+	}
+
+	// Current active tier first.
+	ordered := tc.Resolve()
+	// Then append providers from any remaining tiers as fallback, deduped.
+	seen := map[string]bool{}
+	var out []*Connection
+	appendProvider := func(pr combo.Provider) {
+		if seen[pr.ID] {
+			return
+		}
+		if c, ok := connByID[pr.ID]; ok {
+			seen[pr.ID] = true
+			out = append(out, c)
+		}
+	}
+	for _, pr := range ordered {
+		appendProvider(pr)
+	}
+	// Walk through remaining tiers for fallback coverage.
+	for _, pr := range providers {
+		appendProvider(pr)
+	}
+	if len(out) == 0 {
+		return nil, "tiered", false
+	}
+	resolvedModel := modelByID[out[0].ID]
+	return out, resolvedModel, true
+}
+
+// buildAutoProviders enumerates active connections (with a usable model) into
+// combo.Provider structs enriched with live quality/latency metrics, plus
+// lookup maps from provider ID back to the connection and its chosen model.
+func (p *ProxyHandler) buildAutoProviders() ([]combo.Provider, map[string]*Connection, map[string]string) {
+	rows, err := p.db.Conn().Query(`
+		SELECT c.id, c.name, c.base_url, c.api_key, c.format, c.chat_path,
+		       c.auth_header, c.auth_prefix, c.is_active, c.priority,
+		       (SELECT m.model_id FROM discovered_models m
+		         WHERE m.connection_id = c.id AND m.is_active = 1
+		         ORDER BY m.model_id LIMIT 1) AS model_id
+		FROM connections c
+		WHERE c.is_active = 1
+		ORDER BY c.priority DESC`)
+	if err != nil {
+		return nil, nil, nil
+	}
+	defer rows.Close()
+
+	var providers []combo.Provider
+	connByID := map[string]*Connection{}
+	modelByID := map[string]string{}
+
+	p.qualityMu.RLock()
+	defer p.qualityMu.RUnlock()
+
+	for rows.Next() {
+		var c Connection
+		var modelID sql.NullString
+		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.Format, &c.ChatPath,
+			&c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority, &modelID) != nil {
+			continue
+		}
+		if !modelID.Valid || modelID.String == "" {
+			continue // no usable model on this connection
+		}
+		cc := c
+		connByID[c.ID] = &cc
+		modelByID[c.ID] = modelID.String
+
+		// Live metrics: default to neutral, override from the quality feedback loop.
+		health := 80
+		successRate := 0.8
+		latency := 500.0
+		var lastUsed time.Time
+		if q, ok := p.qualityScores[c.ID]; ok {
+			successRate = q.SuccessEWMA
+			health = int(q.SuccessEWMA * 100)
+			if q.LatencyEWMA > 0 {
+				latency = q.LatencyEWMA
+			}
+			lastUsed = q.UpdatedAt
+		}
+		// Quota remaining as a 0-1 fraction; 1.0 (full) when no limit configured.
+		quotaRemaining := p.quotaRemainingFraction(c.ID)
+		// Cost hint: "free"-named connections are treated as zero cost.
+		costPerToken := 1.0
+		if strings.Contains(strings.ToLower(c.Name), "free") {
+			costPerToken = 0.0
+		}
+
+		providers = append(providers, combo.Provider{
+			ID:             c.ID,
+			Name:           c.Name,
+			Model:          modelID.String,
+			ConnectionID:   c.ID,
+			APIKey:         c.APIKey,
+			Health:         health,
+			QuotaRemaining: quotaRemaining,
+			CostPerToken:   costPerToken,
+			Latency:        latency,
+			SuccessRate:    successRate,
+			LastUsed:       lastUsed,
+		})
+	}
+	return providers, connByID, modelByID
+}
+
+// quotaRemainingFraction returns how much of a connection's daily token budget
+// is left, as a 0-1 fraction. Returns 1.0 when no limit is configured.
+func (p *ProxyHandler) quotaRemainingFraction(connID string) float64 {
+	if p.quota == nil {
+		return 1.0
+	}
+	limit := p.quota.GetLimit(connID)
+	if limit == nil || limit.MaxTokensPerDay <= 0 {
+		return 1.0
+	}
+	usage := quota.GetQuota(p.db.Conn(), connID)
+	tokensToday, _ := usage["tokens_today"].(int)
+	remaining := float64(limit.MaxTokensPerDay-int64(tokensToday)) / float64(limit.MaxTokensPerDay)
+	if remaining < 0 {
+		return 0
+	}
+	if remaining > 1 {
+		return 1
+	}
+	return remaining
 }
 
 func (p *ProxyHandler) resolveAlias(model string) string {

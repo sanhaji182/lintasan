@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sanhaji182/lintasan-go/internal/mlrouter"
 )
 
 type connQualityScore struct {
@@ -143,6 +145,90 @@ func pickRouteProfile(taskClass, userAgent string) string {
 	}
 }
 
+// applyMLRouting decides cheap-vs-expensive model using the mlrouter 15-feature
+// complexity score (Gap #1). It activates only when the caller explicitly opts
+// in — either by targeting the sentinel model "ml-auto"/"smart", or when the
+// operator sets ml_router_enabled=true. Otherwise it returns ok=false and the
+// literal model is used unchanged.
+//
+// Returns the chosen model, the tier ("cheap"|"expensive"), and ok.
+func (p *ProxyHandler) applyMLRouting(model string, messages []any) (string, string, bool) {
+	sentinel := model == "ml-auto" || model == "smart"
+	if !sentinel && p.getSetting("ml_router_enabled", "false") != "true" {
+		return "", "", false
+	}
+	if p.mlr.CheapModel == "" || p.mlr.ExpensiveModel == "" {
+		return "", "", false
+	}
+
+	// Convert []any chat messages to the []map[string]any the router expects.
+	msgs := make([]map[string]any, 0, len(messages))
+	for _, m := range messages {
+		if mm, ok := m.(map[string]any); ok {
+			msgs = append(msgs, mm)
+		}
+	}
+
+	dec := mlrouter.Route(msgs, p.mlr)
+	if dec.Model == "" {
+		return "", "", false
+	}
+	return dec.Model, dec.Tier, true
+}
+
+// costQualityFloor is the minimum success-EWMA a provider must clear before
+// cost-first routing will favor it on price. Below this, quality dominates so a
+// cheap-but-failing provider never wins. Operator-tunable via cost_quality_floor.
+func (p *ProxyHandler) costQualityFloor() float64 {
+	if v := p.getSetting("cost_quality_floor", ""); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && f <= 1 {
+			return f
+		}
+	}
+	return 0.3
+}
+
+// costScoreForConnection returns a 0-1 cheapness score for a connection's
+// primary model: 1.0 = free/cheapest, approaching 0 = most expensive. It reads
+// real pricing from the cost calculator; connections named "free" or with no
+// pricing data default to fully cheap (1.0).
+func (p *ProxyHandler) costScoreForConnection(c *Connection) float64 {
+	if strings.Contains(strings.ToLower(c.Name), "free") {
+		return 1.0
+	}
+	if p.costCalc == nil {
+		return 0.5
+	}
+	model := p.primaryModelForConnection(c.ID)
+	if model == "" {
+		return 0.5
+	}
+	// Cost of a representative 1K-in / 1K-out request for this model.
+	rc := p.costCalc.CalculateCost(model, 1000, 1000)
+	if rc.TotalCostUSD <= 0 {
+		return 1.0 // free or unknown-but-zero
+	}
+	// Map cost to a 0-1 cheapness score. $0.02 per 2K tokens (~GPT-4o class) is
+	// a reasonable upper anchor; cheaper scales toward 1.0.
+	const expensiveAnchor = 0.02
+	score := 1.0 - (rc.TotalCostUSD / expensiveAnchor)
+	if score < 0 {
+		return 0
+	}
+	if score > 1 {
+		return 1
+	}
+	return score
+}
+
+// primaryModelForConnection returns the first active model id on a connection.
+func (p *ProxyHandler) primaryModelForConnection(connID string) string {
+	var model string
+	p.db.Conn().QueryRow(`SELECT model_id FROM discovered_models
+		WHERE connection_id = ? AND is_active = 1 ORDER BY model_id LIMIT 1`, connID).Scan(&model)
+	return model
+}
+
 func dedupMessages(messages []any) ([]any, int) {
 	if len(messages) < 2 {
 		return messages, 0
@@ -225,9 +311,15 @@ func (p *ProxyHandler) reorderCandidatesForTask(candidates []*Connection, taskCl
 		case "quality-first":
 			return quality*0.6 + latency*0.2 + priorityScore*0.2
 		case "cost-first":
-			costHint := 0.5
-			if strings.Contains(strings.ToLower(c.Name), "free") {
-				costHint = 1.0
+			// Real cost-based ranking (Gap #4): use the cost calculator's
+			// pricing table for this connection's model rather than only a
+			// "free" name heuristic. Cheaper models score higher, but a quality
+			// floor still applies so we never pick a broken-but-free provider.
+			costHint := p.costScoreForConnection(c)
+			if quality < p.costQualityFloor() {
+				// Below the quality floor: heavily penalize so healthier (even
+				// pricier) providers win.
+				return costHint*0.15 + quality*0.6 + latency*0.25
 			}
 			return costHint*0.5 + quality*0.3 + latency*0.2
 		default:
