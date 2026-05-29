@@ -35,6 +35,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/reasoning"
 	"github.com/sanhaji182/lintasan-go/internal/reflect"
 	"github.com/sanhaji182/lintasan-go/internal/retry"
+	"github.com/sanhaji182/lintasan-go/internal/tokencount"
 	"github.com/sanhaji182/lintasan-go/internal/webhook"
 )
 
@@ -648,7 +649,12 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		// already exhausted, BEFORE spending an upstream call on it. Allow()
 		// returns true when the connection has no configured limit, so this is a
 		// no-op until an operator sets a quota limit for the connection.
-		estTokens := len(body) / 4
+		// estTokens uses the real cl100k tokenizer (char/4 fallback) rather than
+		// a raw byte/4 guess, so the gate matches actual usage more closely.
+		estTokens := tokencount.CountMessages(messages)
+		if estTokens == 0 {
+			estTokens = len(body) / 4
+		}
 		if p.quota != nil && !p.quota.Allow(conn.ID, estTokens) {
 			lastErr = fmt.Sprintf("quota exhausted for %s", conn.ID)
 			lastStatusCode = 429

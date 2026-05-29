@@ -208,9 +208,16 @@ func (p *ProxyHandler) costScoreForConnection(c *Connection) float64 {
 	if rc.TotalCostUSD <= 0 {
 		return 1.0 // free or unknown-but-zero
 	}
-	// Map cost to a 0-1 cheapness score. $0.02 per 2K tokens (~GPT-4o class) is
-	// a reasonable upper anchor; cheaper scales toward 1.0.
-	const expensiveAnchor = 0.02
+	// Map cost to a 0-1 cheapness score. The anchor is the cost of an
+	// "expensive" 2K-token request; anything at/above it scores ~0, cheaper
+	// scales toward 1.0. Default $0.02 (~GPT-4o class), tunable per deployment
+	// via the cost_expensive_anchor setting.
+	expensiveAnchor := 0.02
+	if v := p.getSetting("cost_expensive_anchor", ""); v != "" {
+		if a, err := strconv.ParseFloat(v, 64); err == nil && a > 0 {
+			expensiveAnchor = a
+		}
+	}
 	score := 1.0 - (rc.TotalCostUSD / expensiveAnchor)
 	if score < 0 {
 		return 0
@@ -294,6 +301,19 @@ func (p *ProxyHandler) reorderCandidatesForTask(candidates []*Connection, taskCl
 		return candidates
 	}
 	out := append([]*Connection(nil), candidates...)
+
+	// Precompute per-connection cost scores ONCE before sorting. costScore does
+	// a DB lookup, so calling it inside the sort comparator would run it
+	// O(n log n) times per request (and under the quality lock). Compute up
+	// front into a map keyed by connection ID.
+	costScores := make(map[string]float64, len(out))
+	if routeProfile == "cost-first" {
+		for _, c := range out {
+			costScores[c.ID] = p.costScoreForConnection(c)
+		}
+	}
+	qualityFloor := p.costQualityFloor()
+
 	p.qualityMu.RLock()
 	defer p.qualityMu.RUnlock()
 
@@ -315,8 +335,8 @@ func (p *ProxyHandler) reorderCandidatesForTask(candidates []*Connection, taskCl
 			// pricing table for this connection's model rather than only a
 			// "free" name heuristic. Cheaper models score higher, but a quality
 			// floor still applies so we never pick a broken-but-free provider.
-			costHint := p.costScoreForConnection(c)
-			if quality < p.costQualityFloor() {
+			costHint := costScores[c.ID]
+			if quality < qualityFloor {
 				// Below the quality floor: heavily penalize so healthier (even
 				// pricier) providers win.
 				return costHint*0.15 + quality*0.6 + latency*0.25
