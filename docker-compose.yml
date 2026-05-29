@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  lintasan:
+    image: lintasan:latest
+    container_name: lintasan
+    ports:
+      - "20180:20180"
+    volumes:
+      - lintasan-data:/app/data
+    environment:
+      - PORT=20180
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:-admin}
+      - LINTASAN_MASTER_KEY=${LINTASAN_MASTER_KEY:-change-me}
+      - EMBEDDING_CACHE_ENABLED=${EMBEDDING_CACHE_ENABLED:-false}
+      - EMBEDDING_PROVIDER_URL=${EMBEDDING_PROVIDER_URL:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-text-embedding-3-small}
+      - EMBEDDING_SIMILARITY_THRESHOLD=${EMBEDDING_SIMILARITY_THRESHOLD:-0.85}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:20180/api/auth/check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  lintasan-data:

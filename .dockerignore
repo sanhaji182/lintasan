@@ -1,0 +1,15 @@
+# Ignore data/build artifacts in Docker
+.next
+node_modules
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/backups/
+*.db
+.env*
+.git
+.gitignore
+benchmark*.py
+README.md
+LICENSE
+CONTRIBUTING.md

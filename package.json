@@ -1,0 +1,29 @@
+{
+  "name": "lintasan",
+  "type": "module",
+  "version": "1.0.0",
+  "description": "LLM proxy gateway with 34+ optimization features. Setiap Koneksi Punya Jalannya.",
+  "license": "MIT",
+  "author": "Sanhaji <sanhaji97@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sanhaji182/lintasan.git"
+  },
+  "scripts": {
+    "dev": "next dev -p ${PORT:-20180}",
+    "build": "next build",
+    "start": "next start -p ${PORT:-20180}",
+    "setup": "node scripts/seed.js"
+  },
+  "bin": {
+    "lintasan": "./bin/lintasan.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "next": "16.2.6",
+    "node-forge": "^1.4.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "uuid": "^14.0.0"
+  }
+}
