@@ -203,6 +203,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/aliases", s.handleAliases)
 	s.mux.HandleFunc("POST /api/aliases", s.handleAliasesAction)
 	s.mux.HandleFunc("DELETE /api/aliases", s.handleAliasesDelete)
+	s.mux.HandleFunc("GET /api/smart-routing", s.handleSmartRouting)
+	s.mux.HandleFunc("POST /api/smart-routing", s.handleSmartRoutingAction)
 	s.mux.HandleFunc("GET /api/plugins", s.handlePlugins)
 	s.mux.HandleFunc("POST /api/plugins", s.handlePluginsAction)
 	s.mux.HandleFunc("GET /api/plugins/store", s.handlePluginStore)

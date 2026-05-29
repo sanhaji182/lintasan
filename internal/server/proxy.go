@@ -192,6 +192,21 @@ func (p *ProxyHandler) getSettingFromDB(database *db.DB, key, def string) string
 	return val
 }
 
+// ReloadSmartRoutingConfig re-reads the smart-routing settings into in-memory
+// state so dashboard edits take effect WITHOUT a process restart. It refreshes
+// the ML router model pair + threshold and reinstalls quota limits.
+func (p *ProxyHandler) ReloadSmartRoutingConfig() {
+	p.mlr.CheapModel = p.getSetting("ml_router_cheap_model", "gpt-4o-mini")
+	p.mlr.ExpensiveModel = p.getSetting("ml_router_expensive_model", "gpt-4o")
+	p.mlr.Threshold = 0.5
+	if v, err := p.db.GetSetting("ml_router_threshold"); err == nil && v != "" {
+		if t, err := strconv.ParseFloat(v, 64); err == nil && t > 0 && t < 1 {
+			p.mlr.Threshold = t
+		}
+	}
+	p.loadQuotaLimits(p.db)
+}
+
 func (p *ProxyHandler) getBreaker(connID string) *circuit.Breaker {
 	p.breakerMu.RLock()
 	if b, ok := p.breakers[connID]; ok {

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -234,3 +235,67 @@ func (s *Server) deliverWebhooks(event string, payload map[string]any) {
 }
 
 func zipBytes(files map[string][]byte) []byte { var b bytes.Buffer; z:=zip.NewWriter(&b); for n,d:=range files{ f,_:=z.Create(n); f.Write(d)}; z.Close(); return b.Bytes() }
+
+// --- Smart Routing config (dashboard) ---
+// GET  /api/smart-routing  → current ML-routing / cost / quota config
+// POST /api/smart-routing  → save config, then live-reload proxy in-memory state
+
+func (s *Server) handleSmartRouting(w http.ResponseWriter, r *http.Request) {
+	get := func(k, def string) string { v, _ := s.db.GetSetting(k); if v == "" { return def }; return v }
+	var quotaLimits any = map[string]any{}
+	if raw, _ := s.db.GetSetting("quota_limits"); raw != "" {
+		json.Unmarshal([]byte(raw), &quotaLimits)
+	}
+	writeData(w, map[string]any{
+		"ml_router_enabled":        get("ml_router_enabled", "false") == "true",
+		"ml_router_cheap_model":    get("ml_router_cheap_model", "gpt-4o-mini"),
+		"ml_router_expensive_model": get("ml_router_expensive_model", "gpt-4o"),
+		"ml_router_threshold":      get("ml_router_threshold", "0.5"),
+		"cost_quality_floor":       get("cost_quality_floor", "0.3"),
+		"cost_expensive_anchor":    get("cost_expensive_anchor", "0.02"),
+		"quota_limits":             quotaLimits,
+	})
+}
+
+func (s *Server) handleSmartRoutingAction(w http.ResponseWriter, r *http.Request) {
+	var in map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+	// String/bool/number scalar settings.
+	setStr := func(k string) {
+		if v, ok := in[k]; ok {
+			switch t := v.(type) {
+			case string:
+				s.db.SetSetting(k, t)
+			case bool:
+				if t {
+					s.db.SetSetting(k, "true")
+				} else {
+					s.db.SetSetting(k, "false")
+				}
+			case float64:
+				s.db.SetSetting(k, strconv.FormatFloat(t, 'g', -1, 64))
+			}
+		}
+	}
+	setStr("ml_router_enabled")
+	setStr("ml_router_cheap_model")
+	setStr("ml_router_expensive_model")
+	setStr("ml_router_threshold")
+	setStr("cost_quality_floor")
+	setStr("cost_expensive_anchor")
+	// quota_limits is a JSON object stored verbatim.
+	if v, ok := in["quota_limits"]; ok {
+		if b, err := json.Marshal(v); err == nil {
+			s.db.SetSetting("quota_limits", string(b))
+		}
+	}
+	// Live-reload proxy in-memory state so changes apply without a restart.
+	if s.proxy != nil {
+		s.proxy.ReloadSmartRoutingConfig()
+	}
+	writeJSON(w, map[string]any{"status": "updated"})
+}
+
