@@ -120,6 +120,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/memory/search", s.memHandler.HandleMemorySearch)
 	s.mux.HandleFunc("POST /v1/memory", s.memHandler.HandleMemoryStore)
 	s.mux.HandleFunc("GET /v1/memory/stats", s.memHandler.HandleMemoryStats)
+	s.mux.HandleFunc("DELETE /v1/memory/{key}", s.memHandler.HandleMemoryDelete)
+	s.mux.HandleFunc("GET /v1/memory", s.memHandler.HandleMemoryList)
 	// OpenAI-compatible media endpoints (Node.js exposes these through API routes; Go exposes root /v1 too)
 	s.mux.HandleFunc("POST /v1/images/generations", s.proxy.HandleImages)
 	s.mux.HandleFunc("POST /v1/audio/speech", s.proxy.HandleAudioSpeech)

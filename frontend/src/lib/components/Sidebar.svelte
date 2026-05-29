@@ -5,7 +5,7 @@
     LayoutDashboard, Link2, GitBranch, ShieldAlert, ScrollText,
     BarChart3, TrendingUp, Key, Users, UserCircle, Webhook,
     Database, Settings, Puzzle, MessageSquare, BookOpen,
-    Sun, Moon, Menu, X
+    Brain, Sun, Moon, Menu, X
   } from 'lucide-svelte';
 
   let { open = $bindable(false) }: { open?: boolean } = $props();
@@ -18,6 +18,7 @@
     { label: 'Logs', path: '/dashboard/logs', icon: ScrollText },
     { label: 'Usage', path: '/dashboard/usage', icon: BarChart3 },
     { label: 'Analytics', path: '/dashboard/analytics', icon: TrendingUp },
+    { label: 'Memory', path: '/dashboard/memory', icon: Brain },
   ];
 
   const manageItems = [

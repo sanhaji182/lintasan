@@ -11,9 +11,13 @@ import (
 )
 
 // StoreManager handles persisting and querying memories via Redis.
+// It implements the Backend interface.
 type StoreManager struct {
 	client *Client
 }
+
+// Ensure StoreManager implements Backend at compile time.
+var _ Backend = (*StoreManager)(nil)
 
 // NewStoreManager creates a new StoreManager.
 func NewStoreManager(client *Client) *StoreManager {
@@ -406,6 +410,64 @@ func (s *StoreManager) Delete(key string) error {
 	s.client.Do("VSET.DEL", "lintasan:memories", key)
 	_, err := s.client.Do("DEL", hashKey)
 	return err
+}
+
+// List returns all memories ordered by created_at desc, with pagination.
+func (s *StoreManager) List(limit, offset int) ([]Memory, int, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Scan all keys
+	var allKeys []string
+	var cursor uint64
+	for {
+		result, err := s.client.Do("SCAN", strconv.FormatUint(cursor, 10), "MATCH", "lintasan:mem:*", "COUNT", "200")
+		if err != nil {
+			return nil, 0, err
+		}
+		parts, ok := result.([]interface{})
+		if !ok || len(parts) != 2 {
+			break
+		}
+		cursorStr := respToString(parts[0])
+		cursor, _ = strconv.ParseUint(cursorStr, 10, 64)
+		keys, _ := parts[1].([]interface{})
+		for _, k := range keys {
+			allKeys = append(allKeys, respToString(k))
+		}
+		if cursor == 0 {
+			break
+		}
+	}
+
+	total := len(allKeys)
+
+	// Fetch all memories to sort by created_at
+	var all []Memory
+	for _, hashKey := range allKeys {
+		m := Memory{Key: strings.TrimPrefix(hashKey, "lintasan:mem:")}
+		s.populateMemory(&m, hashKey)
+		all = append(all, m)
+	}
+
+	// Sort by created_at desc
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].CreatedAt.After(all[j].CreatedAt)
+	})
+
+	// Paginate
+	if offset >= len(all) {
+		return []Memory{}, total, nil
+	}
+	end := offset + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	return all[offset:end], total, nil
 }
 
 // EnsureIndex is a no-op stub (index creation is not required when using VSET).

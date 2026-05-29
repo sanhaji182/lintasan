@@ -82,7 +82,7 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 	}
 	ph.breakers = make(map[string]*circuit.Breaker)
 	ph.lb = ph.initLoadBalancer()
-	ph.mem = memory.NewLazy(memory.Config{Addr: ""})
+	ph.mem = memory.NewAuto(memory.Config{Addr: "", DataDir: "data"})
 
 	// Initialize context compressor with default settings
 	// These can be overridden via settings if needed

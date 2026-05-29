@@ -189,11 +189,14 @@ func TestGracefulDegradationUnavailable(t *testing.T) {
 }
 
 func TestNewLazyConnectFailure(t *testing.T) {
-	ms := memory.NewLazy(memory.Config{Addr: "127.0.0.1:19999"})
-	if ms.Available() {
-		t.Fatal("expected unavailable on bad port")
+	// NewLazy now calls NewAuto which falls back to SQLite when Redis fails.
+	ms := memory.NewLazy(memory.Config{Addr: "127.0.0.1:19999", DataDir: t.TempDir()})
+	if !ms.Available() {
+		t.Fatal("expected available via SQLite fallback")
 	}
-	// Close should not panic
+	if ms.BackendName() != "sqlite" {
+		t.Fatalf("expected backend=sqlite, got %s", ms.BackendName())
+	}
 	if err := ms.Close(); err != nil {
 		t.Errorf("Close should not error: %v", err)
 	}

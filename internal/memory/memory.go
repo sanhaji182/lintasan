@@ -1,20 +1,35 @@
-// Package memory provides a pure-Go TF-IDF embedder and Redis-backed vector store.
+// Package memory provides a pure-Go TF-IDF embedder and pluggable vector store.
+// Backends: Redis (primary) with automatic SQLite fallback.
 package memory
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
-// MemoryStore is the top-level memory service wrapping a StoreManager and Client.
-type MemoryStore struct {
-	Store  *StoreManager
-	client *Client
+// Backend is the interface both Redis and SQLite stores implement.
+type Backend interface {
+	Store(key string, embedding []float64, text string, metadata map[string]string, tags []string, score float64) error
+	Search(embedding []float64, topK int) ([]Memory, error)
+	SearchByKeywords(query string, topK int) ([]Memory, error)
+	IndexCompletion(prompt Prompt, response string, score float64, tags []string, promptTokens, completionTokens int) (string, []float64, error)
+	Stats() map[string]interface{}
+	Delete(key string) error
+	List(limit, offset int) ([]Memory, int, error)
+	EnsureIndex() error
 }
 
-// Config holds Redis connection parameters.
+// MemoryStore is the top-level memory service wrapping a Backend.
+type MemoryStore struct {
+	Store   Backend
+	backend string // "redis" or "sqlite"
+}
+
+// Config holds connection parameters.
 type Config struct {
-	Addr string
+	Addr    string // Redis address (empty = try default)
+	DataDir string // SQLite data directory (for fallback)
 }
 
 // New creates a MemoryStore connected to Redis.
@@ -35,15 +50,14 @@ func New(cfg Config) (*MemoryStore, error) {
 		return nil, fmt.Errorf("redis ping: %w", err)
 	}
 	return &MemoryStore{
-		Store:  NewStoreManager(client),
-		client: client,
+		Store:   NewStoreManager(client),
+		backend: "redis",
 	}, nil
 }
 
-// NewLazy creates a MemoryStore that gracefully degrades if Redis is unavailable.
-// On failure, it returns a MemoryStore with Store=nil and client=nil — callers
-// must check Available() before using Store methods.
-func NewLazy(cfg Config) *MemoryStore {
+// NewAuto tries Redis first, falls back to SQLite automatically.
+func NewAuto(cfg Config) *MemoryStore {
+	// Try Redis
 	if cfg.Addr == "" {
 		if addr := os.Getenv("REDIS_ADDR"); addr != "" {
 			cfg.Addr = addr
@@ -51,31 +65,64 @@ func NewLazy(cfg Config) *MemoryStore {
 			cfg.Addr = "127.0.0.1:6379"
 		}
 	}
+
 	client, err := NewClient(cfg.Addr)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "memory: Redis connect failed, degrading gracefully: %v\n", err)
-		return &MemoryStore{Store: nil, client: nil}
-	}
-	if _, err := client.Do("PING"); err != nil {
-		fmt.Fprintf(os.Stderr, "memory: Redis ping failed, degrading gracefully: %v\n", err)
+	if err == nil {
+		if _, pingErr := client.Do("PING"); pingErr == nil {
+			fmt.Fprintf(os.Stderr, "memory: connected to Redis at %s\n", cfg.Addr)
+			return &MemoryStore{
+				Store:   NewStoreManager(client),
+				backend: "redis",
+			}
+		}
 		client.Close()
-		return &MemoryStore{Store: nil, client: nil}
 	}
+
+	// Fallback to SQLite
+	dataDir := cfg.DataDir
+	if dataDir == "" {
+		dataDir = "data"
+	}
+	dbPath := filepath.Join(dataDir, "memory.db")
+	fmt.Fprintf(os.Stderr, "memory: Redis unavailable, using SQLite at %s\n", dbPath)
+
+	sqliteStore, err := NewSQLiteStore(dbPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "memory: SQLite init failed: %v — memory disabled\n", err)
+		return &MemoryStore{Store: nil, backend: "none"}
+	}
+
 	return &MemoryStore{
-		Store:  NewStoreManager(client),
-		client: client,
+		Store:   sqliteStore,
+		backend: "sqlite",
 	}
 }
 
-// Available returns true if Redis is connected and ready for operations.
-func (ms *MemoryStore) Available() bool {
-	return ms.client != nil && ms.Store != nil
+// NewLazy creates a MemoryStore that gracefully degrades if Redis is unavailable.
+// Deprecated: use NewAuto which falls back to SQLite instead of disabling.
+func NewLazy(cfg Config) *MemoryStore {
+	return NewAuto(cfg)
 }
 
-// Close shuts down the Redis connection.
+// Available returns true if a backend is connected and ready.
+func (ms *MemoryStore) Available() bool {
+	return ms.Store != nil
+}
+
+// Backend returns the active backend name: "redis", "sqlite", or "none".
+func (ms *MemoryStore) BackendName() string {
+	return ms.backend
+}
+
+// Close shuts down the backend connection.
 func (ms *MemoryStore) Close() error {
-	if ms.client == nil {
+	if ms.Store == nil {
 		return nil
 	}
-	return ms.client.Close()
+	switch s := ms.Store.(type) {
+	case *SQLiteStore:
+		return s.Close()
+	default:
+		return nil
+	}
 }
