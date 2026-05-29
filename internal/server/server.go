@@ -14,6 +14,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/db"
 	"github.com/sanhaji182/lintasan-go/internal/discover"
 	"github.com/sanhaji182/lintasan-go/internal/freeproviders"
+	"github.com/sanhaji182/lintasan-go/internal/mcp"
 	"github.com/sanhaji182/lintasan-go/internal/mitm"
 	"github.com/sanhaji182/lintasan-go/internal/plugin"
 	"github.com/sanhaji182/lintasan-go/internal/rtk"
@@ -33,6 +34,7 @@ type Server struct {
 	fpScanner  *freeproviders.Scanner // free provider scanner
 	rtkComp    *rtk.Compressor        // RTK token compressor
 	webSearch  *websearch.Engine      // web search engine
+	mcpServer  *mcp.Server            // MCP protocol server
 	mitmOnce   sync.Once              // ensures MITM starts exactly once
 }
 
@@ -63,6 +65,10 @@ func New(cfg *config.Config, database *db.DB) *Server {
 	// Wire web search engine (SerpAPI key from settings)
 	serpKey, _ := database.GetSetting("serpapi_key")
 	s.webSearch = websearch.New(serpKey)
+
+	// Wire MCP server with all tools
+	s.mcpServer = mcp.NewServer("lintasan", "2.2.0")
+	mcp.RegisterAllTools(s.mcpServer, database.Conn())
 
 	// Wire MITM proxy if MITM_PORT env set
 	if port := os.Getenv("MITM_PORT"); port != "" {
@@ -122,6 +128,20 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/memory/stats", s.memHandler.HandleMemoryStats)
 	s.mux.HandleFunc("DELETE /v1/memory/{key}", s.memHandler.HandleMemoryDelete)
 	s.mux.HandleFunc("GET /v1/memory", s.memHandler.HandleMemoryList)
+
+	// MCP Protocol (JSON-RPC 2.0)
+	s.mux.HandleFunc("POST /mcp", s.mcpServer.HandleHTTP)
+	s.mux.HandleFunc("GET /mcp/sse", s.mcpServer.HandleSSE)
+	s.mux.HandleFunc("GET /api/mcp/tools", s.handleMCPTools)
+
+	// Cost Savings API
+	s.mux.HandleFunc("GET /api/savings/summary", s.handleSavingsSummary)
+	s.mux.HandleFunc("GET /api/savings/history", s.handleSavingsHistory)
+
+	// Translator API
+	s.mux.HandleFunc("POST /api/translate", s.handleTranslate)
+	s.mux.HandleFunc("GET /api/translate/formats", s.handleTranslateFormats)
+
 	// OpenAI-compatible media endpoints (Node.js exposes these through API routes; Go exposes root /v1 too)
 	s.mux.HandleFunc("POST /v1/images/generations", s.proxy.HandleImages)
 	s.mux.HandleFunc("POST /v1/audio/speech", s.proxy.HandleAudioSpeech)

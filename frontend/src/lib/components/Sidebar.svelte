@@ -32,6 +32,9 @@
   ];
 
   const toolItems = [
+    { label: 'MCP Server', path: '/dashboard/mcp', icon: Puzzle },
+    { label: 'Savings', path: '/dashboard/savings', icon: TrendingUp },
+    { label: 'Translator', path: '/dashboard/translator', icon: Globe },
     { label: 'Plugins', path: '/dashboard/plugins', icon: Puzzle },
     { label: 'Playground', path: '/dashboard/playground', icon: MessageSquare },
     { label: 'Docs', path: '/dashboard/docs', icon: BookOpen },

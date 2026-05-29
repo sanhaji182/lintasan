@@ -24,6 +24,9 @@
     '/dashboard/plugins': 'Plugins',
     '/dashboard/playground': 'Playground',
     '/dashboard/docs': 'Docs',
+    '/dashboard/mcp': 'MCP Server',
+    '/dashboard/savings': 'Cost Savings',
+    '/dashboard/translator': 'Format Translator',
   };
 
   const title = $derived(pageTitles[page.url.pathname] || 'Dashboard');
