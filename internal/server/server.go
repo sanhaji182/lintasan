@@ -20,6 +20,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/discover"
 	"github.com/sanhaji182/lintasan-go/internal/freeproviders"
 	"github.com/sanhaji182/lintasan-go/internal/mcp"
+	"github.com/sanhaji182/lintasan-go/internal/metrics"
 	"github.com/sanhaji182/lintasan-go/internal/mitm"
 	"github.com/sanhaji182/lintasan-go/internal/plugin"
 	"github.com/sanhaji182/lintasan-go/internal/rtk"
@@ -45,6 +46,7 @@ type Server struct {
 	mitmOnce    sync.Once              // ensures MITM starts exactly once
 	mitmSecret  string                 // random per-boot MITM bypass secret (empty = disabled)
 	setup       setupState             // bootstrap/active one-way latch
+	metrics     *metrics.Registry      // Prometheus metrics registry (/metrics)
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
@@ -52,7 +54,13 @@ func New(cfg *config.Config, database *db.DB) *Server {
 		cfg: cfg,
 		db:  database,
 		mux: http.NewServeMux(),
+		metrics: metrics.NewRegistry(),
 	}
+	// Register pull-based metric collectors. These run on every /metrics scrape
+	// and emit only numeric counters/gauges + bounded labels — no secrets.
+	s.metrics.RegisterCollector(buildInfoCollector)
+	s.metrics.RegisterCollector(memorySearchCollector)
+	s.metrics.RegisterCollector(metrics.RuntimeCollector)
 	s.proxy = NewProxyHandler(cfg, database)
 	s.memHandler = NewMemoryHandler(s.proxy.mem)
 
@@ -138,7 +146,7 @@ func (s *Server) Start() error {
 
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.cfg.Port),
-		Handler:      s.corsMiddleware(s.authMiddleware(s.mux)),
+		Handler:      s.corsMiddleware(s.metricsMiddleware(s.authMiddleware(s.mux))),
 		ReadTimeout:  30 * time.Second,
 		WriteTimeout: 300 * time.Second, // Long for streaming
 		IdleTimeout:  120 * time.Second,
@@ -167,6 +175,10 @@ func (s *Server) routes() {
 
 	// Health
 	s.mux.HandleFunc("GET /health", s.handleHealth)
+
+	// Prometheus metrics (read-only counters/gauges; gated by
+	// LINTASAN_METRICS_ENABLED, default on). No secrets, bounded labels.
+	s.mux.HandleFunc("GET /metrics", s.HandleMetrics)
 
 	// OpenAI-compatible API
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
@@ -318,10 +330,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		// Health, root, and setup-status are always open (no secrets, no
-		// mutation). setup-status must be readable in BOTH states so the login
-		// UI can render first-run vs normal login.
-		if path == "/health" || path == "/" || path == "/api/setup/status" {
+		// Health, root, metrics, and setup-status are always open (no secrets,
+		// no mutation). /metrics serves read-only numeric counters (bounded
+		// labels, no master_key / API keys / prompt content) so it's safe to
+		// expose unauthenticated for a localhost Prometheus scraper, matching
+		// /health. Exposure can still be turned off entirely via
+		// LINTASAN_METRICS_ENABLED (handled in HandleMetrics). setup-status must
+		// be readable in BOTH states so the login UI can render first-run vs
+		// normal login.
+		if path == "/health" || path == "/" || path == "/api/setup/status" || path == "/metrics" {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -4,7 +4,7 @@
     LayoutDashboard, Link2, GitBranch, ShieldAlert, ScrollText,
     BarChart3, TrendingUp, Key, Users, UserCircle, Webhook,
     Database, Settings, Puzzle, MessageSquare, BookOpen,
-    Brain, Globe, Server, Sun, Moon
+    Brain, Globe, Server, Activity, Sun, Moon
   } from 'lucide-svelte';
   import { theme } from '$lib/stores/theme';
 
@@ -20,6 +20,7 @@
     { label: 'Logs', path: '/dashboard/logs', icon: ScrollText },
     { label: 'Usage', path: '/dashboard/usage', icon: BarChart3 },
     { label: 'Analytics', path: '/dashboard/analytics', icon: TrendingUp },
+    { label: 'Observability', path: '/dashboard/observability', icon: Activity },
     { label: 'Memory', path: '/dashboard/memory', icon: Brain },
   ];
 
