@@ -53,6 +53,20 @@ func memorySearchCollector(w io.Writer) {
 		"Configured brute-force scan cap (LINTASAN_MEMORY_MAX_SCAN; 0 = unbounded).", float64(m.MaxScanRows))
 }
 
+// cacheCollector bridges the response-cache hit/miss counters from the metrics
+// package's own atomic counters into Prometheus families. Answers operational
+// question #3 ("What is the cache hit rate?"). These count the PROXY response
+// cache (exact + semantic), DISTINCT from the H3 memory-search counters above.
+//
+// Two plain counters, no labels — bounded by construction.
+func cacheCollector(w io.Writer) {
+	c := metrics.CacheStats()
+	metrics.WriteCounter(w, "lintasan_cache_hits_total",
+		"Response/semantic cache hits (exact + semantic).", float64(c.Hits))
+	metrics.WriteCounter(w, "lintasan_cache_misses_total",
+		"Cache-eligible requests that missed and went upstream.", float64(c.Misses))
+}
+
 // buildInfoCollector emits a single build_info gauge carrying the server
 // version as a BOUNDED info label. Value is always 1 (the Prometheus
 // build-info idiom). Version is a fixed compile-time string, never secret.

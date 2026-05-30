@@ -60,6 +60,7 @@ func New(cfg *config.Config, database *db.DB) *Server {
 	// and emit only numeric counters/gauges + bounded labels — no secrets.
 	s.metrics.RegisterCollector(buildInfoCollector)
 	s.metrics.RegisterCollector(memorySearchCollector)
+	s.metrics.RegisterCollector(cacheCollector)
 	s.metrics.RegisterCollector(metrics.RuntimeCollector)
 	s.proxy = NewProxyHandler(cfg, database)
 	s.memHandler = NewMemoryHandler(s.proxy.mem)

@@ -4,7 +4,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import {
     Activity, Search, Database, Cpu, Server, AlertTriangle,
-    CheckCircle2, Gauge, RefreshCw, Layers
+    CheckCircle2, Gauge, RefreshCw, Layers, Zap
   } from 'lucide-svelte';
 
   // ── Types ──────────────────────────────────────────────────────────────
@@ -34,6 +34,12 @@
     count: number;
     sumSeconds: number;
   }
+  // Proxy RESPONSE cache (exact + semantic) hit/miss — distinct from the
+  // semantic-SEARCH counters above. null = counters absent from /metrics.
+  interface CacheStats {
+    hits: number;
+    misses: number;
+  }
 
   let loading = $state(true);
   let refreshing = $state(false);
@@ -41,6 +47,7 @@
   let search = $state<SearchMetrics | null>(null);
   let proc = $state<ProcStats>({ goroutines: null, heapAlloc: null, rss: null });
   let httpSeries = $state<HttpSeries[]>([]);
+  let cache = $state<CacheStats | null>(null);
   let metricsAvailable = $state(true);
   let lastUpdated = $state<Date | null>(null);
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -115,6 +122,15 @@
         rss: get1('lintasan_process_resident_memory_bytes')
       };
 
+      // Proxy response-cache hit/miss (operational question #3). Only populate
+      // when at least one counter is present so the card degrades to N/A
+      // rather than showing a misleading 0% when /metrics omits them.
+      const cHits = get1('lintasan_cache_hits_total');
+      const cMisses = get1('lintasan_cache_misses_total');
+      cache = (cHits == null && cMisses == null)
+        ? null
+        : { hits: cHits ?? 0, misses: cMisses ?? 0 };
+
       // HTTP families: aggregate requests_total + duration sum/count per series.
       const seriesMap = new Map<string, HttpSeries>();
       for (const s of samples) {
@@ -174,6 +190,14 @@
     ? Math.round(search.rows_scanned / scanningCalls) : 0);
   const scanLoadPct = $derived(search && search.max_scan_rows > 0
     ? Math.min(100, Math.round((avgScanned / search.max_scan_rows) * 100)) : 0);
+
+  // Proxy response-cache hit rate (operational question #3). Distinct from the
+  // semantic-SEARCH "Hit Rate" card (search.hits/search.calls): this measures
+  // how often a request was served from the exact/semantic RESPONSE cache
+  // instead of going upstream. N/A until at least one cache-eligible request.
+  const cacheTotal = $derived(cache ? cache.hits + cache.misses : 0);
+  const cacheHitRate = $derived(cache && cacheTotal > 0
+    ? Math.round((cache.hits / cacheTotal) * 100) : null);
 
   // Warning state: the H3-regression early warning the user asked for.
   //  - capped scans > 0  → search is hitting the cap (store grew past safe size)
@@ -305,6 +329,29 @@
         </div>
       </div>
     {/if}
+
+    <!-- Proxy response cache (exact + semantic) — operational question #3 -->
+    <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-1); margin: 0 0 12px; display: flex; align-items: center; gap: 6px;">
+      <Zap size={15} style="color: var(--color-warning);" /> Response Cache (Proxy)
+    </div>
+    <div class="grid gap-4" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 24px;">
+      {#each [
+        { icon: Zap, label: 'Cache Hit Rate', value: cacheHitRate == null ? 'N/A' : cacheHitRate + '%', color: 'var(--color-success)' },
+        { icon: CheckCircle2, label: 'Cache Hits', value: cache ? cache.hits.toLocaleString() : 'N/A', color: 'var(--color-primary)' },
+        { icon: Layers, label: 'Cache Misses', value: cache ? cache.misses.toLocaleString() : 'N/A', color: 'var(--color-fg-3)' }
+      ] as m}
+        <div class="card" style="padding: 16px; position: relative; overflow: hidden;">
+          <div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: {m.color};"></div>
+          <m.icon size={18} style="color: {m.color}; margin-bottom: 6px;" stroke-width={1.8} />
+          <div style="font-size: 19px; font-weight: 700; font-family: var(--font-mono); color: var(--color-fg-0); letter-spacing: -0.3px;">{m.value}</div>
+          <div style="font-size: 11px; font-weight: 500; color: var(--color-fg-3); margin-top: 2px;">{m.label}</div>
+        </div>
+      {/each}
+    </div>
+    <div style="font-size: 11px; color: var(--color-fg-3); margin: -16px 0 24px;">
+      Exact + semantic RESPONSE cache served vs. upstream. Distinct from the semantic-search Hit Rate above (memory-context lookups).
+      {#if cacheHitRate == null}<span> Counters populate once a cache-eligible request runs.</span>{/if}
+    </div>
 
     <!-- Process runtime -->
     <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-1); margin: 0 0 12px; display: flex; align-items: center; gap: 6px;">

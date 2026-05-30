@@ -26,6 +26,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/fallback"
 	"github.com/sanhaji182/lintasan-go/internal/lb"
 	"github.com/sanhaji182/lintasan-go/internal/memory"
+	"github.com/sanhaji182/lintasan-go/internal/metrics"
 	"github.com/sanhaji182/lintasan-go/internal/mlrouter"
 	"github.com/sanhaji182/lintasan-go/internal/optimizer"
 	"github.com/sanhaji182/lintasan-go/internal/plugin"
@@ -474,6 +475,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			"top_p":       req["top_p"],
 		}
 		if respBody, ok := cache.GetExactMatch(p.db.Conn(), model, messages, params); ok {
+			metrics.CacheHit()
 			p.logRequest(model, "exact-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, "", taskClass, modeLabel)
 			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -508,6 +510,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	semanticEnabled := !directMode && p.getSetting("semantic_cache_enabled", "true") == "true"
 	if semanticEnabled {
 		if respBody, score, ok := cache.GetSemanticMatch(p.db.Conn(), model, messages, 0.75); ok {
+			metrics.CacheHit()
 			p.logRequest(model, "semantic-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, fmt.Sprintf("score=%.3f", score), taskClass, modeLabel)
 
 			if stream {
@@ -532,6 +535,15 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			}
 			return
 		}
+	}
+
+	// Cache miss: the request was cache-eligible (exact and/or semantic cache
+	// was enabled) but fell through every cache check to an upstream call.
+	// Recorded exactly once here, the single point all cache-eligible misses
+	// funnel through. A request that bypassed caching entirely (direct mode or
+	// both caches disabled) is NOT a miss and must not inflate the denominator.
+	if exactCacheEnabled || semanticEnabled {
+		metrics.CacheMiss()
 	}
 
 	candidates, resolvedModel, comboName, err := p.resolveRoute(model)

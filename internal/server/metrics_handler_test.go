@@ -106,6 +106,8 @@ func TestMetricsEndpoint_ValidAndPublic(t *testing.T) {
 		"lintasan_memory_search_scanned_rows_total",
 		"lintasan_memory_search_capped_total",
 		"lintasan_memory_search_max_scan_rows",
+		"# TYPE lintasan_cache_hits_total counter",
+		"lintasan_cache_misses_total",
 		"lintasan_process_goroutines",
 		"lintasan_process_heap_alloc_bytes",
 		"lintasan_build_info",
