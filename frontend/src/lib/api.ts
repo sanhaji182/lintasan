@@ -29,6 +29,23 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error('Session expired. Please sign in again.');
   }
 
+  if (res.status === 403) {
+    // Password rotation enforced by backend — token is still valid, the user
+    // must rotate before any other endpoint will respond. Redirect to the
+    // standalone change-password page (do NOT clear the token).
+    const body = await res.clone().json().catch(() => ({}));
+    if (body.error === 'password_change_required') {
+      if (
+        typeof window !== 'undefined' &&
+        !window.location.pathname.startsWith('/change-password')
+      ) {
+        window.location.href = '/change-password';
+      }
+      throw new Error('Password change required. Please update your password to continue.');
+    }
+    // Other 403s (e.g. admin-only routes) fall through to the generic handler.
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error?.message || err.error || res.statusText);

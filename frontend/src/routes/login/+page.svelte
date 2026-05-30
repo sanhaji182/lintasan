@@ -19,8 +19,12 @@
     const token = localStorage.getItem('lintasan_token');
     if (!token) { checkingSession = false; return; }
     try {
-      await api.get('/api/auth/me');
-      await goto('/dashboard');
+      const me = await api.get<{ must_change_password?: boolean }>('/api/auth/me');
+      if (me.must_change_password) {
+        await goto('/change-password');
+      } else {
+        await goto('/dashboard');
+      }
     } catch {
       localStorage.removeItem('lintasan_token');
       localStorage.removeItem('lintasan_user');
@@ -36,7 +40,7 @@
     loading = true;
     error = '';
     try {
-      const data = await api.post<{ token: string; user: { id: string; username: string; role: string } }>(
+      const data = await api.post<{ token: string; user: { id: string; username: string; role: string; must_change_password?: boolean } }>(
         '/api/auth/login',
         { username: username.trim(), password: password.trim() }
       );
@@ -44,7 +48,11 @@
         localStorage.setItem('lintasan_token', data.token);
         localStorage.setItem('lintasan_user', JSON.stringify(data.user));
       }
-      await goto('/dashboard');
+      if (data.user?.must_change_password) {
+        await goto('/change-password');
+      } else {
+        await goto('/dashboard');
+      }
     } catch (e: any) {
       error = e.message || 'Invalid credentials';
       password = '';

@@ -247,9 +247,10 @@ func (m *UserManager) AdminCount() int {
 type LoginResponse struct {
 	Token string `json:"token"`
 	User  struct {
-		ID       string `json:"id"`
-		Username string `json:"username"`
-		Role     string `json:"role"`
+		ID                 string `json:"id"`
+		Username           string `json:"username"`
+		Role               string `json:"role"`
+		MustChangePassword bool   `json:"must_change_password"`
 	} `json:"user"`
 }
 
@@ -258,6 +259,7 @@ func NewLoginResponse(token string, user *User) LoginResponse {
 	resp.User.ID = user.ID
 	resp.User.Username = user.Username
 	resp.User.Role = user.Role
+	resp.User.MustChangePassword = user.MustChangePassword
 	return resp
 }
 
