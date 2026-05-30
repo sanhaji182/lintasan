@@ -2,7 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -40,6 +43,8 @@ type Server struct {
 	webSearch   *websearch.Engine      // web search engine
 	mcpServer   *mcp.Server            // MCP protocol server
 	mitmOnce    sync.Once              // ensures MITM starts exactly once
+	mitmSecret  string                 // random per-boot MITM bypass secret (empty = disabled)
+	setup       setupState             // bootstrap/active one-way latch
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
@@ -67,9 +72,18 @@ func New(cfg *config.Config, database *db.DB) *Server {
 	s.userMgr = auth.NewUserManager(database.Conn(), jwtSecret)
 	s.authHandler = auth.NewAuthHandler(s.userMgr)
 
-	// Seed default admin account (admin / admin123 — change on first login!)
-	if err := s.userMgr.SeedAdmin("admin", "admin123"); err != nil {
+	// Seed default admin account if no users exist. The password is RANDOM
+	// (never hardcoded) and the account is flagged must_change_password. The
+	// generated password is printed once to stderr for first-run setup only.
+	if pw, err := s.userMgr.SeedAdmin("admin"); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: admin seed failed: %v\n", err)
+	} else if pw != "" {
+		fmt.Fprintf(os.Stderr, "\n========================================================\n"+
+			"  FIRST-RUN: seeded admin account\n"+
+			"    username: admin\n"+
+			"    password: %s\n"+
+			"  You MUST change this password on first login.\n"+
+			"========================================================\n\n", pw)
 	}
 
 	// Wire plugin manager (shared with proxy so both have access)
@@ -92,9 +106,19 @@ func New(cfg *config.Config, database *db.DB) *Server {
 	s.mcpServer = mcp.NewServer("lintasan", "2.2.0")
 	mcp.RegisterAllTools(s.mcpServer, database.Conn())
 
-	// Wire MITM proxy if MITM_PORT env set
-	if port := os.Getenv("MITM_PORT"); port != "" {
-		s.mitmProxy = mitm.New(cfg.MITMPort, cfg.Port, database)
+	// Wire MITM proxy ONLY when explicitly enabled. Default is disabled.
+	// When enabled, generate a random per-boot bypass secret — there is no
+	// static, source-guessable bypass value anymore.
+	if cfg.MITMEnabled {
+		secret := make([]byte, 24)
+		if _, err := rand.Read(secret); err == nil {
+			s.mitmSecret = base64.RawURLEncoding.EncodeToString(secret)
+		}
+		s.mitmProxy = mitm.New(cfg.MITMPort, cfg.Port, database, s.mitmSecret)
+		// Persist so a standalone `lintasan mitm start` bridge can read the
+		// same per-boot secret. Rotated on every server boot.
+		database.SetSetting("mitm_secret", s.mitmSecret)
+		fmt.Fprintf(os.Stderr, "⚠️  MITM bridge ENABLED on :%d (per-boot bypass secret active; IDE bridge only — do NOT expose publicly)\n", cfg.MITMPort)
 	}
 
 	s.routes()
@@ -133,8 +157,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/auth/login", s.authHandler.HandleLogin())
 	s.mux.HandleFunc("GET /api/auth/me", s.authHandler.HandleMe())
 	s.mux.HandleFunc("POST /api/auth/logout", s.authHandler.HandleLogout())
+	s.mux.HandleFunc("POST /api/auth/change-password", s.authHandler.HandleChangePassword())
 	s.mux.HandleFunc("GET /api/auth/users", s.authHandler.HandleListUsers())
 	s.mux.HandleFunc("POST /api/auth/users", s.authHandler.HandleCreateUser())
+
+	// First-run setup (bootstrap/active state machine)
+	s.mux.HandleFunc("GET /api/setup/status", s.handleSetupStatus)
+	s.mux.HandleFunc("POST /api/setup", s.handleSetupComplete)
 
 	// Health
 	s.mux.HandleFunc("GET /health", s.handleHealth)
@@ -257,93 +286,127 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// requestUser resolves the authenticated user from a request, checking the
+// JWT cookie first then the Authorization: Bearer header. Returns nil if no
+// valid user token is present. Does NOT consult master key / dashboard API keys.
+func (s *Server) requestUser(r *http.Request) *auth.User {
+	if s.userMgr == nil {
+		return nil
+	}
+	if cookie, err := r.Cookie("lintasan_token"); err == nil && cookie.Value != "" {
+		if user, err := s.userMgr.ValidateToken(cookie.Value); err == nil {
+			return user
+		}
+	}
+	if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+		if user, err := s.userMgr.ValidateToken(strings.TrimPrefix(authHeader, "Bearer ")); err == nil {
+			return user
+		}
+	}
+	return nil
+}
+
+// authMiddleware enforces the bootstrap/active state machine and fail-CLOSED auth.
+//
+// Invariants (asserted by security_boundary_test.go):
+//   - BOOTSTRAP: only setup-path endpoints are reachable; everything else → 503.
+//   - ACTIVE:    no request reaches a management/proxy endpoint without a valid
+//                JWT, master key, or dashboard API key. There is NO fail-open.
+//   - There is no path-prefix whitelist (e.g. /api/dashboard/*) that bypasses auth.
+//   - The MITM bypass requires a per-boot random secret, never a static value.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health, dashboard, login, and dashboard UI
-		skipAuth := r.URL.Path == "/health" || r.URL.Path == "/" ||
-			strings.HasPrefix(r.URL.Path, "/api/dashboard/") ||
-			(r.URL.Path == "/api/auth/login" && r.Method == "POST") ||
-			strings.HasPrefix(r.URL.Path, "/api/oauth/")
+		path := r.URL.Path
 
-		if skipAuth {
+		// Health, root, and setup-status are always open (no secrets, no
+		// mutation). setup-status must be readable in BOTH states so the login
+		// UI can render first-run vs normal login.
+		if path == "/health" || path == "/" || path == "/api/setup/status" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// MITM bridge bypass: requests from IDE proxy
-		if r.Header.Get("X-Lintasan-MITM") == "true" {
+		// --- BOOTSTRAP state: only setup endpoints are reachable. ---
+		if !s.isActive() {
+			if isSetupPath(path, r.Method) {
+				// Attach user if a token is present (setup-complete needs admin).
+				if user := s.requestUser(r); user != nil {
+					next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), auth.UserContextKey, user)))
+					return
+				}
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Everything else is locked until setup completes. No fail-open.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "setup_required",
+				"hint":  "complete first-run setup: log in as admin, rotate the password, and set a master key via POST /api/setup",
+			})
+			return
+		}
+
+		// --- ACTIVE state: fail-CLOSED. ---
+
+		// Login is always reachable so users can obtain a token.
+		if path == "/api/auth/login" && r.Method == http.MethodPost {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Check master key
-		masterKey, _ := s.db.GetSetting("master_key")
-
-		// Check JWT first — always attempt (takes priority over master key)
-		if s.userMgr != nil {
-			if cookie, cookieErr := r.Cookie("lintasan_token"); cookieErr == nil && cookie.Value != "" {
-				if user, err := s.userMgr.ValidateToken(cookie.Value); err == nil {
-					ctx := context.WithValue(r.Context(), auth.UserContextKey, user)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
-			}
-			authHeader := r.Header.Get("Authorization")
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				if user, err := s.userMgr.ValidateToken(strings.TrimPrefix(authHeader, "Bearer ")); err == nil {
-					ctx := context.WithValue(r.Context(), auth.UserContextKey, user)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
+		// MITM bridge bypass: ONLY with the per-boot random secret. Never a
+		// static, source-guessable value. Disabled entirely if no secret set.
+		if s.mitmSecret != "" {
+			if hdr := r.Header.Get("X-Lintasan-MITM"); hdr != "" &&
+				subtle.ConstantTimeCompare([]byte(hdr), []byte(s.mitmSecret)) == 1 {
+				s.audit("mitm.bypass", "ide-bridge", path, map[string]any{"method": r.Method, "remote": r.RemoteAddr})
+				next.ServeHTTP(w, r)
+				return
 			}
 		}
 
+		// 1) JWT (cookie or Bearer) — highest priority, carries user identity.
+		if user := s.requestUser(r); user != nil {
+			// Enforce password rotation: a user flagged must_change_password may
+			// only reach the change-password endpoint until they rotate.
+			if user.MustChangePassword &&
+				!(path == "/api/auth/change-password" && r.Method == http.MethodPost) &&
+				path != "/api/auth/me" && path != "/api/auth/logout" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				json.NewEncoder(w).Encode(map[string]string{
+					"error": "password_change_required",
+					"hint":  "rotate your password via POST /api/auth/change-password",
+				})
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), auth.UserContextKey, user)))
+			return
+		}
+
+		// 2) Master key (DB setting or config) via Bearer.
 		authHeader := r.Header.Get("Authorization")
-
-		// No master key set — allow all remaining (first-run, dashboard accessible)
-		if masterKey == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Validate Bearer token — master key
-		if authHeader == "Bearer "+masterKey {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Also check config master key
-		if s.cfg.MasterKey != "" && authHeader == "Bearer "+s.cfg.MasterKey {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Check API keys created from dashboard (/api/keys)
-		if strings.HasPrefix(authHeader, "Bearer ") && s.validDashboardAPIKey(strings.TrimPrefix(authHeader, "Bearer ")) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Check JWT token (from cookie or Authorization header)
-		if s.userMgr != nil {
-			// Try cookie first
-			if cookie, cookieErr := r.Cookie("lintasan_token"); cookieErr == nil && cookie.Value != "" {
-				if user, err := s.userMgr.ValidateToken(cookie.Value); err == nil {
-					ctx := context.WithValue(r.Context(), auth.UserContextKey, user)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			token := strings.TrimPrefix(authHeader, "Bearer ")
+			if dbKey, _ := s.db.GetSetting("master_key"); dbKey != "" &&
+				subtle.ConstantTimeCompare([]byte(token), []byte(dbKey)) == 1 {
+				next.ServeHTTP(w, r)
+				return
 			}
-			// Try Authorization header
-			if strings.HasPrefix(authHeader, "Bearer ") {
-				if user, err := s.userMgr.ValidateToken(strings.TrimPrefix(authHeader, "Bearer ")); err == nil {
-					ctx := context.WithValue(r.Context(), auth.UserContextKey, user)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
+			if s.cfg.MasterKey != "" &&
+				subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.MasterKey)) == 1 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			// 3) Dashboard-issued API keys.
+			if s.validDashboardAPIKey(token) {
+				next.ServeHTTP(w, r)
+				return
 			}
 		}
 
+		// Fail closed.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid API key"})

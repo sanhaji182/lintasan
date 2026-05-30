@@ -77,9 +77,10 @@ func (h *AuthHandler) HandleMe() http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"id":       user.ID,
-			"username": user.Username,
-			"role":     user.Role,
+			"id":         user.ID,
+			"username":   user.Username,
+			"role":       user.Role,
+			"must_change_password": user.MustChangePassword,
 			"created_at": user.CreatedAt,
 		})
 	}
@@ -160,6 +161,35 @@ func (h *AuthHandler) HandleCreateUser() http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusCreated, user)
+	}
+}
+
+// HandleChangePassword handles POST /api/auth/change-password.
+// Authenticated user rotates their own password; clears must_change_password.
+func (h *AuthHandler) HandleChangePassword() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+			return
+		}
+		user := GetUser(r)
+		if user == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+		var req struct {
+			CurrentPassword string `json:"current_password"`
+			NewPassword     string `json:"new_password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+			return
+		}
+		if err := h.mgr.ChangePassword(user.ID, req.CurrentPassword, req.NewPassword); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"message": "password changed"})
 	}
 }
 

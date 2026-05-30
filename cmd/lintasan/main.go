@@ -35,17 +35,10 @@ func main() {
 			}
 			defer database.Close()
 
-			// Start MITM proxy bridge if configured
-			if cfg.MITMPort > 0 {
-				mitmProxy := mitm.New(cfg.MITMPort, cfg.Port, database)
-				go func() {
-					if err := mitmProxy.Start(); err != nil {
-						fmt.Fprintf(os.Stderr, "MITM proxy error: %v\n", err)
-					}
-				}()
-				defer mitmProxy.Stop()
-			}
-
+			// MITM bridge is now owned by the server (started only when
+			// LINTASAN_MITM_ENABLED is set, with a per-boot bypass secret).
+			// No separate start here to avoid a double listener and the old
+			// static bypass token.
 			srv := server.New(cfg, database)
 			fmt.Printf("🚀 Lintasan v%s listening on :%d\n", version, cfg.Port)
 			return srv.Start()
@@ -99,6 +92,13 @@ func runSetup() error {
 }
 
 func runMITM(cfg *config.Config, database *db.DB) error {
-	mitmProxy := mitm.New(cfg.MITMPort, cfg.Port, database)
+	if !cfg.MITMEnabled {
+		return fmt.Errorf("MITM bridge is disabled; set LINTASAN_MITM_ENABLED=true to use it")
+	}
+	secret, _ := database.GetSetting("mitm_secret")
+	if secret == "" {
+		return fmt.Errorf("no mitm_secret found; start the main server with LINTASAN_MITM_ENABLED=true first to generate one")
+	}
+	mitmProxy := mitm.New(cfg.MITMPort, cfg.Port, database, secret)
 	return mitmProxy.Start()
 }

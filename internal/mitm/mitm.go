@@ -12,21 +12,24 @@ import (
 )
 
 // MITMProxy intercepts IDE traffic (Cursor, Codex, Claude Desktop) and
-// transparently forwards it to Lintasan with X-Lintasan-MITM bypass header.
+// transparently forwards it to Lintasan with the per-boot bypass secret.
 type MITMProxy struct {
 	listenPort int
 	targetPort int
 	db         *db.DB
+	secret     string // per-boot bypass secret injected into forwarded requests
 	listener   net.Listener
 	server     *http.Server
 }
 
 // New creates a new MITM proxy that listens on listenPort and forwards to targetPort.
-func New(listenPort, targetPort int, database *db.DB) *MITMProxy {
+// secret is the per-boot bypass token; it must match the server's mitmSecret.
+func New(listenPort, targetPort int, database *db.DB, secret string) *MITMProxy {
 	return &MITMProxy{
 		listenPort: listenPort,
 		targetPort: targetPort,
 		db:         database,
+		secret:     secret,
 	}
 }
 
@@ -87,8 +90,8 @@ func (m *MITMProxy) handleProxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Add MITM bypass header so Lintasan auth middleware skips auth
-	proxyReq.Header.Set("X-Lintasan-MITM", "true")
+	// Add per-boot MITM bypass secret so Lintasan auth middleware skips auth.
+	proxyReq.Header.Set("X-Lintasan-MITM", m.secret)
 
 	// Preserve original host
 	proxyReq.Header.Set("X-Forwarded-Host", r.Host)

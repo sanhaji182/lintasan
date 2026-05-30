@@ -5,7 +5,7 @@ import (
 )
 
 func TestNew(t *testing.T) {
-	m := New(8080, 8081, nil)
+	m := New(8080, 8081, nil, "test-secret")
 	if m == nil {
 		t.Fatal("New returned nil")
 	}
@@ -18,7 +18,7 @@ func TestNew(t *testing.T) {
 }
 
 func TestNewPorts(t *testing.T) {
-	m := New(20182, 20181, nil)
+	m := New(20182, 20181, nil, "test-secret")
 	if m.listenPort != 20182 {
 		t.Errorf("expected listenPort 20182, got %d", m.listenPort)
 	}

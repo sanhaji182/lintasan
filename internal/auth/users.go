@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -9,12 +11,13 @@ import (
 
 // User represents a dashboard user.
 type User struct {
-	ID           string    `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"` // never serialize
-	Role         string    `json:"role"` // "admin" | "user"
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                 string    `json:"id"`
+	Username           string    `json:"username"`
+	PasswordHash       string    `json:"-"` // never serialize
+	Role               string    `json:"role"` // "admin" | "user"
+	MustChangePassword bool      `json:"must_change_password"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // UserManager manages dashboard users.
@@ -107,16 +110,18 @@ func (m *UserManager) ValidateToken(token string) (*User, error) {
 func (m *UserManager) GetByUsername(username string) (*User, error) {
 	var u User
 	var createdAt, updatedAt string
+	var mustChange int
 	err := m.db.QueryRow(
-		"SELECT id, username, password_hash, role, created_at, updated_at FROM users WHERE username = ?",
+		"SELECT id, username, password_hash, role, COALESCE(must_change_password, 0), created_at, updated_at FROM users WHERE username = ?",
 		username,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &createdAt, &updatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &mustChange, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user not found")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
+	u.MustChangePassword = mustChange == 1
 	u.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	u.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	return &u, nil
@@ -126,16 +131,18 @@ func (m *UserManager) GetByUsername(username string) (*User, error) {
 func (m *UserManager) GetByID(id string) (*User, error) {
 	var u User
 	var createdAt, updatedAt string
+	var mustChange int
 	err := m.db.QueryRow(
-		"SELECT id, username, password_hash, role, created_at, updated_at FROM users WHERE id = ?",
+		"SELECT id, username, password_hash, role, COALESCE(must_change_password, 0), created_at, updated_at FROM users WHERE id = ?",
 		id,
-	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &createdAt, &updatedAt)
+	).Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &mustChange, &createdAt, &updatedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("user not found")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get user: %w", err)
 	}
+	u.MustChangePassword = mustChange == 1
 	u.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
 	u.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
 	return &u, nil
@@ -169,15 +176,71 @@ func (m *UserManager) ListUsers() ([]User, error) {
 }
 
 // SeedAdmin creates the default admin account if no users exist.
-func (m *UserManager) SeedAdmin(adminUsername, adminPassword string) error {
+// The password is randomly generated (never hardcoded in source) and the
+// account is flagged must_change_password so the operator is forced to rotate
+// it on first login. The generated password is returned so the caller can
+// surface it once on stderr for first-run setup.
+func (m *UserManager) SeedAdmin(adminUsername string) (string, error) {
 	var count int
 	m.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
 	if count > 0 {
-		return nil // already seeded
+		return "", nil // already seeded
 	}
 
-	_, err := m.CreateUser(adminUsername, adminPassword, "admin")
-	return err
+	// 24 random bytes → URL-safe password. Never persisted in plaintext.
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate admin password: %w", err)
+	}
+	password := base64.RawURLEncoding.EncodeToString(buf)
+
+	u, err := m.CreateUser(adminUsername, password, "admin")
+	if err != nil {
+		return "", err
+	}
+	// Force rotation on first login.
+	if _, err := m.db.Exec("UPDATE users SET must_change_password = 1 WHERE id = ?", u.ID); err != nil {
+		return "", fmt.Errorf("flag seeded admin for rotation: %w", err)
+	}
+	return password, nil
+}
+
+// ChangePassword updates a user's password and clears the must_change_password
+// flag. It verifies the current password first.
+func (m *UserManager) ChangePassword(userID, currentPassword, newPassword string) error {
+	u, err := m.GetByID(userID)
+	if err != nil {
+		return fmt.Errorf("user not found")
+	}
+	if !VerifyPassword(currentPassword, u.PasswordHash) {
+		return fmt.Errorf("current password incorrect")
+	}
+	if len(newPassword) < 8 {
+		return fmt.Errorf("new password must be at least 8 characters")
+	}
+	if newPassword == currentPassword {
+		return fmt.Errorf("new password must differ from current password")
+	}
+	hash, err := HashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	_, err = m.db.Exec(
+		"UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = ? WHERE id = ?",
+		hash, time.Now().UTC().Format(time.RFC3339), userID,
+	)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	return nil
+}
+
+// AdminCount returns the number of admin users. Used by the bootstrap/active
+// state machine to decide whether setup is complete.
+func (m *UserManager) AdminCount() int {
+	var n int
+	m.db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'admin'").Scan(&n)
+	return n
 }
 
 // LoginResponse is the JSON response for login.

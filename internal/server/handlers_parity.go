@@ -45,7 +45,6 @@ func (s *Server) registerParityRoutes() {
     s.mux.HandleFunc("POST /api/sync", s.handleSync)
     s.mux.HandleFunc("GET /api/marketplace", s.handleMarketplace)
     s.mux.HandleFunc("GET /api/oauth", s.handleOAuth)
-    s.mux.HandleFunc("GET /api/auth/check", s.handleAuthCheck)
     // Alias endpoints for dashboard compatibility
     s.mux.HandleFunc("GET /api/routing", s.handleGetCombos)
     s.mux.HandleFunc("POST /api/routing/reorder", s.handleRoutingReorder)
@@ -446,9 +445,6 @@ func (s *Server) handleExport(w http.ResponseWriter,r *http.Request){ w.Header()
 func (s *Server) handleSync(w http.ResponseWriter,r *http.Request){ s.handleModelsSync(w,r) }
 func (s *Server) handleMarketplace(w http.ResponseWriter,r *http.Request){ s.handlePluginStore(w,r) }
 func (s *Server) handleOAuth(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"status":"not_configured","providers":[]any{}}) }
-func (s *Server) handleAuthLogin(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"success":true,"token":"dashboard-session"}) }
-func (s *Server) handleAuthCheck(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"authenticated":true}) }
-func (s *Server) handleAuthLogout(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"success":true}) }
 func (s *Server) handleTeamByID(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"success":true,"id":r.PathValue("id")}) }
 func (s *Server) handleTeamMembers(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"team_id":r.PathValue("id"),"members":[]any{}}) }
 func (s *Server) handleUserByID(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"success":true,"id":r.PathValue("id")}) }

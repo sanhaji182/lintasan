@@ -174,6 +174,9 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_discovered_models_connection ON discovered_models(connection_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_discovered_models_model ON discovered_models(model_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_created ON request_logs(created_at)`,
+		// P0 security: column to force rotation of bootstrap/seeded admin credentials.
+		// Idempotent — fails with "duplicate column" on re-run, which the loop ignores.
+		`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
 	}
 
 	for _, m := range migrations {
@@ -181,6 +184,15 @@ func (d *DB) migrate() error {
 			// Ignore "already exists" errors for indexes
 			continue
 		}
+	}
+
+	// One-time backfill: force any admin that existed BEFORE this security
+	// migration (notably the legacy admin/admin123 seed) to rotate its password.
+	// Guarded by a settings marker so it never re-flags an admin that has
+	// already rotated. New admins are flagged at seed/create time, not here.
+	if done, _ := d.GetSetting("migration_admin_pwd_rotation_v1"); done != "1" {
+		d.conn.Exec("UPDATE users SET must_change_password = 1 WHERE role = 'admin'")
+		d.SetSetting("migration_admin_pwd_rotation_v1", "1")
 	}
 
 	return nil
