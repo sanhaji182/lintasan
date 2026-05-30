@@ -30,6 +30,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/mlrouter"
 	"github.com/sanhaji182/lintasan-go/internal/optimizer"
 	"github.com/sanhaji182/lintasan-go/internal/plugin"
+	"github.com/sanhaji182/lintasan-go/internal/provider"
 	"github.com/sanhaji182/lintasan-go/internal/quality"
 	"github.com/sanhaji182/lintasan-go/internal/quota"
 	"github.com/sanhaji182/lintasan-go/internal/ratelimit"
@@ -63,6 +64,15 @@ type ProxyHandler struct {
 	telemetry     *proxyTelemetry             // structured telemetry counters
 	qualityMu     sync.RWMutex                // protects qualityScores
 	qualityScores map[string]connQualityScore // quality feedback loop per connection
+
+	// --- Provider SDK (F1) ----------------------------------------------------
+	// providerReg holds Official-track providers; defaultProvider is the generic
+	// OpenAI-compatible fallback used for any unmigrated Format. providerSDK is
+	// the kill-switch flag (default false): when false, doUpstream takes the
+	// untouched legacy path. See provider_bootstrap.go.
+	providerReg     *provider.Registry
+	defaultProvider provider.Provider
+	providerSDK     bool
 }
 
 func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
@@ -140,6 +150,7 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 	ph.qualityScores = map[string]connQualityScore{}
 	ph.costCalc = cost.NewCalculator()
 	ph.loadQuotaLimits(database)
+	ph.initProviderSDK(database)
 	go ph.prewarmConnectionPool()
 
 	return ph
@@ -956,6 +967,23 @@ func (p *ProxyHandler) findConnectionByID(id string) (*Connection, error) {
 }
 
 func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte) (*http.Response, error) {
+	// --- Provider SDK seam (F1) ----------------------------------------------
+	// When the kill-switch flag is on AND this is not a commandcode connection,
+	// build the upstream request via the Provider SDK (Prepare-only). The HTTP
+	// call itself stays here (p.client.Do), so reliability wrapping and the
+	// streaming response path in the caller are untouched. Flag off => legacy
+	// path below runs verbatim (bit-for-bit identical to pre-F1).
+	if p.providerSDKEligible(conn) {
+		upReq, err := p.buildUpstreamViaSDK(r.Context(), conn, body, r.Header)
+		if err != nil {
+			return nil, err
+		}
+		// X-Command-Code-Version passthrough is commandcode-only and is excluded
+		// by providerSDKEligible, so it is intentionally not replayed here.
+		return p.client.Do(upReq)
+	}
+
+	// --- Legacy path (unchanged) ---------------------------------------------
 	chatPath := conn.ChatPath
 	if chatPath == "" {
 		chatPath = "/v1/chat/completions"
