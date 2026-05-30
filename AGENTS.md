@@ -22,29 +22,32 @@ Lintasan adalah **LLM proxy gateway** — satu endpoint OpenAI-compatible yang m
 ```
                  ┌─────────────────────────────────────────┐
    Browser  ───► │  nginx (lintasan.sans.biz.id, :443 TLS)  │
-                 └───────────────┬─────────────┬────────────┘
-                                 │             │
-              /api/* /v1/* /health│             │/ (UI lainnya)
-                                 ▼             ▼
-                   ┌──────────────────┐  ┌──────────────────┐
-                   │  Go backend      │  │  SvelteKit (SSR)  │
-                   │  :20180          │  │  :5173 (node)     │
-                   │  lintasan start  │  │  build/index.js   │
-                   └────────┬─────────┘  └──────────────────┘
-                            │
-                            ▼
+                 └────────────────────┬────────────────────┘
+                                      │
+                 / · /login · /dashboard · /api/* · /v1/* · /health
+                                      ▼
+                   ┌────────────────────────────────────────┐
+                   │  Go backend  :20180   (lintasan start)  │
+                   │  ── serves BOTH ──                       │
+                   │   • embedded SPA dashboard (go:embed)    │
+                   │   • API + OpenAI-compatible LLM proxy    │
+                   └────────────────────┬───────────────────┘
+                                        │
+                                        ▼
             ┌───────────────────────────────────┐
             │ SQLite (data) + provider upstreams │
             └───────────────────────────────────┘
 ```
 
-**Pembagian routing nginx (penting):**
-- `/api/*` → Go `:20180` (dashboard API)
-- `/v1/*` → Go `:20180` (OpenAI-compatible LLM proxy)
-- `/health` → Go `:20180`
-- `/` dan sisanya → SvelteKit `:5173` (UI)
+**Single binary (sejak v2.4.0):** Dashboard SvelteKit dikompilasi ke static SPA (`adapter-static`) lalu di-`go:embed` ke binary Go via package `internal/web`. Satu proses `lintasan start` di `:20180` menyajikan UI **dan** API — tidak ada proses Node terpisah.
 
-Frontend memanggil API lewat path relatif (`/api/...`, `/v1/...`), jadi nginx yang memisahkan ke backend. **Jangan hardcode `localhost:20180` di frontend.**
+**Pembagian routing nginx (sekarang sederhana):**
+- Semua path → Go `:20180`. Backend yang membedakan: `/api/*` `/v1/*` `/mcp` `/health` ditangani handler; sisanya (`/`, `/login`, `/dashboard/*`, `/_app/*`, favicon) dilayani SPA embedded.
+- Auth middleware: GET ke path UI/asset statis lewat tanpa auth (shell SPA tidak menyimpan secret; guard berjalan client-side). `/api/*` `/v1/*` `/mcp` **tetap** fail-closed 401 tanpa token. Dikunci 2 security boundary test.
+
+Frontend memanggil API lewat path relatif (`/api/...`, `/v1/...`). **Jangan hardcode `localhost:20180` di frontend.**
+
+> **Mode 2-service lama (deprecated):** SvelteKit `:5173` via `node build/index.js` + nginx split masih bisa jalan karena source `frontend/` utuh, tapi single-binary adalah jalur resmi. Prod sudah migrasi ke single-binary; service `lintasan-dashboard` di-disable.
 
 ---
 
@@ -52,18 +55,27 @@ Frontend memanggil API lewat path relatif (`/api/...`, `/v1/...`), jadi nginx ya
 
 | Service | Port | systemd unit | WorkingDir | ExecStart |
 |---------|------|--------------|------------|-----------|
-| Go backend | `20180` | `lintasan.service` | `/home/ubuntu/lintasan-go` | `lintasan start` |
-| SvelteKit dashboard | `5173` | `lintasan-dashboard.service` | `/home/ubuntu/lintasan-go/frontend` | `node build/index.js` |
+| Go backend (UI + API) | `20180` | `lintasan.service` | `/home/ubuntu/lintasan-go` | `lintasan start` |
 
-Env penting dashboard: `PORT=5173`, `HOST=0.0.0.0`, `ORIGIN=https://lintasan.sans.biz.id`.
 Env penting backend: `PORT=20180`.
 
-**Kedua service jalan sebagai systemd (Restart=always, PPID=1).** Jangan jalankan sebagai child process sesi — akan mati saat sesi putus.
+> Service `lintasan-dashboard` (SvelteKit Node `:5173`) sudah **di-stop + disable** sejak migrasi single-binary. Tidak perlu lagi — UI dilayani backend.
+
+**Backend jalan sebagai systemd (Restart=always, PPID=1).** Jangan jalankan sebagai child process sesi — akan mati saat sesi putus.
 
 Restart setelah deploy:
 ```bash
-sudo systemctl restart lintasan-dashboard lintasan
-sudo systemctl is-active lintasan-dashboard lintasan
+sudo systemctl restart lintasan
+sudo systemctl is-active lintasan
+```
+
+Deploy binary baru (downtime ~0.2–0.3 detik):
+```bash
+make build                          # frontend → embed → ./lintasan
+sudo systemctl stop lintasan        # lepas file handle (hindari "text file busy")
+cp dist-bin/lintasan-linux-amd64 lintasan   # atau pakai ./lintasan hasil make build
+sudo systemctl start lintasan
+curl -s localhost:20180/health      # verifikasi versi
 ```
 
 ---
@@ -309,8 +321,8 @@ npm run check                       # svelte-check (type/a11y diagnostics)
 
 **Deploy (setelah build):**
 ```bash
-sudo systemctl restart lintasan-dashboard lintasan
-sudo systemctl is-active lintasan-dashboard lintasan
+sudo systemctl restart lintasan
+sudo systemctl is-active lintasan
 ```
 
 **Verifikasi live:**
@@ -338,7 +350,7 @@ sudo systemctl is-active lintasan-dashboard lintasan
 
 ```bash
 # Status service
-systemctl status lintasan lintasan-dashboard --no-pager
+systemctl status lintasan --no-pager
 
 # Health check
 curl -s https://lintasan.sans.biz.id/health
@@ -355,9 +367,8 @@ curl -s -X POST https://lintasan.sans.biz.id/v1/chat/completions \
 
 # Logs service
 journalctl -u lintasan -n 50 --no-pager
-journalctl -u lintasan-dashboard -n 50 --no-pager
 ```
 
 ---
 
-*Last updated: 2026-05-29 · Stack: Go 1.22.2 + SvelteKit 5 · 508 backend tests · 36 internal packages · 70 routes*
+*Last updated: 2026-05-31 · Stack: Go 1.22.2 + SvelteKit 5 (embedded SPA) · 581 backend tests · single self-contained binary (v2.4.0)*
