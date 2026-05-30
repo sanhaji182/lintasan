@@ -58,6 +58,7 @@ func (s *Server) registerParityRoutes() {
     s.mux.HandleFunc("GET /api/users/{id}", s.handleUserByID)
     s.mux.HandleFunc("PUT /api/users/{id}", s.handleUserByID)
     s.mux.HandleFunc("DELETE /api/users/{id}", s.handleUserByID)
+    s.mux.HandleFunc("POST /api/users/{id}/reset-password", s.handleUserResetPassword)
     s.mux.HandleFunc("POST /api/v1/images/generations", s.proxy.HandleImages)
     s.mux.HandleFunc("POST /api/v1/audio/speech", s.proxy.HandleAudioSpeech)
     s.mux.HandleFunc("POST /api/v1/audio/transcriptions", s.proxy.HandleAudioTranscriptions)
@@ -447,7 +448,91 @@ func (s *Server) handleMarketplace(w http.ResponseWriter,r *http.Request){ s.han
 func (s *Server) handleOAuth(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"status":"not_configured","providers":[]any{}}) }
 func (s *Server) handleTeamByID(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"success":true,"id":r.PathValue("id")}) }
 func (s *Server) handleTeamMembers(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"team_id":r.PathValue("id"),"members":[]any{}}) }
-func (s *Server) handleUserByID(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"success":true,"id":r.PathValue("id")}) }
+// handleUserByID implements PUT (update role) and DELETE (remove user) for
+// /api/users/{id}. Admin-only. It routes to the JWT-backed UserManager so the
+// operations actually persist — this replaces the earlier no-op stub that
+// returned {success:true} without touching the database.
+func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
+	if s.userMgr == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "user manager unavailable"})
+		return
+	}
+	admin := s.requestUser(r)
+	if admin == nil || admin.Role != "admin" {
+		writeJSONStatus(w, http.StatusForbidden, map[string]any{"error": "admin access required"})
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "user id required"})
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		if id == admin.ID {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "cannot delete your own account"})
+			return
+		}
+		if err := s.userMgr.DeleteUser(id); err != nil {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		s.audit("user.delete", admin.Username, "users/"+id, map[string]any{"by": admin.ID})
+		writeJSON(w, map[string]any{"success": true, "id": id})
+
+	case http.MethodPut:
+		var req struct {
+			Role string `json:"role"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
+			return
+		}
+		if req.Role == "" {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "role required"})
+			return
+		}
+		if err := s.userMgr.UpdateUserRole(id, req.Role); err != nil {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+			return
+		}
+		s.audit("user.update_role", admin.Username, "users/"+id, map[string]any{"by": admin.ID, "role": req.Role})
+		writeJSON(w, map[string]any{"success": true, "id": id, "role": req.Role})
+
+	default:
+		writeJSONStatus(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+	}
+}
+
+// handleUserResetPassword implements POST /api/users/{id}/reset-password.
+// Admin-only. Resets the target user's password without requiring the current
+// one and flags them must_change_password so they rotate on next login.
+func (s *Server) handleUserResetPassword(w http.ResponseWriter, r *http.Request) {
+	if s.userMgr == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "user manager unavailable"})
+		return
+	}
+	admin := s.requestUser(r)
+	if admin == nil || admin.Role != "admin" {
+		writeJSONStatus(w, http.StatusForbidden, map[string]any{"error": "admin access required"})
+		return
+	}
+	id := r.PathValue("id")
+	var req struct {
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
+		return
+	}
+	if err := s.userMgr.AdminSetPassword(id, req.NewPassword); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	s.audit("user.reset_password", admin.Username, "users/"+id, map[string]any{"by": admin.ID})
+	writeJSON(w, map[string]any{"success": true, "id": id, "must_change_password": true})
+}
 
 // handleFaviconProxy fetches favicons from Google server-side and caches them.
 // This avoids browser-level CORS/blocks that prevent direct loading.
