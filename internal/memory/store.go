@@ -83,14 +83,21 @@ func (s *StoreManager) Search(embedding []float64, topK int) ([]Memory, error) {
 		return nil, fmt.Errorf("embedding must have %d dimensions, got %d", EmbeddingDim, len(embedding))
 	}
 
+	recordSearchCall()
+
 	// Try VSET.SIM first
 	memories, err := s.searchViaVSet(embedding, topK)
 	if err == nil && len(memories) > 0 {
+		recordSearchHit()
 		return memories, nil
 	}
 
 	// Fall back to local similarity scan
-	return s.localSimilaritySearch(embedding, topK)
+	memories, err = s.localSimilaritySearch(embedding, topK)
+	if err == nil && len(memories) > 0 {
+		recordSearchHit()
+	}
+	return memories, err
 }
 
 func (s *StoreManager) searchViaVSet(embedding []float64, topK int) ([]Memory, error) {
@@ -136,9 +143,16 @@ func (s *StoreManager) searchViaVSet(embedding []float64, topK int) ([]Memory, e
 }
 
 // localSimilaritySearch scans all memory keys and computes cosine similarity locally.
+//
+// H3 hardening: this brute-force SCAN+cosine is O(n) over every stored key. We
+// cap the scan at MaxScanRows and record counters so an oversized store can't
+// silently dominate request latency. The VSET.SIM fast path in Search() is
+// preferred; this only runs as a fallback when VSET is unavailable.
 func (s *StoreManager) localSimilaritySearch(queryEmb []float64, topK int) ([]Memory, error) {
 	var candidates []memCandidate
 	var cursor uint64
+	scanned := 0
+	max := MaxScanRows()
 
 	for {
 		result, err := s.client.Do("SCAN", strconv.FormatUint(cursor, 10), "MATCH", "lintasan:mem:*", "COUNT", "100")
@@ -176,12 +190,20 @@ func (s *StoreManager) localSimilaritySearch(queryEmb []float64, topK int) ([]Me
 
 			sim := CosineSimilarity(queryEmb, emb)
 			candidates = append(candidates, memCandidate{key: key, similarity: sim, hashKey: hashKey})
+			scanned++
+		}
+
+		// (3) hard cap: stop scanning once we've seen MaxScanRows keys.
+		if max > 0 && scanned >= max {
+			recordSearchCapped()
+			break
 		}
 
 		if cursor == 0 {
 			break
 		}
 	}
+	recordSearchScanned(scanned)
 
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].similarity > candidates[j].similarity

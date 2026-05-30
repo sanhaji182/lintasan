@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -122,6 +123,12 @@ func (s *SQLiteStore) Store(key string, embedding []float64, text string, metada
 }
 
 // Search performs vector similarity search using cosine similarity.
+//
+// H3 hardening: brute-force cosine over every row is O(n). We (1) early-exit
+// when the table is empty so an unused store costs ~one COUNT, (2) cap the scan
+// at MaxScanRows ordered by recency so a large store can't dominate latency,
+// and (3) record counters for observability. Set LINTASAN_MEMORY_MAX_SCAN<=0
+// to restore the old unbounded behavior.
 func (s *SQLiteStore) Search(embedding []float64, topK int) ([]Memory, error) {
 	if topK <= 0 {
 		topK = 5
@@ -130,7 +137,27 @@ func (s *SQLiteStore) Search(embedding []float64, topK int) ([]Memory, error) {
 		return nil, fmt.Errorf("embedding must have %d dimensions, got %d", EmbeddingDim, len(embedding))
 	}
 
-	rows, err := s.db.Query(`SELECT key, text, embedding, metadata, tags, score, hits, created_at FROM memories`)
+	recordSearchCall()
+
+	// (2) early-exit on empty store — avoids a pointless scan + sort.
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM memories`).Scan(&total); err == nil && total == 0 {
+		recordSearchEmpty()
+		return nil, nil
+	}
+
+	// (3) cap the brute-force scan. Order by recency so the cap keeps the most
+	// relevant-by-time candidates rather than an arbitrary page.
+	query := `SELECT key, text, embedding, metadata, tags, score, hits, created_at FROM memories ORDER BY created_at DESC`
+	max := MaxScanRows()
+	if max > 0 {
+		query += ` LIMIT ` + strconv.Itoa(max)
+		if total > max {
+			recordSearchCapped()
+		}
+	}
+
+	rows, err := s.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -141,6 +168,7 @@ func (s *SQLiteStore) Search(embedding []float64, topK int) ([]Memory, error) {
 		similarity float64
 	}
 	var candidates []candidate
+	scanned := 0
 
 	for rows.Next() {
 		var m Memory
@@ -150,6 +178,7 @@ func (s *SQLiteStore) Search(embedding []float64, topK int) ([]Memory, error) {
 		if err := rows.Scan(&m.Key, &m.Text, &embBytes, &metaStr, &tagsStr, &m.Score, &m.Hits, &createdStr); err != nil {
 			continue
 		}
+		scanned++
 
 		var emb []float64
 		if err := json.Unmarshal(embBytes, &emb); err != nil || len(emb) != EmbeddingDim {
@@ -163,6 +192,7 @@ func (s *SQLiteStore) Search(embedding []float64, topK int) ([]Memory, error) {
 		m.Similarity = sim
 		candidates = append(candidates, candidate{mem: m, similarity: sim})
 	}
+	recordSearchScanned(scanned)
 
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].similarity > candidates[j].similarity })
 	if len(candidates) > topK {
@@ -172,6 +202,9 @@ func (s *SQLiteStore) Search(embedding []float64, topK int) ([]Memory, error) {
 	memories := make([]Memory, len(candidates))
 	for i, c := range candidates {
 		memories[i] = c.mem
+	}
+	if len(memories) > 0 {
+		recordSearchHit()
 	}
 	return memories, nil
 }

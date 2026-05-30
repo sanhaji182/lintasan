@@ -137,6 +137,10 @@ func (mh *MemoryHandler) HandleMemoryStats(w http.ResponseWriter, r *http.Reques
 		"available":      true,
 		"backend":        mh.mem.BackendName(),
 		"avg_score":      avgScore,
+		// H3 observability: semantic-search hot-path counters. Lets us see real
+		// usage (calls/hits/empty-exits/rows-scanned/capped) and decide whether
+		// the O(n) scan is worth replacing with a proper ANN index.
+		"search": memory.Metrics(),
 	}
 
 	writeMemoryJSON(w, http.StatusOK, stats)

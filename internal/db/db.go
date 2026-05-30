@@ -185,6 +185,11 @@ func (d *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_discovered_models_connection ON discovered_models(connection_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_discovered_models_model ON discovered_models(model_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_request_logs_created ON request_logs(created_at)`,
+		// Perf (H1 root cause): /api/stats fired full-table scans for cache-rate and
+		// avg-latency aggregates. Benchmark on 789k rows: cached=1 540ms->0ms (covering),
+		// status=200 AVG 380ms->110ms (composite covering, skips row lookups).
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_cached ON request_logs(cached)`,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_status_lat ON request_logs(status, latency_ms)`,
 		// P0 security: column to force rotation of bootstrap/seeded admin credentials.
 		// Idempotent — fails with "duplicate column" on re-run, which the loop ignores.
 		`ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0`,
