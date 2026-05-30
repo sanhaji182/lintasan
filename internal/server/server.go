@@ -159,6 +159,10 @@ func (s *Server) routes() {
 	// Register Node.js feature-parity management routes
 	s.registerParityRoutes()
 
+	// Register RESTful resource routes (DELETE/PATCH /{id} endpoints the
+	// SvelteKit dashboard calls — previously unregistered, causing silent 405s)
+	s.registerRESTRoutes()
+
 	// Register OAuth routes
 	s.registerOAuthRoutes()
 

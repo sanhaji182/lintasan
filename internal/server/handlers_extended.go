@@ -212,8 +212,11 @@ func (s *Server) handleWebhooksAction(w http.ResponseWriter,r *http.Request){
 	var in map[string]any; json.NewDecoder(r.Body).Decode(&in)
 	data:=s.getJSONSetting("webhooks",map[string]any{"webhooks":[]any{},"history":[]any{}}).(map[string]any)
 	arr:=data["webhooks"].([]any)
-	if in["action"]=="create"||in["name"]!=nil{ in["id"]=uuid.New().String(); in["active"]=true; arr=append(arr,in); data["webhooks"]=arr; s.setJSONSetting("webhooks",data); s.audit("webhook.create","dashboard",fmt.Sprint(in["id"]),in); writeData(w,in); return }
 	if in["action"]=="test"{ s.deliverWebhooks("test", map[string]any{"message":"Lintasan test webhook","time":time.Now()}); writeJSON(w,map[string]any{"status":"test_sent"}); return }
+	// Create when the dashboard posts a webhook payload. The SvelteKit form
+	// sends {url, events, secret} with no explicit action/name, so we treat the
+	// presence of a url (or action=create / name) as a create intent.
+	if in["action"]=="create" || in["name"]!=nil || in["url"]!=nil { in["id"]=uuid.New().String(); in["active"]=true; arr=append(arr,in); data["webhooks"]=arr; s.setJSONSetting("webhooks",data); s.audit("webhook.create","dashboard",fmt.Sprint(in["id"]),in); writeData(w,in); return }
 	writeJSON(w,map[string]any{"status":"ok"})
 }
 

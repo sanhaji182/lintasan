@@ -446,8 +446,105 @@ func (s *Server) handleExport(w http.ResponseWriter,r *http.Request){ w.Header()
 func (s *Server) handleSync(w http.ResponseWriter,r *http.Request){ s.handleModelsSync(w,r) }
 func (s *Server) handleMarketplace(w http.ResponseWriter,r *http.Request){ s.handlePluginStore(w,r) }
 func (s *Server) handleOAuth(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"status":"not_configured","providers":[]any{}}) }
-func (s *Server) handleTeamByID(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"success":true,"id":r.PathValue("id")}) }
-func (s *Server) handleTeamMembers(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"team_id":r.PathValue("id"),"members":[]any{}}) }
+func (s *Server) handleTeamByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	teams := asSlice(s.getJSONSetting("teams", []any{}))
+	switch r.Method {
+	case http.MethodGet:
+		for _, item := range teams {
+			if fmt.Sprint(asMap(item)["id"]) == id {
+				writeJSON(w, asMap(item))
+				return
+			}
+		}
+		writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "team not found"})
+	case http.MethodPut:
+		var in map[string]any
+		json.NewDecoder(r.Body).Decode(&in)
+		found := false
+		for _, item := range teams {
+			m := asMap(item)
+			if fmt.Sprint(m["id"]) == id {
+				for k, v := range in {
+					if k == "id" {
+						continue
+					}
+					m[k] = v
+				}
+				found = true
+			}
+		}
+		if !found {
+			writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "team not found"})
+			return
+		}
+		s.setJSONSetting("teams", teams)
+		s.audit("team.update", "dashboard", id, in)
+		writeJSON(w, map[string]any{"id": id, "status": "updated"})
+	case http.MethodDelete:
+		out := make([]any, 0, len(teams))
+		found := false
+		for _, item := range teams {
+			if fmt.Sprint(asMap(item)["id"]) == id {
+				found = true
+				continue
+			}
+			out = append(out, item)
+		}
+		if !found {
+			writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "team not found"})
+			return
+		}
+		s.setJSONSetting("teams", out)
+		s.audit("team.delete", "dashboard", id, nil)
+		writeJSON(w, map[string]any{"id": id, "status": "deleted"})
+	default:
+		writeJSONStatus(w, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+	}
+}
+
+func (s *Server) handleTeamMembers(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	teams := asSlice(s.getJSONSetting("teams", []any{}))
+	var team map[string]any
+	for _, item := range teams {
+		m := asMap(item)
+		if fmt.Sprint(m["id"]) == id {
+			team = m
+			break
+		}
+	}
+	if team == nil {
+		writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "team not found"})
+		return
+	}
+	if r.Method == http.MethodGet {
+		writeJSON(w, map[string]any{"team_id": id, "members": asSlice(team["members"])})
+		return
+	}
+	// POST: add a member
+	var in map[string]any
+	json.NewDecoder(r.Body).Decode(&in)
+	name := fmt.Sprint(in["username"])
+	if name == "" || name == "<nil>" {
+		name = fmt.Sprint(in["email"])
+	}
+	if name == "" || name == "<nil>" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "username required"})
+		return
+	}
+	members := asSlice(team["members"])
+	for _, mem := range members {
+		if fmt.Sprint(mem) == name {
+			writeJSON(w, map[string]any{"team_id": id, "members": members, "status": "exists"})
+			return
+		}
+	}
+	team["members"] = append(members, name)
+	s.setJSONSetting("teams", teams)
+	s.audit("team.member.add", "dashboard", id, map[string]any{"member": name})
+	writeJSON(w, map[string]any{"team_id": id, "members": team["members"], "status": "added"})
+}
 // handleUserByID implements PUT (update role) and DELETE (remove user) for
 // /api/users/{id}. Admin-only. It routes to the JWT-backed UserManager so the
 // operations actually persist — this replaces the earlier no-op stub that
