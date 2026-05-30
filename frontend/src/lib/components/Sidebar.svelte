@@ -46,6 +46,17 @@
     if (path === '/dashboard') return page.url.pathname === '/dashboard';
     return page.url.pathname.startsWith(path);
   }
+
+  // Version is fetched from /health (single source of truth in the Go binary)
+  // rather than hardcoded, so the sidebar never drifts from the actual build.
+  let version = $state('');
+  $effect(() => {
+    fetch('/health')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d?.version) version = d.version; })
+      .catch(() => {});
+  });
+
 </script>
 
 {#if open}
@@ -57,7 +68,7 @@
     <span class="sb-logo">L</span>
     <div>
       <div class="sb-name">Lintasan</div>
-      <div class="sb-version">v2.5</div>
+      <div class="sb-version">{version}</div>
     </div>
   </div>
 
