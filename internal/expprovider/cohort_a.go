@@ -30,16 +30,18 @@ package expprovider
 
 import "github.com/sanhaji182/lintasan-go/internal/provider"
 
-// ClaudeCodeDescriptor — Anthropic Claude Code via its ACP adapter.
-// (UNVERIFIED) adapter executable + authenticate method id are best-known public
-// values; confirm against the real binary at Claude Code's live validation.
+// ClaudeCodeDescriptor — Anthropic Claude Code via the cc-acp community ACP wrapper.
+// VALIDATED: cc-acp v0.1.1 (npm: claude-code-acp) wraps Claude Code SDK over ACP.
+// Auth model: claude-code-subscription (OAuth/browser login via `claude auth login`).
+// The underlying Claude Code binary also accepts ANTHROPIC_API_KEY env var directly,
+// but cc-acp only exposes subscription auth. AuthEnvVar kept for G4 injection path.
 func ClaudeCodeDescriptor() ProviderDescriptor {
 	return ProviderDescriptor{
 		Name:         "claude-code",
-		DefaultPath:  "claude-code-acp", // (UNVERIFIED) Anthropic's ACP adapter binary
-		AuthMode:     AuthAPIKey,
-		AuthEnvVar:   "ANTHROPIC_API_KEY",
-		AuthMethodID: "anthropic-api-key", // (UNVERIFIED) confirm at live validation
+		DefaultPath:  "cc-acp",                    // VALIDATED: npm bin from claude-code-acp package
+		AuthMode:     AuthAPIKey,                   // env var path (ANTHROPIC_API_KEY) works for underlying Claude Code
+		AuthEnvVar:   "ANTHROPIC_API_KEY",          // VALIDATED: `claude auth status` confirms this source
+		AuthMethodID: "claude-code-subscription",   // VALIDATED: only method cc-acp advertises
 		Capabilities: provider.NewCapabilitySet(
 			provider.CapCoding,
 			provider.CapToolCalling,
@@ -50,17 +52,19 @@ func ClaudeCodeDescriptor() ProviderDescriptor {
 	}
 }
 
-// GeminiCLIDescriptor — Google Gemini CLI in ACP mode.
-// (UNVERIFIED) Gemini CLI exposes an experimental ACP mode; the exact adapter
-// invocation + auth method id must be confirmed against the real binary.
+// GeminiCLIDescriptor — Google Gemini CLI in native ACP mode.
+// VALIDATED: gemini v0.44.1 with --acp flag speaks native ACP over stdio.
+// Auth model: 4 methods (oauth-personal, gemini-api-key, vertex-ai, gateway).
+// Key storage: system keychain (not env var in ACP mode). Env var GEMINI_API_KEY
+// not picked up by --acp mode; key must be configured via `gemini` interactive setup.
 func GeminiCLIDescriptor() ProviderDescriptor {
 	return ProviderDescriptor{
 		Name:         "gemini-cli",
-		DefaultPath:  "gemini", // (UNVERIFIED) launched with an ACP flag; see Args
-		Args:         []string{"--experimental-acp"},
+		DefaultPath:  "gemini",          // VALIDATED: @google/gemini-cli v0.44.1
+		Args:         []string{"--acp"}, // VALIDATED: native ACP flag (--experimental-acp deprecated)
 		AuthMode:     AuthAPIKey,
-		AuthEnvVar:   "GEMINI_API_KEY",
-		AuthMethodID: "gemini-api-key", // (UNVERIFIED) confirm at live validation
+		AuthEnvVar:   "GEMINI_API_KEY",  // VALIDATED: selectedType in settings.json, but key stored in keychain
+		AuthMethodID: "gemini-api-key",  // VALIDATED: one of 4 offered methods
 		Capabilities: provider.NewCapabilitySet(
 			provider.CapCoding,
 			provider.CapToolCalling,
@@ -71,18 +75,20 @@ func GeminiCLIDescriptor() ProviderDescriptor {
 	}
 }
 
-// CopilotDescriptor — GitHub Copilot CLI in ACP mode.
-// (UNVERIFIED) Copilot's ACP surface + auth (it may use a GitHub token / device
-// auth rather than a plain API key) must be confirmed against the real binary;
-// the AuthMode below is a placeholder hypothesis.
+// CopilotDescriptor — GitHub Copilot CLI in native ACP mode.
+// VALIDATED: copilot v1.0.56 (@github/copilot) with --acp flag speaks native ACP.
+// Auth model: copilot-login (device-auth OAuth flow via `copilot login`).
+// Env vars (precedence): COPILOT_GITHUB_TOKEN > GH_TOKEN > GITHUB_TOKEN.
+// Token types: fine-grained PAT with "Copilot Requests" permission, or OAuth token.
+// Classic PATs (ghp_) NOT supported. session/new blocks until valid auth present.
 func CopilotDescriptor() ProviderDescriptor {
 	return ProviderDescriptor{
 		Name:         "copilot",
-		DefaultPath:  "copilot", // (UNVERIFIED) launched with an ACP flag; see Args
-		Args:         []string{"--acp"},
+		DefaultPath:  "copilot",         // VALIDATED: @github/copilot v1.0.56
+		Args:         []string{"--acp"}, // VALIDATED: native ACP flag
 		AuthMode:     AuthAPIKey,
-		AuthEnvVar:   "GITHUB_TOKEN",
-		AuthMethodID: "github-token", // (UNVERIFIED) confirm at live validation
+		AuthEnvVar:   "COPILOT_GITHUB_TOKEN", // VALIDATED: highest precedence env var
+		AuthMethodID: "copilot-login",         // VALIDATED: only method offered
 		Capabilities: provider.NewCapabilitySet(
 			provider.CapCoding,
 			provider.CapToolCalling,
