@@ -207,6 +207,15 @@ func (s *Subprocess) Start(ctx context.Context) (err error) {
 //
 // This is a protocol-agnostic byte transport: it does not parse the payload.
 // The ACP/JSON-RPC framing (Phase 4) is layered on top of this primitive.
+//
+// Request is the SYNCHRONOUS request/response primitive: it suits exchanges
+// where exactly one response follows one request (initialize, session/new,
+// shutdown). For a streaming exchange where the agent emits an interleaved
+// burst of notifications + server→client requests before the terminal response
+// (the ACP prompt turn), use the WriteLine + ReadLine primitives instead, which
+// let a higher-level demux loop drive the frame stream. Request is now defined
+// in terms of those two halves, so its behavior (combined-lock write-then-read,
+// same timeout/containment) is byte-for-byte unchanged.
 func (s *Subprocess) Request(ctx context.Context, line []byte) (resp []byte, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -216,6 +225,73 @@ func (s *Subprocess) Request(ctx context.Context, line []byte) (resp []byte, err
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if werr := s.writeLineLocked(line); werr != nil {
+		return nil, werr
+	}
+	return s.readLineLocked(ctx)
+}
+
+// WriteLine writes one newline-delimited message to the child. It is the write
+// half of Request, exposed so a streaming protocol loop (the ACP prompt-turn
+// demux) can write a request or a reply and then read multiple frames. Failures
+// (not-started, child-exited, write error, panic) are CONTAINED errors.
+//
+// SAFETY: WriteLine and ReadLine each take the subprocess mutex independently,
+// so callers MUST drive a single logical exchange sequentially (one in-flight
+// turn per child — pool multiple Subprocesses for concurrency, per the E1
+// contract). Concurrent interleaving of WriteLine/ReadLine across goroutines on
+// the same child is a caller error.
+func (s *Subprocess) WriteLine(ctx context.Context, line []byte) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("experimental: panic during WriteLine: %v", r)
+		}
+	}()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.writeLineLocked(line)
+}
+
+// ReadLine reads one newline-delimited frame from the child, bounded by the
+// call's context deadline (or the configured RequestTimeout). It is the read
+// half of Request. Use it in a loop to drain a stream of frames (notifications
+// + server→client requests) until the terminal response arrives.
+//
+// CONTAINMENT CONTRACT (unchanged from Request): the read runs off-goroutine so
+// a hung child cannot block past the deadline; on timeout/error the child is
+// considered UNHEALTHY and the caller MUST Stop() it (a lingering read goroutine
+// is reaped when Stop closes stdin / kills the process and stdout hits EOF).
+// Never start a second ReadLine on a child whose prior ReadLine timed out
+// without Stopping it first — two concurrent reads on one stdout is a caller
+// error.
+func (s *Subprocess) ReadLine(ctx context.Context) (resp []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("experimental: panic during ReadLine: %v", r)
+		}
+	}()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readLineLocked(ctx)
+}
+
+// writeLineLocked is the unlocked write half; the caller holds s.mu.
+func (s *Subprocess) writeLineLocked(line []byte) error {
+	if !s.started {
+		return ErrNotStarted
+	}
+	if s.exited {
+		return fmt.Errorf("%w: %v", ErrChildExited, s.exitErr)
+	}
+	if _, werr := s.stdin.Write(append(line, '\n')); werr != nil {
+		return fmt.Errorf("experimental: write: %w", werr)
+	}
+	return nil
+}
+
+// readLineLocked is the unlocked read half; the caller holds s.mu. Off-goroutine
+// read + select on the deadline so a hung child is bounded and contained.
+func (s *Subprocess) readLineLocked(ctx context.Context) ([]byte, error) {
 	if !s.started {
 		return nil, ErrNotStarted
 	}
@@ -228,11 +304,6 @@ func (s *Subprocess) Request(ctx context.Context, line []byte) (resp []byte, err
 		var cancel context.CancelFunc
 		reqCtx, cancel = context.WithTimeout(ctx, s.cfg.RequestTimeout)
 		defer cancel()
-	}
-
-	// Write the request.
-	if _, werr := s.stdin.Write(append(line, '\n')); werr != nil {
-		return nil, fmt.Errorf("experimental: write: %w", werr)
 	}
 
 	// Read one line with a deadline, off-goroutine so a hung child cannot block

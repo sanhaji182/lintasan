@@ -14,10 +14,15 @@ import (
 
 // e2e_test.go — end-to-end proof that the G1 adapter (ACPProvider.Run) actually
 // drives the ACP loop through a REAL E1 subprocess, with credential injection
-// applied. The test binary re-execs itself as a scripted ACP agent (the same
-// pattern the experimental package uses). This closes the loop the M5 principle
-// requires: a prompt turn that triggers a tool call and COMPLETES, with the
-// toolCallId round-tripping verbatim.
+// applied. The test binary re-execs itself as a scripted SPEC-ACP agent.
+//
+// WIRE RECONCILIATION (2026-05-31): the scripted agent now speaks SPEC ACP, not
+// the old simplified dialect. A prompt turn emits a `session/update` notification
+// (sessionUpdate:"tool_call", no id, no reply) + an agent→client
+// `session/request_permission` REQUEST (has id, MUST be answered), then the
+// terminal response to session/prompt with a stopReason. This closes the loop
+// the M5 principle requires: a tool-bearing turn that COMPLETES, with the
+// toolCallId observed verbatim by the host (identifier fidelity).
 
 const childModeEnv = "LINTASAN_EXPPROV_TEST_CHILD"
 
@@ -32,7 +37,7 @@ func TestMain(m *testing.M) {
 		// Same agent, but FIRST assert the injected secret is visible to the
 		// child (proves credential injection reached the process env) and that
 		// no foreign secret leaked in.
-		if os.Getenv("OPENAI_API_KEY") != "sk-e2e-injected" {
+		if os.Getenv("OPENAI_API_KEY") != "***" {
 			os.Exit(11) // injected secret missing → contained as child-exit error
 		}
 		if os.Getenv("ANTHROPIC_API_KEY") != "" {
@@ -44,8 +49,16 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// runScriptedACPAgent speaks the ACP JSON-RPC lifecycle over stdio, one line in
-// → one line out, including a tool-call round-trip that echoes the toolCallId.
+// runScriptedACPAgent speaks the SPEC ACP JSON-RPC lifecycle over stdio:
+//
+//	initialize     → {protocolVersion: 1, agentInfo}
+//	session/new    → {sessionId}
+//	session/prompt → emits session/update (tool_call, toolCallId=tc-e2e-1) as a
+//	                 NOTIFICATION, then session/request_permission as an agent→host
+//	                 REQUEST, reads the host's permission outcome, then responds
+//	                 to the original prompt id with stopReason + an echo of the
+//	                 toolCallId it offered (so the test asserts identifier fidelity).
+//	shutdown       → {}
 func runScriptedACPAgent() {
 	r := bufio.NewReader(os.Stdin)
 	w := bufio.NewWriter(os.Stdout)
@@ -56,38 +69,58 @@ func runScriptedACPAgent() {
 		w.WriteByte('\n')
 		w.Flush()
 	}
+	readMsg := func() (id json.RawMessage, method string, result json.RawMessage) {
+		line, _ := r.ReadString('\n')
+		var msg struct {
+			ID     json.RawMessage `json:"id"`
+			Method string          `json:"method"`
+			Result json.RawMessage `json:"result"`
+		}
+		json.Unmarshal([]byte(line), &msg)
+		return msg.ID, msg.Method, msg.Result
+	}
 	for {
 		line, err := r.ReadString('\n')
 		if len(line) > 0 {
 			var msg struct {
-				ID     any    `json:"id"`
-				Method string `json:"method"`
+				ID     json.RawMessage `json:"id"`
+				Method string          `json:"method"`
 			}
 			json.Unmarshal([]byte(line), &msg)
 			switch msg.Method {
 			case "initialize":
 				writeLine(map[string]any{"jsonrpc": "2.0", "id": msg.ID,
-					"result": map[string]any{"protocolVersion": "0.1", "agentInfo": map[string]any{"name": "scripted"}}})
+					"result": map[string]any{"protocolVersion": 1, "agentInfo": map[string]any{"name": "scripted"}}})
 			case "session/new":
 				writeLine(map[string]any{"jsonrpc": "2.0", "id": msg.ID,
 					"result": map[string]any{"sessionId": "sess-e2e"}})
 			case "session/prompt":
-				// Emit an agent→host tool-call, then read the host's result,
-				// then emit the terminal prompt result echoing the toolCallId.
-				writeLine(map[string]any{"jsonrpc": "2.0", "id": "agent-req-1",
-					"method": "session/requestToolCall",
-					"params": map[string]any{"toolCallId": "tc-e2e-1", "name": "ping",
-						"arguments": json.RawMessage(`{}`)}})
-				resultLine, _ := r.ReadString('\n')
-				var tr struct {
-					Result struct {
-						ToolCallID string `json:"toolCallId"`
-					} `json:"result"`
+				promptID := msg.ID
+				// 1) Report the tool call via a session/update NOTIFICATION (no id).
+				writeLine(map[string]any{"jsonrpc": "2.0", "method": "session/update",
+					"params": map[string]any{"sessionId": "sess-e2e",
+						"update": map[string]any{"sessionUpdate": "tool_call",
+							"toolCallId": "tc-e2e-1", "kind": "execute", "status": "pending"}}})
+				// 2) Ask permission via an agent→host REQUEST (has id) and read the
+				//    host's outcome on the next line.
+				writeLine(map[string]any{"jsonrpc": "2.0", "id": "perm-1",
+					"method": "session/request_permission",
+					"params": map[string]any{"sessionId": "sess-e2e", "toolCallId": "tc-e2e-1",
+						"options": []map[string]any{
+							{"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
+							{"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}}}})
+				_, _, permResult := readMsg()
+				var pr struct {
+					Outcome struct {
+						Outcome  string `json:"outcome"`
+						OptionID string `json:"optionId"`
+					} `json:"outcome"`
 				}
-				json.Unmarshal([]byte(resultLine), &tr)
-				writeLine(map[string]any{"jsonrpc": "2.0", "id": "prompt-done",
+				json.Unmarshal(permResult, &pr)
+				// 3) Terminal response to the prompt id, echoing the granted outcome.
+				writeLine(map[string]any{"jsonrpc": "2.0", "id": promptID,
 					"result": map[string]any{"stopReason": "end_turn",
-						"content": json.RawMessage(`{"echoedToolCallId":"` + tr.Result.ToolCallID + `"}`)}})
+						"content": json.RawMessage(`{"echoedToolCallId":"tc-e2e-1","permission":"` + pr.Outcome.OptionID + `"}`)}})
 			case "shutdown":
 				writeLine(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{}})
 			}
@@ -120,25 +153,31 @@ func e2eSpec(t *testing.T, mode string) LaunchSpec {
 }
 
 // TestE2E_AgentRun_ClosesToolLoopWithVerbatimID is the acceptance-shaped proof:
-// Run launches the agent, drives the full lifecycle, the host tool handler
-// fires, and the toolCallId round-trips verbatim — the loop closes.
+// Run launches the agent, drives the full SPEC-ACP lifecycle, the host permission
+// handler fires for the tool call, the turn completes with stopReason, and the
+// toolCallId is observed verbatim (in PromptResult.ToolCalls and the agent's echo).
 func TestE2E_AgentRun_ClosesToolLoopWithVerbatimID(t *testing.T) {
 	src := CredentialSourceFunc(func(p string) (string, bool) {
 		if p == "codex" {
-			return "sk-e2e-injected", true
+			return "***", true
 		}
 		return "", false
 	})
 	p := NewACPProvider(e2eSpec(t, "acp-agent"), provider.NewCapabilitySet(provider.CapCoding), NewInjector(src))
 	defer p.StopAgent()
 
-	var sawToolCall string
+	var sawPermissionFor string
 	turn := AgentTurn{
 		Prompt: map[string]any{"text": "ping please"},
-		OnTool: func(ctx context.Context, call experimental.ToolCall) (experimental.ToolResult, error) {
-			sawToolCall = call.ToolCallID
-			// Host returns a result; the broker copies ToolCallID through verbatim.
-			return experimental.ToolResult{Content: map[string]any{"pong": true}}, nil
+		OnPermission: func(ctx context.Context, req experimental.PermissionRequest) experimental.PermissionOutcome {
+			sawPermissionFor = req.ToolCallID
+			// Grant: select the allow_once option the agent offered.
+			for _, o := range req.Options {
+				if o.Kind == "allow_once" {
+					return experimental.PermissionOutcome{Outcome: "selected", OptionID: o.OptionID}
+				}
+			}
+			return experimental.PermissionOutcome{Outcome: "cancelled"}
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -147,17 +186,26 @@ func TestE2E_AgentRun_ClosesToolLoopWithVerbatimID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if sawToolCall != "tc-e2e-1" {
-		t.Fatalf("host saw toolCallId %q, want tc-e2e-1", sawToolCall)
+	// The host permission handler saw the agent's verbatim toolCallId.
+	if sawPermissionFor != "tc-e2e-1" {
+		t.Fatalf("host saw permission for toolCallId %q, want tc-e2e-1", sawPermissionFor)
 	}
-	// The agent echoed the toolCallId it received in the terminal result —
-	// proving the id survived host→agent verbatim (the M3/ACP fidelity bar).
+	// The broker accumulated the tool call from the session/update stream.
+	if len(res.ToolCalls) != 1 || res.ToolCalls[0] != "tc-e2e-1" {
+		t.Fatalf("PromptResult.ToolCalls = %v, want [tc-e2e-1]", res.ToolCalls)
+	}
+	// The agent echoed the toolCallId + the granted option — proving the
+	// permission outcome round-tripped and the loop closed.
 	var content struct {
-		Echoed string `json:"echoedToolCallId"`
+		Echoed     string `json:"echoedToolCallId"`
+		Permission string `json:"permission"`
 	}
 	json.Unmarshal(res.Content, &content)
 	if content.Echoed != "tc-e2e-1" {
 		t.Fatalf("agent echoed toolCallId %q, want tc-e2e-1 — fidelity broken", content.Echoed)
+	}
+	if content.Permission != "allow-once" {
+		t.Fatalf("agent saw permission %q, want allow-once — outcome did not round-trip", content.Permission)
 	}
 	if res.StopReason != "end_turn" {
 		t.Fatalf("stopReason = %q, want end_turn", res.StopReason)
@@ -171,7 +219,7 @@ func TestE2E_AgentRun_ClosesToolLoopWithVerbatimID(t *testing.T) {
 func TestE2E_CredentialInjectionReachesChild(t *testing.T) {
 	src := CredentialSourceFunc(func(p string) (string, bool) {
 		if p == "codex" {
-			return "sk-e2e-injected", true
+			return "***", true
 		}
 		return "", false
 	})
@@ -180,8 +228,13 @@ func TestE2E_CredentialInjectionReachesChild(t *testing.T) {
 
 	turn := AgentTurn{
 		Prompt: map[string]any{"text": "ping"},
-		OnTool: func(ctx context.Context, call experimental.ToolCall) (experimental.ToolResult, error) {
-			return experimental.ToolResult{Content: "ok"}, nil
+		OnPermission: func(ctx context.Context, req experimental.PermissionRequest) experimental.PermissionOutcome {
+			for _, o := range req.Options {
+				if o.Kind == "allow_once" {
+					return experimental.PermissionOutcome{Outcome: "selected", OptionID: o.OptionID}
+				}
+			}
+			return experimental.PermissionOutcome{Outcome: "cancelled"}
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

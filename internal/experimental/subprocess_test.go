@@ -57,16 +57,20 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// runACPAgentChild is a scripted fake ACP agent for the broker tests. It speaks
-// the JSON-RPC lifecycle over stdio, one request-line in → one response-line
-// out, matching the Subprocess byte transport:
+// runACPAgentChild is a scripted fake SPEC-ACP agent for the broker tests. It
+// speaks the JSON-RPC lifecycle over stdio:
 //
-//	initialize      → {protocolVersion, agentInfo}
+//	initialize      → {protocolVersion: 1, agentInfo}
 //	session/new     → {sessionId}
-//	session/prompt  → FIRST emits a tool-call request (toolCallId="tc-1"),
-//	                  then (after receiving the tool result) emits the prompt
-//	                  result echoing the toolCallId it saw — so the test can
-//	                  assert end-to-end identifier fidelity.
+//	session/prompt  → emits a session/update NOTIFICATION (sessionUpdate:
+//	                  "agent_message_chunk" with text), then a session/update
+//	                  (sessionUpdate:"tool_call", toolCallId="tc-1"), then a
+//	                  session/request_permission REQUEST (id), reads the host's
+//	                  outcome, then responds to the prompt id with stopReason +
+//	                  an echo of the toolCallId + the granted optionId. This lets
+//	                  the broker tests assert: stream drain, text accumulation,
+//	                  tool-call tracking (identifier fidelity), and permission
+//	                  round-trip.
 //	shutdown        → {}
 func runACPAgentChild() {
 	r := bufio.NewReader(os.Stdin)
@@ -84,45 +88,52 @@ func runACPAgentChild() {
 		line, err := r.ReadString('\n')
 		if len(line) > 0 {
 			var msg struct {
-				ID     any             `json:"id"`
+				ID     json.RawMessage `json:"id"`
 				Method string          `json:"method"`
-				Result json.RawMessage `json:"result"`
 			}
 			json.Unmarshal([]byte(line), &msg)
 
 			switch msg.Method {
 			case "initialize":
 				writeLine(map[string]any{"jsonrpc": "2.0", "id": msg.ID,
-					"result": map[string]any{"protocolVersion": "1.0", "agentInfo": map[string]any{"name": "fake-acp"}}})
+					"result": map[string]any{"protocolVersion": 1, "agentInfo": map[string]any{"name": "fake-acp"}}})
 			case "session/new":
 				writeLine(map[string]any{"jsonrpc": "2.0", "id": msg.ID,
 					"result": map[string]any{"sessionId": "sess-42"}})
 			case "session/prompt":
-				// Emit a server→client tool-call request (NOT a response to the
-				// prompt id — it has its own Method + id). The broker will reply
-				// with a tool result, which we read on the next iteration.
-				writeLine(map[string]any{"jsonrpc": "2.0", "id": "agent-req-1",
-					"method": "session/requestToolCall",
-					"params": map[string]any{"toolCallId": "tc-1", "name": "get_time",
-						"arguments": json.RawMessage(`{"tz":"UTC"}`)}})
-				// We DON'T know the prompt id here without tracking; the broker
-				// sent prompt with some id. We stashed nothing, so emit the final
-				// result with no id match needed — the broker treats a frame with
-				// no Method as the terminal prompt response regardless of id.
-				// Read the broker's tool-result reply first:
-				resultLine, _ := r.ReadString('\n')
-				var tr struct {
+				promptID := msg.ID
+				// (a) a text chunk NOTIFICATION — proves the broker drains + accumulates.
+				writeLine(map[string]any{"jsonrpc": "2.0", "method": "session/update",
+					"params": map[string]any{"sessionId": "sess-42",
+						"update": map[string]any{"sessionUpdate": "agent_message_chunk",
+							"content": map[string]any{"type": "text", "text": "thinking…"}}}})
+				// (b) a tool_call NOTIFICATION (toolCallId tracked verbatim).
+				writeLine(map[string]any{"jsonrpc": "2.0", "method": "session/update",
+					"params": map[string]any{"sessionId": "sess-42",
+						"update": map[string]any{"sessionUpdate": "tool_call",
+							"toolCallId": "tc-1", "kind": "execute", "status": "pending"}}})
+				// (c) a permission REQUEST (has id) — broker must answer it.
+				writeLine(map[string]any{"jsonrpc": "2.0", "id": "perm-1",
+					"method": "session/request_permission",
+					"params": map[string]any{"sessionId": "sess-42", "toolCallId": "tc-1",
+						"options": []map[string]any{
+							{"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
+							{"optionId": "reject-once", "name": "Reject", "kind": "reject_once"}}}})
+				// Read the broker's permission reply.
+				permLine, _ := r.ReadString('\n')
+				var pr struct {
 					Result struct {
-						ToolCallID string `json:"toolCallId"`
-						Content    any    `json:"content"`
+						Outcome struct {
+							Outcome  string `json:"outcome"`
+							OptionID string `json:"optionId"`
+						} `json:"outcome"`
 					} `json:"result"`
 				}
-				json.Unmarshal([]byte(resultLine), &tr)
-				// Echo the toolCallId we received back in the prompt result so the
-				// test can assert round-trip fidelity end to end.
-				writeLine(map[string]any{"jsonrpc": "2.0", "id": "prompt-done",
+				json.Unmarshal([]byte(permLine), &pr)
+				// (d) terminal response to the prompt id, echoing the outcome.
+				writeLine(map[string]any{"jsonrpc": "2.0", "id": promptID,
 					"result": map[string]any{"stopReason": "end_turn",
-						"content": json.RawMessage(`{"echoedToolCallId":"` + tr.Result.ToolCallID + `"}`)}})
+						"content": json.RawMessage(`{"echoedToolCallId":"tc-1","permission":"` + pr.Result.Outcome.OptionID + `"}`)}})
 			case "shutdown":
 				writeLine(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "result": map[string]any{}})
 			default:

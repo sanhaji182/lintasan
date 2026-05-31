@@ -54,9 +54,11 @@ type AgentTurn struct {
 	SessionParams any
 	// Prompt is the turn payload passed to session/prompt.
 	Prompt any
-	// OnTool is the host-side tool handler. The broker copies ToolCallID
-	// through verbatim; the handler MUST NOT change it (identifier fidelity).
-	OnTool experimental.ToolHandler
+	// OnPermission is the host-side permission handler. The agent reports + runs
+	// its own tools (ACP Shape 2); the host only consents via
+	// session/request_permission. A nil handler denies (the broker selects a
+	// reject option or cancels), so the turn always terminates cleanly.
+	OnPermission experimental.PermissionHandler
 }
 
 // Agent is the execution surface for an Experimental ACP provider. It is an
@@ -82,7 +84,7 @@ type ACPProvider struct {
 	injector *Injector
 
 	// initVersion is the ACP protocol version offered at initialize.
-	initVersion string
+	initVersion int
 
 	// proc/client are lazily constructed on first Run; nil until started.
 	proc   *experimental.Subprocess
@@ -98,7 +100,7 @@ func NewACPProvider(spec LaunchSpec, caps provider.CapabilitySet, injector *Inje
 		spec:        spec,
 		caps:        caps,
 		injector:    injector,
-		initVersion: "0.1",
+		initVersion: experimental.CurrentProtocolVersion,
 	}
 }
 
@@ -147,7 +149,12 @@ func (p *ACPProvider) start(ctx context.Context) error {
 	}
 	if _, err := client.Initialize(ctx, experimental.InitializeParams{
 		ProtocolVersion: p.initVersion,
-		ClientInfo:      map[string]any{"name": "lintasan", "role": "host"},
+		// Advertise NO optional client capabilities (no fs, no terminal). Per the
+		// ACP spec, a conformant agent is then forbidden from calling fs/* or
+		// terminal/* — which keeps client-method handling out of scope for the
+		// minimum onboarding-ready broker.
+		ClientCapabilities: experimental.ClientCapabilities{},
+		ClientInfo:         map[string]any{"name": "lintasan", "role": "host"},
 	}); err != nil {
 		_ = client.Close()
 		return err
@@ -165,7 +172,7 @@ func (p *ACPProvider) Run(ctx context.Context, turn AgentTurn) (*experimental.Pr
 	if _, err := p.client.NewSession(ctx, turn.SessionParams); err != nil {
 		return nil, err
 	}
-	return p.client.Prompt(ctx, experimental.PromptParams{Prompt: turn.Prompt}, turn.OnTool)
+	return p.client.Prompt(ctx, experimental.PromptParams{Prompt: turn.Prompt}, turn.OnPermission)
 }
 
 // StopAgent tears down the subprocess. Idempotent; safe if never started.

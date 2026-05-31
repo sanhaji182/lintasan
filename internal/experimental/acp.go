@@ -1,14 +1,16 @@
 package experimental
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 )
 
-// acp.go — ACP (Agent Client Protocol) integration layer (Foundation Phase 4).
+// acp.go — ACP (Agent Client Protocol) integration layer.
 //
 // ACP lets one host drive many agents over a single official protocol: JSON-RPC
 // 2.0 over the agent's stdio. Lintasan is the ACP CLIENT/HOST; an agent CLI
@@ -17,16 +19,32 @@ import (
 //
 // This layer is built ON TOP of the Phase-3 E1 byte transport (Subprocess): the
 // Subprocess gives us isolation (timeout/crash/panic containment); this file
-// adds the JSON-RPC framing + the ACP lifecycle broker. The JSON-RPC envelope
-// matches the repo's existing MCP convention (internal/mcp) for consistency.
+// adds the JSON-RPC framing + the ACP lifecycle broker.
 //
-// SCOPE LOCK (Phase 4): provider-agnostic protocol broker ONLY. It brokers the
-// lifecycle (initialize → session/new → session/prompt → tool round-trip →
-// shutdown) and carries identifiers VERBATIM (the M3 call_id-fidelity lesson
-// applies to ACP toolCallId too). It implements NO specific provider (Codex,
+// WIRE RECONCILIATION (2026-05-31): the broker speaks SPEC ACP
+// (agentclientprotocol.com), NOT any single agent's dialect — that is what lets
+// the SAME broker serve Codex (codex-acp), Claude Code (claude-agent-acp),
+// Gemini CLI (--experimental-acp), and Copilot (copilot --acp) through one
+// Protocol Gate. The reconciled facts:
+//   - protocolVersion is a single INTEGER major version (current = 1), not a string.
+//   - A prompt turn is a STREAM: after session/prompt the agent emits 0..many
+//     `session/update` NOTIFICATIONS (no id, no reply) and 0..many agent→client
+//     REQUESTS (session/request_permission, has id, MUST be answered), then a
+//     terminal response to the original session/prompt carrying a stopReason.
+//   - Tools are REPORTED by the agent via session/update (sessionUpdate:
+//     "tool_call" / "tool_call_update"); the agent EXECUTES them itself. The host
+//     only consents via session/request_permission. The host does NOT run tools.
+//   - Optional client methods (fs/*, terminal/*) are gated by client capabilities
+//     declared at initialize. This broker advertises NONE, so a conformant agent
+//     is spec-forbidden from calling them; if one does anyway, the broker replies
+//     with a method-not-found error (defense-in-depth) rather than hanging.
+//
+// SCOPE LOCK: provider-agnostic protocol broker ONLY. It brokers the lifecycle
+// (initialize → session/new → session/prompt stream → shutdown) and carries
+// identifiers VERBATIM (the M3 call_id-fidelity lesson, now applied to the
+// toolCallId the agent reports). It implements NO specific provider (Codex,
 // Claude Code, Gemini CLI, Copilot are later, separately-approved onboarding),
-// performs NO actual tool execution (the host decides; this transports the
-// request/result), and is NOT wired into the production router (the membrane
+// executes NO tools, and is NOT wired into the production router (the membrane
 // keeps it off the Official path).
 
 // --- JSON-RPC 2.0 envelope (matches internal/mcp conventions) ----------------
@@ -50,7 +68,7 @@ func (e *jsonrpcError) Error() string {
 	return fmt.Sprintf("acp: rpc error %d: %s", e.Code, e.Message)
 }
 
-// jsonrpcResponse is a JSON-RPC 2.0 response from the agent.
+// jsonrpcResponse is a JSON-RPC 2.0 response sent to / received from the agent.
 type jsonrpcResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      any             `json:"id,omitempty"`
@@ -58,20 +76,44 @@ type jsonrpcResponse struct {
 	Error   *jsonrpcError   `json:"error,omitempty"`
 }
 
-// --- ACP message payloads (the subset the broker needs) ----------------------
+// CurrentProtocolVersion is the ACP MAJOR protocol version this broker speaks.
+// Per spec the version is a single integer, incremented only on breaking changes.
+const CurrentProtocolVersion = 1
+
+// --- Initialization payloads -------------------------------------------------
+
+// FSCapability declares filesystem client capabilities. The minimum broker
+// advertises neither (both false / nil), so a conformant agent MUST NOT call
+// fs/read_text_file or fs/write_text_file.
+type FSCapability struct {
+	ReadTextFile  bool `json:"readTextFile"`
+	WriteTextFile bool `json:"writeTextFile"`
+}
+
+// ClientCapabilities is what the host advertises at initialize. The spec rule:
+// any capability omitted is treated as UNSUPPORTED. The minimum onboarding-ready
+// broker advertises NONE (zero value → fs nil, terminal false), which is exactly
+// what keeps fs/terminal handling out of scope: the agent is spec-forbidden from
+// invoking those methods.
+type ClientCapabilities struct {
+	FS       *FSCapability `json:"fs,omitempty"`
+	Terminal bool          `json:"terminal,omitempty"`
+}
 
 // InitializeParams negotiates protocol version + client capabilities.
 type InitializeParams struct {
-	ProtocolVersion string         `json:"protocolVersion"`
-	ClientInfo      map[string]any `json:"clientInfo,omitempty"`
-	Capabilities    map[string]any `json:"capabilities,omitempty"`
+	ProtocolVersion    int                `json:"protocolVersion"`
+	ClientCapabilities ClientCapabilities `json:"clientCapabilities"`
+	ClientInfo         map[string]any     `json:"clientInfo,omitempty"`
 }
 
-// InitializeResult is the agent's handshake reply (version + its capabilities).
+// InitializeResult is the agent's handshake reply: the chosen protocol version,
+// the agent capabilities, optional info, and the auth methods it supports.
 type InitializeResult struct {
-	ProtocolVersion string          `json:"protocolVersion"`
-	AgentInfo       map[string]any  `json:"agentInfo,omitempty"`
-	Capabilities    json.RawMessage `json:"capabilities,omitempty"`
+	ProtocolVersion   int             `json:"protocolVersion"`
+	AgentCapabilities json.RawMessage `json:"agentCapabilities,omitempty"`
+	AgentInfo         map[string]any  `json:"agentInfo,omitempty"`
+	AuthMethods       json.RawMessage `json:"authMethods,omitempty"`
 }
 
 // NewSessionResult carries the session id the agent allocated.
@@ -79,34 +121,81 @@ type NewSessionResult struct {
 	SessionID string `json:"sessionId"`
 }
 
-// PromptParams sends one turn to a session.
+// PromptParams sends one turn to a session. Prompt is the ContentBlock[] payload
+// (text/image/resource …); kept as `any` so the broker stays content-agnostic
+// (the spec restricts content types by the negotiated prompt capabilities, which
+// the minimum broker leaves at the agent's default).
 type PromptParams struct {
 	SessionID string `json:"sessionId"`
 	Prompt    any    `json:"prompt"`
 }
 
-// ToolCall is an agent-initiated tool request surfaced to the host. The host
-// executes it (or declines) and returns a ToolResult with the SAME ToolCallID.
-type ToolCall struct {
-	ToolCallID string          `json:"toolCallId"`
-	Name       string          `json:"name"`
-	Arguments  json.RawMessage `json:"arguments,omitempty"`
+// --- session/update notification payloads ------------------------------------
+
+// SessionNotification is the params of a `session/update` notification.
+type SessionNotification struct {
+	SessionID string        `json:"sessionId"`
+	Update    SessionUpdate `json:"update"`
 }
 
-// ToolResult is the host's reply to a ToolCall. ToolCallID MUST equal the
-// originating ToolCall.ToolCallID VERBATIM — identifier fidelity is the loop's
-// make-or-break property (the M3 call_id lesson, applied to ACP).
-type ToolResult struct {
-	ToolCallID string `json:"toolCallId"`
-	Content    any    `json:"content"`
-	IsError    bool   `json:"isError,omitempty"`
+// SessionUpdate is the (polymorphic) update body. `SessionUpdate` is the
+// discriminator; the broker reads only the fields the minimum turn needs and
+// safely ignores the rest (unknown sessionUpdate kinds are dropped, per the
+// spec's forward-compatibility posture).
+type SessionUpdate struct {
+	SessionUpdate string          `json:"sessionUpdate"`
+	ToolCallID    string          `json:"toolCallId,omitempty"`
+	Kind          string          `json:"kind,omitempty"`
+	Status        string          `json:"status,omitempty"`
+	Title         string          `json:"title,omitempty"`
+	Content       json.RawMessage `json:"content,omitempty"`
 }
 
-// PromptResult is the terminal result of a prompt turn (after any tool calls).
+// --- session/request_permission payloads -------------------------------------
+
+// PermissionOption is one choice the agent offers for a permission request.
+type PermissionOption struct {
+	OptionID string `json:"optionId"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"` // allow_once | allow_always | reject_once | reject_always
+}
+
+// PermissionRequest is the params of an agent→client `session/request_permission`.
+type PermissionRequest struct {
+	SessionID  string             `json:"sessionId"`
+	ToolCallID string             `json:"toolCallId"`
+	Options    []PermissionOption `json:"options"`
+}
+
+// PermissionOutcome is the host's decision, sent back as the request result.
+// Outcome is "selected" (with OptionID) or "cancelled".
+type PermissionOutcome struct {
+	Outcome  string `json:"outcome"`
+	OptionID string `json:"optionId,omitempty"`
+}
+
+// PermissionHandler decides how to answer a `session/request_permission`. The
+// host supplies it (prod policy is pluggable; the adapter ships a deterministic
+// default). A nil handler means DENY: the broker selects a reject option if the
+// agent offered one, else returns "cancelled" — so the agent can terminate
+// cleanly instead of hanging.
+type PermissionHandler func(ctx context.Context, req PermissionRequest) PermissionOutcome
+
+// --- prompt turn result ------------------------------------------------------
+
+// PromptResult is the terminal outcome of a prompt turn. StopReason + Content
+// come from the agent's response to session/prompt; Text and ToolCalls are
+// assembled by the broker from the session/update stream (convenience for the
+// acceptance gate: Text proves streaming happened, ToolCalls proves the tool
+// loop ran and lets the harness assert identifier fidelity).
 type PromptResult struct {
 	StopReason string          `json:"stopReason,omitempty"`
 	Content    json.RawMessage `json:"content,omitempty"`
+	Text       string          `json:"-"`
+	ToolCalls  []string        `json:"-"`
 }
+
+// --- protocol errors ---------------------------------------------------------
 
 var (
 	// ErrACPClosed is returned when an operation is attempted on a closed client.
@@ -115,16 +204,14 @@ var (
 	ErrACPProtocol = errors.New("acp: protocol error")
 )
 
-// ToolHandler is the host-side callback invoked when the agent requests a tool.
-// The host decides what to do and returns a ToolResult (the broker copies the
-// ToolCallID through verbatim — handlers MUST NOT change it). Returning an error
-// is surfaced to the agent as an error ToolResult. THE BROKER NEVER EXECUTES A
-// TOOL ITSELF — that is the host's responsibility (and a later provider's).
-type ToolHandler func(ctx context.Context, call ToolCall) (ToolResult, error)
-
 // ACPClient drives an ACP agent over an E1 Subprocess. It is the protocol broker
-// only: it frames JSON-RPC, sequences the lifecycle, and round-trips tool calls
-// to a host-supplied ToolHandler. It owns request-id allocation.
+// only: it frames JSON-RPC, sequences the lifecycle, drains the prompt-turn
+// notification stream, and answers agent→client permission requests via a
+// host-supplied PermissionHandler. It owns request-id allocation.
+//
+// CONCURRENCY: one in-flight exchange per client (the underlying Subprocess is
+// single-flight). Drive Initialize/NewSession/Prompt sequentially; pool multiple
+// ACPClients for concurrency, per the E1 contract.
 type ACPClient struct {
 	proc *Subprocess
 
@@ -133,8 +220,7 @@ type ACPClient struct {
 	closed bool
 }
 
-// NewACPClient wraps a (not-yet-started) Subprocess as an ACP client. Start the
-// underlying process via the returned client's Start.
+// NewACPClient wraps a (not-yet-started) Subprocess as an ACP client.
 func NewACPClient(proc *Subprocess) *ACPClient {
 	return &ACPClient{proc: proc, nextID: 1}
 }
@@ -164,9 +250,10 @@ func (c *ACPClient) allocID() int {
 	return id
 }
 
-// call sends a JSON-RPC request and reads exactly one response, decoding Result
-// into out. It does NOT handle interleaved server→client requests; for the
-// prompt turn (which CAN interleave tool calls) use Prompt, which loops.
+// call sends a SYNCHRONOUS JSON-RPC request and reads exactly one response,
+// decoding Result into out. It is for request/response methods only (initialize,
+// session/new, shutdown) — NOT the prompt turn, which can interleave
+// notifications + agent→client requests and is driven by Prompt instead.
 func (c *ACPClient) call(ctx context.Context, method string, params any, out any) error {
 	c.mu.Lock()
 	closed := c.closed
@@ -199,7 +286,9 @@ func (c *ACPClient) call(ctx context.Context, method string, params any, out any
 	return nil
 }
 
-// Initialize performs the ACP handshake (protocol version + capabilities).
+// Initialize performs the ACP handshake (integer protocol version + client
+// capabilities). It returns the agent's chosen version + capabilities; version
+// negotiation/compatibility is the caller's (adapter's) decision.
 func (c *ACPClient) Initialize(ctx context.Context, params InitializeParams) (*InitializeResult, error) {
 	var res InitializeResult
 	if err := c.call(ctx, "initialize", params, &res); err != nil {
@@ -221,18 +310,25 @@ func (c *ACPClient) NewSession(ctx context.Context, params any) (string, error) 
 }
 
 // Prompt sends one turn and drives the agent loop to a terminal PromptResult.
-// The agent may interleave server→client tool-call requests; for each, the
-// broker invokes onTool and replies with a ToolResult carrying the SAME
-// toolCallId VERBATIM. The loop ends when the agent returns the prompt result
-// (a JSON-RPC response to the original prompt id) rather than another tool call.
 //
-// onTool may be nil; if the agent then requests a tool, the broker replies with
-// an error ToolResult ("no tool handler") so the agent can terminate cleanly
-// instead of hanging.
+// After writing session/prompt, the broker reads frames in a loop and dispatches
+// each by shape:
+//   - NOTIFICATION (has method, no id) → a session/update; folded into turn state
+//     (text chunks accumulated; tool_call ids tracked). NEVER replied to.
+//   - AGENT→CLIENT REQUEST (has method AND id) → dispatched: session/request_permission
+//     is answered via onPermission (or denied if nil); any fs/* or terminal/*
+//     method gets a method-not-found error (we advertised no such capability).
+//   - RESPONSE (no method) matching the prompt id → the terminal result; returns.
 //
-// IMPORTANT: this brokers the loop; it NEVER executes a tool itself. Tool
-// execution semantics are the host's (onTool) responsibility.
-func (c *ACPClient) Prompt(ctx context.Context, params PromptParams, onTool ToolHandler) (*PromptResult, error) {
+// The loop ends when the agent responds to the original session/prompt with a
+// stopReason. A crash/hang is contained by E1 (ReadLine deadline) and surfaced as
+// a contained error. IMPORTANT: the broker NEVER executes a tool — the agent runs
+// its own tools and reports them; the host only consents.
+//
+// TURN BOUND: pass a ctx with a turn-level deadline so the whole turn is bounded
+// (each ReadLine inherits the ctx deadline). With no ctx deadline, each frame is
+// bounded by the Subprocess RequestTimeout instead.
+func (c *ACPClient) Prompt(ctx context.Context, params PromptParams, onPermission PermissionHandler) (*PromptResult, error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -245,79 +341,109 @@ func (c *ACPClient) Prompt(ctx context.Context, params PromptParams, onTool Tool
 	if err != nil {
 		return nil, fmt.Errorf("acp: marshal prompt: %w", err)
 	}
+	promptIDBytes, _ := json.Marshal(promptID)
 
-	// Send the prompt, then read frames until we see the response to promptID.
-	respBytes, err := c.proc.Request(ctx, reqBytes)
-	if err != nil {
+	if err := c.proc.WriteLine(ctx, reqBytes); err != nil {
 		return nil, err
 	}
 
+	result := &PromptResult{}
+	seen := map[string]bool{}
+
 	for {
-		// A frame is either (a) the response to our prompt id, or (b) a
-		// server→client tool-call request (has a Method). Decode generically.
+		frame, err := c.proc.ReadLine(ctx)
+		if err != nil {
+			return nil, err
+		}
+
 		var probe struct {
 			JSONRPC string          `json:"jsonrpc"`
-			ID      any             `json:"id,omitempty"`
+			ID      json.RawMessage `json:"id,omitempty"`
 			Method  string          `json:"method,omitempty"`
 			Params  json.RawMessage `json:"params,omitempty"`
 			Result  json.RawMessage `json:"result,omitempty"`
 			Error   *jsonrpcError   `json:"error,omitempty"`
 		}
-		if err := json.Unmarshal(respBytes, &probe); err != nil {
+		if err := json.Unmarshal(frame, &probe); err != nil {
 			return nil, fmt.Errorf("%w: bad frame json: %v", ErrACPProtocol, err)
 		}
 
-		// Case A: terminal response to the prompt.
-		if probe.Method == "" {
-			if probe.Error != nil {
-				return nil, probe.Error
+		// Frames carrying a method are either notifications or agent→client requests.
+		if probe.Method != "" {
+			// Notification: no id (or null id) → fold, never reply.
+			if len(probe.ID) == 0 || string(bytes.TrimSpace(probe.ID)) == "null" {
+				foldNotification(probe.Method, probe.Params, result, seen)
+				continue
 			}
-			var res PromptResult
-			if len(probe.Result) > 0 {
-				if err := json.Unmarshal(probe.Result, &res); err != nil {
-					return nil, fmt.Errorf("%w: bad prompt result: %v", ErrACPProtocol, err)
-				}
-			}
-			return &res, nil
-		}
-
-		// Case B: a server→client tool-call request. Broker it.
-		var call ToolCall
-		if len(probe.Params) > 0 {
-			if err := json.Unmarshal(probe.Params, &call); err != nil {
-				return nil, fmt.Errorf("%w: bad tool-call params: %v", ErrACPProtocol, err)
-			}
-		}
-
-		var result ToolResult
-		if onTool == nil {
-			result = ToolResult{ToolCallID: call.ToolCallID, IsError: true, Content: "no tool handler registered"}
-		} else {
-			r, herr := onTool(ctx, call)
-			if herr != nil {
-				result = ToolResult{ToolCallID: call.ToolCallID, IsError: true, Content: herr.Error()}
+			// Agent→client request: dispatch + reply with the SAME id verbatim.
+			replyResult, rpcErr := c.dispatchAgentRequest(ctx, probe.Method, probe.Params, onPermission, result, seen)
+			resp := jsonrpcResponse{JSONRPC: "2.0", ID: probe.ID}
+			if rpcErr != nil {
+				resp.Error = rpcErr
 			} else {
-				result = r
+				resp.Result = replyResult
+			}
+			replyBytes, merr := json.Marshal(resp)
+			if merr != nil {
+				return nil, fmt.Errorf("acp: marshal reply: %w", merr)
+			}
+			if werr := c.proc.WriteLine(ctx, replyBytes); werr != nil {
+				return nil, werr
+			}
+			continue
+		}
+
+		// No method → a response. If it carries an error, surface it.
+		if probe.Error != nil {
+			return nil, probe.Error
+		}
+		// Only the response to OUR prompt id is the terminal frame. Anything else
+		// (a stray response in our single-flight model) is ignored defensively.
+		if len(probe.ID) > 0 && !jsonValueEqual(probe.ID, promptIDBytes) {
+			continue
+		}
+		var term PromptResult
+		if len(probe.Result) > 0 {
+			if err := json.Unmarshal(probe.Result, &term); err != nil {
+				return nil, fmt.Errorf("%w: bad prompt result: %v", ErrACPProtocol, err)
 			}
 		}
-		// IDENTIFIER FIDELITY: the result MUST carry the originating toolCallId
-		// verbatim. The broker enforces it regardless of what the handler set.
-		result.ToolCallID = call.ToolCallID
+		result.StopReason = term.StopReason
+		result.Content = term.Content
+		return result, nil
+	}
+}
 
-		// Reply to the agent's tool-call request (using the agent's request id),
-		// then continue the loop reading the next frame.
-		replyBytes, merr := json.Marshal(jsonrpcResponse{
-			JSONRPC: "2.0",
-			ID:      probe.ID,
-			Result:  mustJSON(result),
-		})
-		if merr != nil {
-			return nil, fmt.Errorf("acp: marshal tool result: %w", merr)
+// dispatchAgentRequest handles an agent→client request during a prompt turn. It
+// returns either a result payload (to send back) or a jsonrpcError. It NEVER
+// executes a tool; it consents (permission) or refuses (unadvertised method).
+func (c *ACPClient) dispatchAgentRequest(ctx context.Context, method string, params json.RawMessage, onPermission PermissionHandler, result *PromptResult, seen map[string]bool) (json.RawMessage, *jsonrpcError) {
+	switch method {
+	case "session/request_permission":
+		var req PermissionRequest
+		if len(params) > 0 {
+			if err := json.Unmarshal(params, &req); err != nil {
+				return nil, &jsonrpcError{Code: -32602, Message: "invalid request_permission params"}
+			}
 		}
-		respBytes, err = c.proc.Request(ctx, replyBytes)
-		if err != nil {
-			return nil, err
+		// Track the toolCallId verbatim (identifier fidelity: the broker records
+		// exactly what the agent sent; it never rewrites an id).
+		if req.ToolCallID != "" && !seen[req.ToolCallID] {
+			seen[req.ToolCallID] = true
+			result.ToolCalls = append(result.ToolCalls, req.ToolCallID)
 		}
+		var outcome PermissionOutcome
+		if onPermission == nil {
+			outcome = denyOutcome(req)
+		} else {
+			outcome = onPermission(ctx, req)
+		}
+		return mustJSON(map[string]any{"outcome": outcome}), nil
+	default:
+		// fs/* and terminal/* (and anything else): we advertised NO client
+		// capabilities, so a conformant agent must never call these. Reply with a
+		// method-not-found error instead of hanging (defense-in-depth).
+		return nil, &jsonrpcError{Code: -32601, Message: "method not supported: " + method + " (client capability not advertised)"}
 	}
 }
 
@@ -327,8 +453,93 @@ func (c *ACPClient) Shutdown(ctx context.Context) error {
 	return c.call(ctx, "shutdown", nil, nil)
 }
 
-// mustJSON marshals v to json.RawMessage, returning null on error (never panics
-// — a marshal failure becomes a JSON null the agent can handle/ignore).
+// foldNotification accumulates a session/update notification into the turn
+// result. Unknown notification methods and unknown update kinds are ignored
+// safely (spec forward-compat). It NEVER replies (notifications have no id).
+func foldNotification(method string, params json.RawMessage, result *PromptResult, seen map[string]bool) {
+	if method != "session/update" {
+		return // e.g. an agent-side info notification we don't model — ignore.
+	}
+	var note SessionNotification
+	if err := json.Unmarshal(params, &note); err != nil {
+		return // malformed update: ignore rather than break the turn.
+	}
+	switch note.Update.SessionUpdate {
+	case "agent_message_chunk", "agent_thought_chunk":
+		result.Text += extractText(note.Update.Content)
+	case "tool_call":
+		if note.Update.ToolCallID != "" && !seen[note.Update.ToolCallID] {
+			seen[note.Update.ToolCallID] = true
+			result.ToolCalls = append(result.ToolCalls, note.Update.ToolCallID)
+		}
+	case "tool_call_update":
+		// Status transitions for an already-reported tool call. Nothing to fold
+		// for the minimum broker; the toolCallId was tracked on the initial
+		// tool_call. (A real agent may send tool_call_update before tool_call in
+		// edge cases — track defensively.)
+		if note.Update.ToolCallID != "" && !seen[note.Update.ToolCallID] {
+			seen[note.Update.ToolCallID] = true
+			result.ToolCalls = append(result.ToolCalls, note.Update.ToolCallID)
+		}
+	}
+}
+
+// extractText pulls text from a content block (single object {type,text}) or an
+// array of blocks. Non-text content is ignored.
+func extractText(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var one struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &one) == nil && one.Type == "text" {
+		return one.Text
+	}
+	var many []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &many) == nil {
+		var sb strings.Builder
+		for _, b := range many {
+			if b.Type == "text" {
+				sb.WriteString(b.Text)
+			}
+		}
+		return sb.String()
+	}
+	return ""
+}
+
+// denyOutcome is the nil-handler default: pick a reject option if the agent
+// offered one, else cancel. Either way the agent can terminate cleanly.
+func denyOutcome(req PermissionRequest) PermissionOutcome {
+	for _, o := range req.Options {
+		if o.Kind == "reject_once" || o.Kind == "reject_always" {
+			return PermissionOutcome{Outcome: "selected", OptionID: o.OptionID}
+		}
+	}
+	return PermissionOutcome{Outcome: "cancelled"}
+}
+
+// jsonValueEqual reports whether two JSON byte slices encode the same value,
+// independent of formatting/whitespace (used to match the prompt response id).
+func jsonValueEqual(a, b []byte) bool {
+	var ia, ib any
+	if json.Unmarshal(a, &ia) != nil {
+		return false
+	}
+	if json.Unmarshal(b, &ib) != nil {
+		return false
+	}
+	na, _ := json.Marshal(ia)
+	nb, _ := json.Marshal(ib)
+	return bytes.Equal(na, nb)
+}
+
+// mustJSON marshals v to json.RawMessage, returning null on error (never panics).
 func mustJSON(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {
