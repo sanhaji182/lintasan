@@ -79,6 +79,13 @@ type ProxyHandler struct {
 	// mode (records would-exclude, never actually excludes). Read once at
 	// startup in initProviderSDK. See provider_bootstrap.go + capability_shadow.go.
 	capabilityShadow bool
+	// capabilityEnforce is the F2.4 kill-switch (default false): when true, the
+	// chat router ACTS on capability eligibility — it DROPS candidates that
+	// positively fail the request's required caps (data-backed only; fail-open
+	// for missing data; never empties the pool). Reuses the exact F2.3 resolver,
+	// so enforce acts on precisely what shadow observed (zero drift). Read once
+	// at startup in initProviderSDK. See provider_bootstrap.go + capability_enforce.go.
+	capabilityEnforce bool
 	// embedderSDK is the F2.5 kill-switch (default false): when false,
 	// HandleEmbeddings takes the untouched inline path. When true, the upstream
 	// /v1/embeddings request is BUILT by the provider Embedder and executed by
@@ -598,6 +605,21 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	// or filters `candidates` — selection below is byte-identical regardless.
 	// Enforcement (dropping non-satisfying candidates) is F2.4, gated separately.
 	p.runCapabilityShadow(w, req, resolvedModel, stream, candidates)
+
+	// F2.4 capability ENFORCEMENT (act, flag-gated, default OFF). When enabled,
+	// drop candidates that positively fail the request's required capabilities
+	// (data-backed only; fail-open for missing data; never empties the pool).
+	// Reuses the EXACT F2.3 resolver, so it acts on precisely what the shadow
+	// hook above observed. Flag OFF → returns `candidates` unchanged (byte-
+	// identical legacy/shadow). Enforcement only narrows + preserves order.
+	candidates = p.applyCapabilityEnforcement(w, req, resolvedModel, stream, candidates)
+	if len(candidates) == 0 {
+		// Defensive: the facade's R3 guard guarantees this never happens, but if
+		// a future change ever broke that invariant, fail-open to a no-route error
+		// rather than panic on an empty pool below.
+		http.Error(w, fmt.Sprintf(`{"error":"no eligible route for model %s"}`, model), http.StatusNotFound)
+		return
+	}
 
 	req["model"] = resolvedModel
 	body, _ = json.Marshal(req)

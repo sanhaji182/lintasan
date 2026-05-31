@@ -68,6 +68,24 @@ func (p *ProxyHandler) initProviderSDK(database *db.DB) {
 			p.embedderSDK = true
 		}
 	}
+
+	// F2.4 capability ENFORCEMENT kill-switch: independent of every other flag,
+	// default false. When on, the chat router DROPS candidates that positively
+	// fail the request's required capabilities (data-backed only; fail-open for
+	// missing data; never empties the pool). It reuses the EXACT F2.3 resolver +
+	// evaluator, so enforce acts on precisely what shadow observed. Same parsing
+	// contract; read once at startup so the hot path only checks a bool.
+	//   - enforce OFF, shadow OFF → pure legacy (default).
+	//   - enforce OFF, shadow ON  → F2.3 observe-only.
+	//   - enforce ON              → evaluate + record + filter (recording always
+	//     on under enforcement so observability never goes dark).
+	p.capabilityEnforce = false
+	if v, err := database.GetSetting("capability_enforce_enabled"); err == nil {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "on", "yes":
+			p.capabilityEnforce = true
+		}
+	}
 }
 
 // providerSDKEligible reports whether a connection may use the SDK path.
