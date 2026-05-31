@@ -46,12 +46,16 @@ provider becomes *a new file + one `Register()` call*, with **zero router edits*
 | `types.go` | `Provider` interface, `Request`/`UpstreamRequest`/`Response`/`ConnConfig`, `Track`, optional interfaces |
 | `capability.go` | `Capability` constants (incl. `CapJSONMode`), `CapabilitySet` (declaration surface only) |
 | `vocabulary.go` | **F2.0** — `CanonicalVocabulary` (source of truth, D3), read-only `IsCanonical`/`Vocabulary()`, pure mapping helpers (`CatalogTagsToSet`, `AutoModeToCapability`). Declaration-only; no runtime consumer. |
+| `capability_lookup.go` | **F2.1** — official-provider → declared-caps lookup table (D2), `CapabilitiesFor`, `KnownOfficialProviders`, `CapabilityReport` (first registry consumption). Read-only, in-package. |
+| `capability_catalog.go` | **F2.2** — catalog JOIN + `CapabilityCatalog()` diagnostic facade. Reconciles SDK identities with the models catalog (`gemini`↔`google`), surfaces declared/catalog/union + audit diffs. Read-only observability; the only capability symbol the server consumes. |
 | `registry.go` | `Registry` + package-level `Register`/`Get`/`Resolve`/`Names` |
 | `default_provider.go` | `DefaultProvider` — generic OpenAI-compatible fallback (faithful to live router) |
 | `dispatch.go` | `Dispatch()` — router-facing entrypoint that injects the HTTP transport |
 | `errors.go` | Sentinel errors (`errors.Is`-matchable) |
 | `provider_test.go` | unit tests (registry, capability, dispatch, default provider) |
 | `vocabulary_test.go` | **F2.0** — vocabulary + mapping tests + non-consumption guard (`TestF2_0_VocabularyNotConsumedByServer`) |
+| `capability_lookup_test.go` | **F2.1** — lookup/report tests, lockstep pin, D3 enforcement + non-consumption guard (`TestF2_1_LookupNotConsumedByServer`) |
+| `capability_catalog_test.go` | **F2.2** — join/reconciliation/Groq-gap/canonical tests + scope guard (`TestF2_2_ServerConsumesOnlyDiagnosticFacade`, forbids `Satisfies` in server) |
 | `example_test.go` | Runnable `Example()` (godoc-verified output) |
 
 ## What this is NOT (yet)
@@ -64,11 +68,22 @@ separately-approved steps. Wiring this into the router is its own change with it
 own review.
 
 > **F2.0 status (2026-05-31):** the canonical capability vocabulary
-> (`vocabulary.go`) is now established as the source of truth (decision D3), and
-> the missing `CapJSONMode` was added. This is **declaration-only** — a
-> non-consumption guard test asserts the `server` package references none of it.
-> F2.1 (lookup integration), capability filtering, provider eligibility, and
-> routing decisions are NOT started and require separate greenlight.
+> (`vocabulary.go`) is established as the source of truth (decision D3), and
+> the missing `CapJSONMode` was added. Declaration-only — a non-consumption
+> guard test asserts the `server` package references none of it.
+>
+> **F2.1 status (2026-05-31):** the official-provider capability lookup table
+> (`capability_lookup.go`) is the first consumer of the canonical vocabulary —
+> read-only and in-package (D2: one DefaultProvider + lookup, no per-provider
+> adapters). Its own guard keeps the lookup primitives out of the server.
+>
+> **F2.2 status (2026-05-31):** the catalog JOIN + read-only diagnostic facade
+> (`capability_catalog.go`) reconciles the SDK declaration vocabulary with the
+> models-catalog tag vocabulary and is rendered by `GET /api/capabilities`
+> (auth-gated). This is the ONLY capability symbol the server consumes; a scope
+> guard forbids the routing primitive `Satisfies` and the lower-level tables in
+> the server package. **Capability-based routing, provider eligibility, and
+> capability filtering are NOT started and require separate greenlight (F2.4).**
 
 ## Mapping to the live router (for the future wiring step)
 
