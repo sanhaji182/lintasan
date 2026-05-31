@@ -235,22 +235,37 @@ func TestM2_UsageMapped(t *testing.T) {
 	}
 }
 
-// TestM2_ToolDeltaSkippedTextPath asserts M2 scope: tool-call deltas in the
-// chat stream produce NO function_call events (that is M3), but the stream is
-// still a valid text stream terminated by completed.
-func TestM2_ToolDeltaSkippedTextPath(t *testing.T) {
+// TestM3_ToolOnlyResponse_NoMessageItem asserts the M3 milestone transition:
+// M2 SKIPPED tool-call deltas; M3 EMITS them as function_call items. A pure
+// tool-call response (no text) must therefore emit a function_call item but NO
+// message item and NO text deltas (matching the real OpenAI Responses API),
+// while still terminating with response.completed.
+func TestM3_ToolOnlyResponse_NoMessageItem(t *testing.T) {
 	chat := []string{
 		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"f","arguments":"{}"}}]}}]}`,
 		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
 		`data: [DONE]`,
 	}
 	evs := runEmitter(t, "gpt-4o", chat)
+	sawFunctionCall := false
 	for _, e := range evs {
-		if strings.Contains(e.Type, "function_call") || strings.Contains(e.Type, "custom_tool_call") {
-			t.Fatalf("M2 must not emit tool events (that is M3): saw %q", e.Type)
+		if e.Type == "response.output_text.delta" {
+			t.Fatal("pure tool call must not emit text deltas")
+		}
+		// A message item must NOT be opened for a pure tool call.
+		if e.Type == "response.output_item.added" {
+			item, _ := e.Data["item"].(map[string]any)
+			if item["type"] == "message" {
+				t.Fatal("pure tool call must not open a message item")
+			}
+			if item["type"] == "function_call" {
+				sawFunctionCall = true
+			}
 		}
 	}
-	// Still a valid stream: ends with completed.
+	if !sawFunctionCall {
+		t.Fatal("M3 must emit a function_call item for a tool-call delta")
+	}
 	if evs[len(evs)-1].Type != "response.completed" {
 		t.Fatal("tool-only stream must still terminate with response.completed")
 	}

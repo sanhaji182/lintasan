@@ -139,3 +139,32 @@ func TestM2Adapter_PartialLineBuffering(t *testing.T) {
 		t.Fatal("no terminal event")
 	}
 }
+
+// TestM3Adapter_FunctionCallThroughWriter asserts the full M3 path through the
+// writer-interception adapter: a chat stream carrying tool_calls is re-framed
+// into a Responses function_call item with the call_id preserved VERBATIM, all
+// without the chat handler knowing about Responses.
+func TestM3Adapter_FunctionCallThroughWriter(t *testing.T) {
+	const callID = "call_adapter_99"
+	rec := httptest.NewRecorder()
+	a := newResponsesStreamAdapter(rec, "gpt-4o")
+	a.WriteHeader(200)
+	a.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"" + callID + "\",\"function\":{\"name\":\"search\",\"arguments\":\"{}\"}}]}}]}\n\n"))
+	a.Write([]byte("data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"))
+	a.Write([]byte("data: [DONE]\n\n"))
+	a.finalize()
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.output_item.added") {
+		t.Fatalf("no function_call item added:\n%s", body)
+	}
+	if !strings.Contains(body, `"type":"function_call"`) {
+		t.Fatalf("function_call item type missing:\n%s", body)
+	}
+	if !strings.Contains(body, `"call_id":"`+callID+`"`) {
+		t.Fatalf("call_id not preserved verbatim through the adapter:\n%s", body)
+	}
+	if !strings.Contains(body, "event: response.completed") {
+		t.Fatal("no terminal event")
+	}
+}
