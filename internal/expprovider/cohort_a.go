@@ -104,3 +104,29 @@ func CohortADescriptors() []ProviderDescriptor {
 		CopilotDescriptor(),
 	}
 }
+
+// CohortACredentialSource builds the staging credential mapping for Cohort-A:
+// it registers, for every descriptor, the EXPLICIT provider→env-var binding the
+// G4 injector uses to scope each provider's secret. It returns the SAME
+// CredentialSource interface Codex already uses (EnvCredentialSource), so the
+// mapping is the only per-provider config — no new credential machinery.
+//
+// SCOPING (Invariant 3): a lookup for "claude-code" can ONLY read
+// ANTHROPIC_API_KEY, never another provider's var. Secrets are read live from
+// the process env on each lookup (rotation-safe); this function holds no secret
+// itself. A descriptor whose AuthMode is AuthNone contributes no mapping.
+//
+// IMPORTANT: registering a mapping does NOT supply a credential — the env var
+// must actually be set for that provider to admit. An unset var yields
+// (\"\", false), which the harness turns into a NO-GO (the provider cannot launch
+// + auth). This is exactly the Codex environment-blocker posture, generalized.
+func CohortACredentialSource() *EnvCredentialSource {
+	src := NewEnvCredentialSource()
+	for _, d := range CohortADescriptors() {
+		if d.AuthMode == AuthNone || d.AuthEnvVar == "" {
+			continue
+		}
+		src.Map(d.Name, d.AuthEnvVar)
+	}
+	return src
+}
