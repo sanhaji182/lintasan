@@ -213,6 +213,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/chat/completions", s.proxy.HandleChatCompletions)
 	s.mux.HandleFunc("POST /v1/embeddings", s.proxy.HandleEmbeddings)
 
+	// Codex Official Layer ingress (POST /v1/responses) — M0 scaffolding,
+	// flag-gated by responses_api_enabled (default OFF → 404). Inherits the
+	// /v1/* fail-closed 401 auth middleware. No streaming / tool loop yet
+	// (M2/M3). See handlers_responses.go + proposals/codex-build-plan.md.
+	s.mux.HandleFunc("POST /v1/responses", s.proxy.HandleResponses)
+
 	// Free Provider Scanner (P10c)
 	s.mux.HandleFunc("GET /api/providers/discover", s.handleProviderDiscover)
 

@@ -69,6 +69,7 @@ func (p *ProxyHandler) initProviderSDK(database *db.DB) {
 		}
 	}
 
+<<<<<<< HEAD
 	// F2.4 capability ENFORCEMENT kill-switch: independent of every other flag,
 	// default false. When on, the chat router DROPS candidates that positively
 	// fail the request's required capabilities (data-backed only; fail-open for
@@ -84,6 +85,20 @@ func (p *ProxyHandler) initProviderSDK(database *db.DB) {
 		switch strings.ToLower(strings.TrimSpace(v)) {
 		case "true", "1", "on", "yes":
 			p.capabilityEnforce = true
+		}
+	}
+
+	// Codex Official Layer kill-switch (responses_api_enabled): independent of
+	// every other flag, default false. When on, POST /v1/responses is active
+	// (M0: returns 501 scaffolding; M2+ streams). When off, the route returns
+	// 404 and prod is byte-identical to a build without the Responses surface.
+	// Same parsing contract (true/1/on/yes, case-insensitive). Read once at
+	// startup so the route handler only checks a bool.
+	p.responsesAPI = false
+	if v, err := database.GetSetting("responses_api_enabled"); err == nil {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "on", "yes":
+			p.responsesAPI = true
 		}
 	}
 }

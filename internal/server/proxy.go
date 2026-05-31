@@ -103,6 +103,14 @@ type ProxyHandler struct {
 	// Multi-account pools: pool_id → MultiAccountLB
 	mabMu           sync.RWMutex
 	multiAccountLBs map[string]*lb.MultiAccountLB
+
+	// responsesAPI is the Codex Official Layer kill-switch (default false):
+	// when false, POST /v1/responses returns 404 (route inert, prod unchanged);
+	// when true, M0 returns 501 (scaffolding, not yet implemented). Independent
+	// of every other flag. Read once at startup in initProviderSDK. See
+	// provider_bootstrap.go + handlers_responses.go. Streaming + tool loop land
+	// in M2/M3 (proposals/codex-build-plan.md).
+	responsesAPI bool
 }
 
 func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
