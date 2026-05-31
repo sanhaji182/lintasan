@@ -41,6 +41,18 @@ import (
 // IDs derive from the package's fixed randomID() plus a per-item index, so
 // golden-fixture tests are reproducible across runs.
 
+// ResponsesTerminalKind selects which error terminal Fail emits. It is the
+// translator-package's own enum (decoupled from the metrics package's
+// ResponsesTerminal label) so the translator stays dependency-free.
+type ResponsesTerminalKind int
+
+const (
+	// TerminalFailed → response.failed (hard upstream/translation error).
+	TerminalFailed ResponsesTerminalKind = iota
+	// TerminalIncomplete → response.incomplete (partial/truncated turn).
+	TerminalIncomplete
+)
+
 // ResponsesStreamEmitter re-frames a canonical chat SSE stream into Responses
 // API typed events. Stateful (tracks the message item + N tool-call items) but
 // pure (no I/O). One emitter per stream; not safe for concurrent use.
@@ -52,6 +64,12 @@ type ResponsesStreamEmitter struct {
 	createdSent bool // response.created emitted
 	msgOpen     bool // message output_item.added + content_part.added emitted
 	completed   bool // terminal events emitted
+
+	// terminalState records HOW the stream ended ("completed"/"failed"/
+	// "incomplete"), for M4 metrics + structured logging. Empty until a terminal
+	// is emitted. hadText reports whether any text delta was emitted.
+	terminalState string
+	hadText       bool
 
 	text  strings.Builder // accumulated assistant text (for the *.done events)
 	usage map[string]any  // captured upstream usage, if any
@@ -137,6 +155,7 @@ func (e *ResponsesStreamEmitter) Process(line string) []string {
 
 	// Text content → message item lifecycle (M2 path, preserved byte-for-byte).
 	if content, _ := delta["content"].(string); content != "" {
+		e.hadText = true
 		events = append(events, e.ensureCreated()...)
 		events = append(events, e.ensureMessageOpen()...)
 		e.text.WriteString(content)
@@ -219,6 +238,81 @@ func (e *ResponsesStreamEmitter) processToolCallDeltas(tcs []any) []string {
 // response.completed even on upstream truncation. Idempotent.
 func (e *ResponsesStreamEmitter) Finish() []string { return e.finishEvents() }
 
+// Fail emits an ERROR terminal instead of response.completed, for the case where
+// the upstream errors AFTER streaming has begun (so a passthrough HTTP error is
+// no longer possible — the client is mid-stream). Per Codex's inbound parser,
+// response.failed and response.incomplete are recognized error terminals; using
+// one of them is strictly better than silently truncating the stream (which
+// Codex treats as ApiError::Stream).
+//
+//   - kind ResponsesTerminalIncomplete → response.incomplete (partial/truncated;
+//     the model produced some output but the turn didn't finish cleanly).
+//   - anything else → response.failed (hard upstream/translation error).
+//
+// Idempotent: a no-op if a terminal was already emitted (e.g. completed arrived
+// first). reason is a short, non-secret human string surfaced in the error
+// object; never pass prompt content or upstream bodies that may carry secrets.
+func (e *ResponsesStreamEmitter) Fail(kind ResponsesTerminalKind, reason string) []string {
+	if e.completed {
+		return nil
+	}
+	var events []string
+	events = append(events, e.ensureCreated()...)
+	e.completed = true
+
+	evType := "response.failed"
+	status := "failed"
+	e.terminalState = "failed"
+	if kind == TerminalIncomplete {
+		evType = "response.incomplete"
+		status = "incomplete"
+		e.terminalState = "incomplete"
+	}
+
+	if reason == "" {
+		reason = "upstream error"
+	}
+	usage := e.usage
+	if usage == nil {
+		usage = map[string]any{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+	}
+	events = append(events, sseEvent(map[string]any{
+		"type": evType,
+		"response": map[string]any{
+			"id":     e.respID,
+			"object": "response",
+			"status": status,
+			"model":  e.model,
+			"output": []any{},
+			"usage":  usage,
+			"error": map[string]any{
+				"type":    "upstream_error",
+				"message": reason,
+			},
+		},
+	}))
+	return events
+}
+
+// TerminalState reports how the stream ended ("completed"/"failed"/"incomplete"),
+// or "" if no terminal has been emitted yet. For M4 metrics + logging.
+func (e *ResponsesStreamEmitter) TerminalState() string { return e.terminalState }
+
+// ToolCallCount reports the number of function_call items that were opened
+// (call_id known). For M4 metrics + logging.
+func (e *ResponsesStreamEmitter) ToolCallCount() int {
+	n := 0
+	for _, acc := range e.tools {
+		if acc != nil && acc.addedSent {
+			n++
+		}
+	}
+	return n
+}
+
+// HadText reports whether any assistant text delta was emitted. For M4 logging.
+func (e *ResponsesStreamEmitter) HadText() bool { return e.hadText }
+
 // Started reports whether any Responses event has been emitted (response.created).
 func (e *ResponsesStreamEmitter) Started() bool { return e.createdSent }
 
@@ -284,6 +378,7 @@ func (e *ResponsesStreamEmitter) finishEvents() []string {
 	var events []string
 	events = append(events, e.ensureCreated()...)
 	e.completed = true
+	e.terminalState = "completed"
 
 	// Collect output items keyed by output_index for a deterministic final array.
 	outputs := map[int]map[string]any{}

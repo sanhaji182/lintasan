@@ -1,9 +1,12 @@
 package server
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sanhaji182/lintasan-go/internal/metrics"
 )
 
 // responses_stream_adapter_test.go — Codex M2 writer-interception (Tier 2/4).
@@ -66,18 +69,25 @@ func TestM2Adapter_ReframesChatStream(t *testing.T) {
 	}
 }
 
-func TestM2Adapter_TerminalOnTruncation(t *testing.T) {
+// TestM4Adapter_TruncationIsIncomplete: M4 milestone transition. M2 closed a
+// truncated stream (no [DONE]) with response.completed; M4 reports it honestly
+// as response.incomplete (a Codex error terminal) instead of masking it. Either
+// way the stream is NEVER left without a terminal.
+func TestM4Adapter_TruncationIsIncomplete(t *testing.T) {
 	rec := httptest.NewRecorder()
 	a := newResponsesStreamAdapter(rec, "gpt-4o")
 	a.Header().Set("Content-Type", "text/event-stream")
 	a.WriteHeader(200)
 	a.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n"))
-	// Upstream truncates: NO [DONE]. finalize must still close the stream.
+	// Upstream truncates: NO [DONE]. finalize must close with an honest terminal.
 	a.finalize()
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "event: response.completed") {
-		t.Fatalf("truncated stream not closed with response.completed:\n%s", body)
+	if !strings.Contains(body, "event: response.incomplete") {
+		t.Fatalf("truncated stream must close with response.incomplete (M4):\n%s", body)
+	}
+	if strings.Contains(body, "event: response.completed") {
+		t.Fatal("truncated stream must NOT be masked as completed")
 	}
 }
 
@@ -168,3 +178,77 @@ func TestM3Adapter_FunctionCallThroughWriter(t *testing.T) {
 		t.Fatal("no terminal event")
 	}
 }
+
+// TestM4Adapter_ErrorBodyAfterStreamStart asserts the M4 hardening path: when
+// the chat handler writes a non-SSE error body AFTER streaming has started
+// (its panic-recover / http.Error path), the adapter closes with
+// response.failed instead of leaving the stream silently truncated.
+func TestM4Adapter_ErrorBodyAfterStreamStart(t *testing.T) {
+	rec := httptest.NewRecorder()
+	a := newResponsesStreamAdapter(rec, "gpt-4o")
+	a.WriteHeader(200)
+	a.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"working\"}}]}\n\n"))
+	// The chat handler hit an error mid-stream and wrote a JSON error body
+	// (not an SSE frame) into the same writer.
+	a.Write([]byte("{\"error\":\"internal server error\"}\n"))
+	a.finalize()
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.failed") {
+		t.Fatalf("mid-stream error must close with response.failed:\n%s", body)
+	}
+	if strings.Contains(body, "event: response.completed") {
+		t.Fatal("a mid-stream error must NOT be masked as completed")
+	}
+}
+
+// TestM4Adapter_MetricsRecorded asserts finalize records exactly one Responses
+// stream into the metrics counters, with the correct terminal + tool count.
+func TestM4Adapter_MetricsRecorded(t *testing.T) {
+	before := metrics.ResponsesStats()
+
+	rec := httptest.NewRecorder()
+	a := newResponsesStreamAdapter(rec, "gpt-4o")
+	a.WriteHeader(200)
+	a.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+	a.Write([]byte("data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_m\",\"function\":{\"name\":\"f\",\"arguments\":\"{}\"}}]}}]}\n\n"))
+	a.Write([]byte("data: [DONE]\n\n"))
+	a.finalize()
+	// Idempotent: a second finalize must NOT double-count.
+	a.finalize()
+
+	after := metrics.ResponsesStats()
+	if d := after.StreamsStarted - before.StreamsStarted; d != 1 {
+		t.Fatalf("StreamsStarted delta: got %d want 1 (double-count?)", d)
+	}
+	if d := after.StreamsCompleted - before.StreamsCompleted; d != 1 {
+		t.Fatalf("StreamsCompleted delta: got %d want 1", d)
+	}
+	if d := after.ToolCalls - before.ToolCalls; d != 1 {
+		t.Fatalf("ToolCalls delta: got %d want 1", d)
+	}
+	if d := after.TextStreams - before.TextStreams; d != 1 {
+		t.Fatalf("TextStreams delta: got %d want 1", d)
+	}
+}
+
+// TestM4Adapter_FlushPropagates asserts the adapter forwards Flush() to a
+// flushing underlying writer (streaming correctness).
+func TestM4Adapter_FlushPropagates(t *testing.T) {
+	fw := &flushCountWriter{ResponseWriter: httptest.NewRecorder()}
+	a := newResponsesStreamAdapter(fw, "gpt-4o")
+	a.WriteHeader(200)
+	a.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n"))
+	if fw.flushes == 0 {
+		t.Fatal("adapter did not propagate Flush to the underlying writer")
+	}
+	a.finalize()
+}
+
+// flushCountWriter counts Flush calls to prove streaming flushes propagate.
+type flushCountWriter struct {
+	http.ResponseWriter
+	flushes int
+}
+
+func (f *flushCountWriter) Flush() { f.flushes++ }

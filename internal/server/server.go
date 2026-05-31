@@ -66,6 +66,7 @@ func New(cfg *config.Config, database *db.DB) *Server {
 	s.metrics.RegisterCollector(buildInfoCollector)
 	s.metrics.RegisterCollector(memorySearchCollector)
 	s.metrics.RegisterCollector(cacheCollector)
+	s.metrics.RegisterCollector(responsesCollector)
 	s.metrics.RegisterCollector(metrics.RuntimeCollector)
 	s.oauthMgr = auth.NewOAuthManager(database)
 	s.proxy = NewProxyHandler(cfg, database)

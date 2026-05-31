@@ -69,7 +69,6 @@ func (p *ProxyHandler) initProviderSDK(database *db.DB) {
 		}
 	}
 
-<<<<<<< HEAD
 	// F2.4 capability ENFORCEMENT kill-switch: independent of every other flag,
 	// default false. When on, the chat router DROPS candidates that positively
 	// fail the request's required capabilities (data-backed only; fail-open for
