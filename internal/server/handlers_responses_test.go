@@ -50,10 +50,12 @@ func TestResponsesFlagDefaultOff(t *testing.T) {
 	}
 }
 
-// TestResponsesFlagOnReturns501: with the flag ON, M0 returns 501 Not
-// Implemented — an HONEST scaffolding response, never a fake 200. (Locked
-// exclusion: no fake/no-op success.)
-func TestResponsesFlagOnReturns501(t *testing.T) {
+// TestResponsesFlagOnTranslatesAndValidates: M2 changed the flag-ON behavior.
+// M0 returned 501 (scaffolding); M2 reaches the M1 request translator. With an
+// empty body `{}` the translator rejects it (no model) → 400 with the sentinel
+// message. This proves the ingress→translate wiring is live when the flag is ON
+// (the streaming re-framing itself is covered by the emitter + adapter tests).
+func TestResponsesFlagOnTranslatesAndValidates(t *testing.T) {
 	p := buildHandlerResponsesFlag(t, "true")
 	if !p.responsesAPI {
 		t.Fatal("responsesAPI must be true when responses_api_enabled=true")
@@ -61,11 +63,23 @@ func TestResponsesFlagOnReturns501(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{}`))
 	p.HandleResponses(rec, req)
-	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("flag ON (M0) must return 501, got %d", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("flag ON + invalid body must return 400 (translation reached), got %d", rec.Code)
 	}
-	if got := rec.Header().Get("X-Lintasan-Ingress"); got != "responses" {
-		t.Errorf("expected X-Lintasan-Ingress=responses, got %q", got)
+	if !strings.Contains(rec.Body.String(), "model") {
+		t.Errorf("expected the no-model validation message, got %s", rec.Body.String())
+	}
+}
+
+// TestResponsesFlagOnMalformedJSON: flag ON + non-JSON body → 400 before
+// translation (parse error), never a panic or fake success.
+func TestResponsesFlagOnMalformedJSON(t *testing.T) {
+	p := buildHandlerResponsesFlag(t, "true")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`not json`))
+	p.HandleResponses(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("flag ON + malformed JSON must return 400, got %d", rec.Code)
 	}
 }
 
