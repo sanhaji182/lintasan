@@ -298,12 +298,34 @@ func (o optionalCapsProvider) Embed(ctx context.Context, req *Request, conn *Con
 	return &UpstreamRequest{URL: conn.BaseURL + "/v1/embeddings", Method: http.MethodPost, Body: req.Body}, nil
 }
 
+// plainProvider implements ONLY the core Provider interface and deliberately
+// does NOT implement any optional interface (no Embed). It is the negative case
+// for the type-assertion mechanism: as of F2.5 the real DefaultProvider DOES
+// implement Embedder (embedder.go), so a fresh minimal stand-in is needed to
+// prove the assertion correctly distinguishes non-implementers.
+type plainProvider struct{}
+
+func (plainProvider) Name() string                { return "plain" }
+func (plainProvider) Track() Track                { return TrackOfficial }
+func (plainProvider) Capabilities() CapabilitySet { return NewCapabilitySet() }
+func (plainProvider) Prepare(ctx context.Context, req *Request, conn *ConnConfig) (*UpstreamRequest, error) {
+	return &UpstreamRequest{}, nil
+}
+func (plainProvider) Translate(ctx context.Context, raw []byte, req *Request) (*Response, error) {
+	return &Response{Status: http.StatusOK, Body: raw}, nil
+}
+
 func TestOptionalInterfaceTypeAssertion(t *testing.T) {
 	var p Provider = optionalCapsProvider{NewDefaultProvider("emb")}
-	if _, ok := Provider(NewDefaultProvider("plain")).(Embedder); ok {
-		t.Fatal("plain default should not implement Embedder")
+	if _, ok := Provider(plainProvider{}).(Embedder); ok {
+		t.Fatal("plainProvider (no Embed method) should not implement Embedder")
 	}
 	if _, ok := p.(Embedder); !ok {
 		t.Fatal("optionalCapsProvider should implement Embedder")
+	}
+	// F2.5 contract: the real DefaultProvider now implements Embedder, so the
+	// optional-interface assertion must succeed for it too.
+	if _, ok := Provider(NewDefaultProvider("d")).(Embedder); !ok {
+		t.Fatal("DefaultProvider must implement Embedder as of F2.5")
 	}
 }

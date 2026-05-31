@@ -73,6 +73,13 @@ type ProxyHandler struct {
 	providerReg     *provider.Registry
 	defaultProvider provider.Provider
 	providerSDK     bool
+
+	// embedderSDK is the F2.5 kill-switch (default false): when false,
+	// HandleEmbeddings takes the untouched inline path. When true, the upstream
+	// /v1/embeddings request is BUILT by the provider Embedder and executed by
+	// the handler, byte-for-byte identical to the inline path. Read once at
+	// startup in initProviderSDK. See provider_bootstrap.go.
+	embedderSDK bool
 }
 
 func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
@@ -1666,24 +1673,37 @@ func (p *ProxyHandler) HandleEmbeddings(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	upstreamURL := strings.TrimRight(conn.BaseURL, "/") + "/v1/embeddings"
-	upReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, strings.NewReader(string(body)))
-	if err != nil {
-		http.Error(w, `{"error":"failed to create upstream request"}`, http.StatusInternalServerError)
-		return
-	}
+	var upReq *http.Request
+	if p.embedderSDK {
+		// F2.5 SDK path: build the upstream request via the provider Embedder.
+		// This produces a byte-for-byte identical request to the inline path
+		// below (same URL, POST, Content-Type, faithful auth, body passthrough).
+		upReq, err = p.buildEmbeddingsViaSDK(r.Context(), conn, body)
+		if err != nil {
+			http.Error(w, `{"error":"failed to create upstream request"}`, http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// Legacy inline path (UNCHANGED): default OFF, zero behavior change.
+		upstreamURL := strings.TrimRight(conn.BaseURL, "/") + "/v1/embeddings"
+		upReq, err = http.NewRequestWithContext(r.Context(), "POST", upstreamURL, strings.NewReader(string(body)))
+		if err != nil {
+			http.Error(w, `{"error":"failed to create upstream request"}`, http.StatusInternalServerError)
+			return
+		}
 
-	upReq.Header.Set("Content-Type", "application/json")
-	authHeader := conn.AuthHeader
-	if authHeader == "" {
-		authHeader = "Authorization"
-	}
-	authPrefix := conn.AuthPrefix
-	if authPrefix == "" {
-		authPrefix = "Bearer "
-	}
-	if conn.APIKey != "" {
-		upReq.Header.Set(authHeader, authPrefix+conn.APIKey)
+		upReq.Header.Set("Content-Type", "application/json")
+		authHeader := conn.AuthHeader
+		if authHeader == "" {
+			authHeader = "Authorization"
+		}
+		authPrefix := conn.AuthPrefix
+		if authPrefix == "" {
+			authPrefix = "Bearer "
+		}
+		if conn.APIKey != "" {
+			upReq.Header.Set(authHeader, authPrefix+conn.APIKey)
+		}
 	}
 
 	resp, err := p.client.Do(upReq)

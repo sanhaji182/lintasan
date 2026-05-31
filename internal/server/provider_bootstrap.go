@@ -40,6 +40,18 @@ func (p *ProxyHandler) initProviderSDK(database *db.DB) {
 			p.providerSDK = true
 		}
 	}
+
+	// F2.5 embedder kill-switch: independent of provider_sdk_enabled and also
+	// default false. When on, HandleEmbeddings builds the upstream request via
+	// the provider Embedder; when off, the inline path is byte-for-byte
+	// unchanged. Same parsing contract (true/1/on/yes, case-insensitive).
+	p.embedderSDK = false
+	if v, err := database.GetSetting("embedder_sdk_enabled"); err == nil {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "on", "yes":
+			p.embedderSDK = true
+		}
+	}
 }
 
 // providerSDKEligible reports whether a connection may use the SDK path.
@@ -89,6 +101,44 @@ func (p *ProxyHandler) buildUpstreamViaSDK(ctx context.Context, conn *Connection
 		Headers: inboundHeaders,
 	}
 	up, err := prov.Prepare(ctx, req, connToConfig(conn))
+	if err != nil {
+		return nil, err
+	}
+	upReq, err := http.NewRequestWithContext(ctx, up.Method, up.URL, strings.NewReader(string(up.Body)))
+	if err != nil {
+		return nil, err
+	}
+	for k, vs := range up.Header {
+		for _, v := range vs {
+			upReq.Header.Add(k, v)
+		}
+	}
+	return upReq, nil
+}
+
+// buildEmbeddingsViaSDK runs the Provider SDK's Embed step ONLY (F2.5) and
+// returns a concrete *http.Request ready for p.client.Do. It mirrors
+// buildUpstreamViaSDK exactly, but routes through the optional Embedder
+// interface (capability EXECUTION, not capability ROUTING — it deliberately
+// touches no capability-selection / eligibility symbol).
+//
+// The provider is resolved by Format with the DefaultProvider fallback, then
+// type-asserted to Embedder. The DefaultProvider satisfies Embedder, so the
+// fallback always yields a usable embedder for the F2.5 target connections.
+// The assembled request is byte-for-byte identical to the inline HandleEmbeddings
+// path: same URL, POST, Content-Type, faithful auth (empty-prefix => "Bearer "),
+// and the original body bytes passed through unchanged.
+func (p *ProxyHandler) buildEmbeddingsViaSDK(ctx context.Context, conn *Connection, body []byte) (*http.Request, error) {
+	prov := p.providerReg.Resolve(conn.Format, p.defaultProvider)
+	emb, ok := prov.(provider.Embedder)
+	if !ok {
+		// Fallback: the generic DefaultProvider implements Embedder.
+		emb, ok = p.defaultProvider.(provider.Embedder)
+		if !ok {
+			return nil, provider.ErrPrepare
+		}
+	}
+	up, err := emb.Embed(ctx, &provider.Request{Body: body}, connToConfig(conn))
 	if err != nil {
 		return nil, err
 	}
