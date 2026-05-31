@@ -189,6 +189,11 @@ func (s *Server) routes() {
 	// OpenAI-compatible API
 	s.mux.HandleFunc("GET /v1/models", s.handleModels)
 	s.mux.HandleFunc("GET /api/models/catalog", s.handleModelsCatalog)
+
+	// Capability diagnostics (F2.2 — read-only observability). Renders declared
+	// vs catalog-derived capabilities per official provider. Does NOT influence
+	// routing/selection/eligibility (capability-based routing is a later phase).
+	s.mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
 	s.mux.HandleFunc("POST /v1/chat/completions", s.proxy.HandleChatCompletions)
 	s.mux.HandleFunc("POST /v1/embeddings", s.proxy.HandleEmbeddings)
 
