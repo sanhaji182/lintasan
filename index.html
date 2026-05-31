@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lintasan — High-Performance LLM Proxy Gateway in Go</title>
+  <meta name="description" content="Lintasan is a single-binary LLM proxy gateway in Go. One OpenAI-compatible endpoint, smart routing, failover, semantic caching, token compression, and an embedded dashboard — 35x less RAM than Node.js gateways." />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Lintasan — LLM Proxy Gateway in Go" />
+  <meta property="og:description" content="One endpoint, many providers. Smart routing, failover, caching, token compression — in a single ~24MB binary." />
+  <meta property="og:url" content="https://sanhaji182.github.io/lintasan-go/" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%233b5bdb'/%3E%3Ctext x='16' y='23' font-size='20' font-family='sans-serif' font-weight='700' fill='white' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+      --color-primary: #3b5bdb;
+      --color-primary-hover: #2f4fcb;
+      --color-primary-glow: rgba(59, 91, 219, 0.14);
+      --color-primary-light: #eef2ff;
+      --color-success: #059669;
+      --color-purple: #7c3aed;
+      --color-bg-body: #f8fafc;
+      --color-bg-card: #ffffff;
+      --color-bg-soft: #f1f5f9;
+      --color-fg-0: #0f172a;
+      --color-fg-1: #334155;
+      --color-fg-2: #64748b;
+      --color-fg-3: #94a3b8;
+      --color-border: #e2e8f0;
+      --color-border-light: #f1f5f9;
+      --radius-sm: 10px;
+      --radius: 14px;
+      --radius-lg: 18px;
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+      --shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
+      --shadow-md: 0 12px 28px rgba(15, 23, 42, 0.08);
+      --shadow-lg: 0 20px 42px rgba(15, 23, 42, 0.1);
+      --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    [data-theme="dark"] {
+      --color-primary-light: rgba(59, 91, 219, 0.2);
+      --color-bg-body: #0b1220;
+      --color-bg-card: #111a2d;
+      --color-bg-soft: #0f1729;
+      --color-fg-0: #e2e8f0;
+      --color-fg-1: #cbd5e1;
+      --color-fg-2: #94a3b8;
+      --color-fg-3: #64748b;
+      --color-border: #22324d;
+      --color-border-light: #1a2840;
+      --shadow-sm: 0 1px 2px rgba(2, 6, 23, 0.32);
+      --shadow: 0 8px 22px rgba(2, 6, 23, 0.36);
+      --shadow-md: 0 12px 30px rgba(2, 6, 23, 0.45);
+      --shadow-lg: 0 24px 56px rgba(2, 6, 23, 0.55);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font-sans);
+      color: var(--color-fg-0);
+      background: var(--color-bg-body);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      transition: background var(--transition), color var(--transition);
+    }
+    a { color: inherit; text-decoration: none; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+
+    /* ── Header ── */
+    header {
+      position: sticky; top: 0; z-index: 50;
+      background: color-mix(in srgb, var(--color-bg-body) 86%, transparent);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--color-border);
+    }
+    .nav { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; }
+    .logo { width: 34px; height: 34px; border-radius: 10px; background: var(--color-primary); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 18px; box-shadow: 0 4px 12px var(--color-primary-glow); }
+    .nav-actions { display: flex; align-items: center; gap: 8px; }
+    .iconbtn { width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--color-border); background: var(--color-bg-card); color: var(--color-fg-1); cursor: pointer; display: grid; place-items: center; font-size: 13px; font-weight: 600; transition: var(--transition); }
+    .iconbtn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+    .nav-links { display: flex; gap: 6px; }
+    .nav-links a { padding: 8px 14px; border-radius: 10px; font-size: 14px; font-weight: 500; color: var(--color-fg-1); transition: var(--transition); }
+    .nav-links a:hover { background: var(--color-bg-soft); color: var(--color-fg-0); }
+    @media (max-width: 760px) { .nav-links { display: none; } }
+
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 12px; font-weight: 600; font-size: 14px; cursor: pointer; border: 1px solid transparent; transition: var(--transition); white-space: nowrap; }
+    .btn-primary { background: var(--color-primary); color: #fff; box-shadow: 0 6px 18px var(--color-primary-glow); }
+    .btn-primary:hover { background: var(--color-primary-hover); transform: translateY(-1px); }
+    .btn-ghost { background: var(--color-bg-card); color: var(--color-fg-0); border-color: var(--color-border); }
+    .btn-ghost:hover { border-color: var(--color-primary); color: var(--color-primary); }
+
+    /* ── Hero ── */
+    .hero { padding: 96px 0 72px; text-align: center; position: relative; overflow: hidden; }
+    .hero::before { content: ''; position: absolute; top: -180px; left: 50%; transform: translateX(-50%); width: 720px; height: 480px; background: radial-gradient(ellipse at center, var(--color-primary-glow), transparent 68%); pointer-events: none; }
+    .pill { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px; background: var(--color-primary-light); color: var(--color-primary); font-size: 13px; font-weight: 600; margin-bottom: 26px; border: 1px solid color-mix(in srgb, var(--color-primary) 18%, transparent); }
+    .hero h1 { font-size: clamp(36px, 6vw, 60px); font-weight: 800; letter-spacing: -0.025em; line-height: 1.08; margin-bottom: 22px; }
+    .hero h1 .grad { background: linear-gradient(120deg, var(--color-primary), var(--color-purple)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p.lead { font-size: clamp(17px, 2.4vw, 20px); color: var(--color-fg-2); max-width: 660px; margin: 0 auto 36px; }
+    .hero-cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 30px; }
+    .tagline { font-style: italic; color: var(--color-fg-3); font-size: 15px; }
+
+    /* ── Stats ── */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; margin: 64px 0; }
+    @media (max-width: 760px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+    .stat { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 26px 20px; text-align: center; box-shadow: var(--shadow-sm); }
+    .stat .num { font-size: 30px; font-weight: 800; color: var(--color-primary); letter-spacing: -0.02em; }
+    .stat .lbl { font-size: 13px; color: var(--color-fg-2); margin-top: 4px; }
+
+    /* ── Sections ── */
+    section.block { padding: 60px 0; }
+    .sec-head { text-align: center; max-width: 620px; margin: 0 auto 48px; }
+    .sec-head h2 { font-size: clamp(26px, 4vw, 36px); font-weight: 800; letter-spacing: -0.02em; margin-bottom: 12px; }
+    .sec-head p { color: var(--color-fg-2); font-size: 16px; }
+
+    .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    @media (max-width: 920px) { .feature-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) { .feature-grid { grid-template-columns: 1fr; } }
+    .feature { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 26px; transition: var(--transition); }
+    .feature:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border)); }
+    .feature .fi { width: 46px; height: 46px; border-radius: 12px; background: var(--color-primary-light); color: var(--color-primary); display: grid; place-items: center; margin-bottom: 16px; }
+    .feature h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+    .feature p { font-size: 14px; color: var(--color-fg-2); }
+
+    /* ── Quick start ── */
+    .qs { background: var(--color-bg-soft); border-radius: var(--radius-lg); padding: 8px; border: 1px solid var(--color-border); }
+    .tabs { display: flex; gap: 4px; padding: 6px; flex-wrap: wrap; }
+    .tab { flex: 1; min-width: 120px; padding: 10px; border-radius: 10px; border: none; background: transparent; color: var(--color-fg-2); font-weight: 600; font-size: 14px; cursor: pointer; font-family: var(--font-sans); transition: var(--transition); }
+    .tab.active { background: var(--color-bg-card); color: var(--color-primary); box-shadow: var(--shadow-sm); }
+    pre { background: #0b1220; color: #e2e8f0; border-radius: 12px; padding: 22px; overflow-x: auto; font-family: var(--font-mono); font-size: 13.5px; line-height: 1.7; margin: 8px; position: relative; }
+    pre .cmt { color: #64748b; }
+    pre .cmd { color: #7dd3fc; }
+    .copybtn { position: absolute; top: 12px; right: 12px; padding: 5px 12px; font-size: 12px; border-radius: 8px; border: 1px solid #22324d; background: #111a2d; color: #94a3b8; cursor: pointer; font-weight: 600; transition: var(--transition); }
+    .copybtn:hover { color: #e2e8f0; border-color: #3b5bdb; }
+    .qs-panel { display: none; }
+    .qs-panel.active { display: block; }
+
+    /* ── Why / comparison ── */
+    .why { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    @media (max-width: 760px) { .why { grid-template-columns: 1fr; } }
+    .why-card { background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: var(--radius); padding: 28px; }
+    .why-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+    .why-list { list-style: none; }
+    .why-list li { display: flex; gap: 10px; padding: 7px 0; font-size: 14.5px; color: var(--color-fg-1); }
+    .why-list .ck { color: var(--color-success); font-weight: 700; flex-shrink: 0; }
+    .why-list .xx { color: var(--color-fg-3); flex-shrink: 0; }
+
+    /* ── CTA band ── */
+    .cta-band { background: linear-gradient(120deg, var(--color-primary), var(--color-purple)); border-radius: var(--radius-lg); padding: 56px 32px; text-align: center; color: #fff; margin: 20px 0; }
+    .cta-band h2 { font-size: clamp(24px, 4vw, 34px); font-weight: 800; margin-bottom: 12px; }
+    .cta-band p { opacity: 0.92; margin-bottom: 26px; font-size: 16px; }
+    .cta-band .btn-primary { background: #fff; color: var(--color-primary); }
+    .cta-band .btn-primary:hover { background: #f1f5f9; }
+    .cta-band .btn-ghost { background: rgba(255,255,255,0.12); color: #fff; border-color: rgba(255,255,255,0.3); }
+    .cta-band .btn-ghost:hover { background: rgba(255,255,255,0.2); color: #fff; }
+
+    /* ── Footer ── */
+    footer { border-top: 1px solid var(--color-border); padding: 40px 0; margin-top: 40px; }
+    .foot { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+    .foot .muted { color: var(--color-fg-3); font-size: 13.5px; }
+    .foot-links { display: flex; gap: 20px; font-size: 14px; }
+    .foot-links a { color: var(--color-fg-2); transition: var(--transition); }
+    .foot-links a:hover { color: var(--color-primary); }
+
+    [data-lang-en], [data-lang-id] { display: none; }
+    html[data-lang="en"] [data-lang-en] { display: revert; }
+    html[data-lang="id"] [data-lang-id] { display: revert; }
+    .reveal { opacity: 0; transform: translateY(16px); transition: opacity 0.5s ease, transform 0.5s ease; }
+    .reveal.in { opacity: 1; transform: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap nav">
+      <div class="brand"><span class="logo">L</span><span>Lintasan</span></div>
+      <nav class="nav-links">
+        <a href="#features" data-lang-en>Features</a><a href="#features" data-lang-id>Fitur</a>
+        <a href="#quickstart" data-lang-en>Quick Start</a><a href="#quickstart" data-lang-id>Mulai Cepat</a>
+        <a href="#why" data-lang-en>Why Lintasan</a><a href="#why" data-lang-id>Kenapa Lintasan</a>
+        <a href="https://github.com/sanhaji182/lintasan-go" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="iconbtn" id="langToggle" title="Switch language">ID</button>
+        <button class="iconbtn" id="themeToggle" title="Toggle theme">🌙</button>
+        <a class="btn btn-primary" href="https://github.com/sanhaji182/lintasan-go/releases/latest" target="_blank" rel="noopener">
+          <span data-lang-en>Download</span><span data-lang-id>Unduh</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <!-- HERO -->
+    <section class="hero">
+      <div class="wrap">
+        <span class="pill">⚡ <span data-lang-en>Single binary · ~24MB · 35x less RAM</span><span data-lang-id>Satu binary · ~24MB · 35x lebih hemat RAM</span></span>
+        <h1>
+          <span data-lang-en>One endpoint for <span class="grad">every LLM provider</span></span>
+          <span data-lang-id>Satu endpoint untuk <span class="grad">semua provider LLM</span></span>
+        </h1>
+        <p class="lead">
+          <span data-lang-en>Lintasan is a high-performance LLM proxy gateway written in Go. Smart routing, automatic failover, semantic caching, and token compression — behind one OpenAI-compatible API, with the dashboard embedded right in the binary.</span>
+          <span data-lang-id>Lintasan adalah LLM proxy gateway berperforma tinggi yang ditulis dengan Go. Smart routing, failover otomatis, semantic caching, dan token compression — di balik satu API yang OpenAI-compatible, dengan dashboard yang sudah menyatu di dalam binary.</span>
+        </p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#quickstart">
+            <span data-lang-en>Get Started</span><span data-lang-id>Mulai</span> →
+          </a>
+          <a class="btn btn-ghost" href="https://github.com/sanhaji182/lintasan-go" target="_blank" rel="noopener">
+            <span data-lang-en>View on GitHub</span><span data-lang-id>Lihat di GitHub</span>
+          </a>
+        </div>
+        <p class="tagline">"Setiap Koneksi Punya Jalannya."</p>
+      </div>
+    </section>
+
+    <div class="wrap">
+      <!-- STATS -->
+      <div class="stats reveal">
+        <div class="stat"><div class="num">~24MB</div><div class="lbl"><span data-lang-en>Single binary</span><span data-lang-id>Satu binary</span></div></div>
+        <div class="stat"><div class="num">~18MB</div><div class="lbl"><span data-lang-en>RAM at idle</span><span data-lang-id>RAM saat idle</span></div></div>
+        <div class="stat"><div class="num">35x</div><div class="lbl"><span data-lang-en>Less RAM vs Node</span><span data-lang-id>Lebih hemat dari Node</span></div></div>
+        <div class="stat"><div class="num">581</div><div class="lbl"><span data-lang-en>Backend tests</span><span data-lang-id>Tes backend</span></div></div>
+      </div>
+
+      <!-- FEATURES -->
+      <section class="block" id="features">
+        <div class="sec-head reveal">
+          <h2><span data-lang-en>Everything in one gateway</span><span data-lang-id>Semua dalam satu gateway</span></h2>
+          <p><span data-lang-en>Production-grade routing, caching, and observability — no extra services to run.</span><span data-lang-id>Routing, caching, dan observability kelas produksi — tanpa service tambahan.</span></p>
+        </div>
+        <div class="feature-grid">
+          <div class="feature reveal"><div class="fi">🌐</div><h3><span data-lang-en>Unified Provider Routing</span><span data-lang-id>Routing Provider Terpadu</span></h3><p><span data-lang-en>One endpoint for many providers (OpenAI, Anthropic, Gemini, DeepSeek, Groq…) with smart routing and automatic failover.</span><span data-lang-id>Satu endpoint untuk banyak provider (OpenAI, Anthropic, Gemini, DeepSeek, Groq…) dengan smart routing dan failover otomatis.</span></p></div>
+          <div class="feature reveal"><div class="fi">⚡</div><h3><span data-lang-en>Semantic Caching</span><span data-lang-id>Semantic Caching</span></h3><p><span data-lang-en>Cosine-similarity cache cuts provider load and speeds up repeated responses dramatically.</span><span data-lang-id>Cache berbasis cosine-similarity memangkas beban provider dan mempercepat response berulang secara drastis.</span></p></div>
+          <div class="feature reveal"><div class="fi">🗜️</div><h3><span data-lang-en>Token Compression</span><span data-lang-id>Token Compression</span></h3><p><span data-lang-en>Trim redundant context before it hits the provider — fewer tokens, lower cost, same result.</span><span data-lang-id>Pangkas konteks berulang sebelum sampai ke provider — token lebih sedikit, biaya turun, hasil tetap.</span></p></div>
+          <div class="feature reveal"><div class="fi">🛡️</div><h3><span data-lang-en>Secure by Default</span><span data-lang-id>Aman Sejak Awal</span></h3><p><span data-lang-en>JWT auth, API key controls, masked secrets, and audit logs for production operations.</span><span data-lang-id>JWT auth, kontrol API key, secret termasking, dan audit log untuk operasi produksi.</span></p></div>
+          <div class="feature reveal"><div class="fi">🔀</div><h3><span data-lang-en>Format Translation</span><span data-lang-id>Translasi Format</span></h3><p><span data-lang-en>Bridge request/response formats across providers without changing your client code.</span><span data-lang-id>Jembatani format request/response lintas provider tanpa mengubah kode client.</span></p></div>
+          <div class="feature reveal"><div class="fi">📊</div><h3><span data-lang-en>Observability Dashboard</span><span data-lang-id>Dashboard Observability</span></h3><p><span data-lang-en>Logs, analytics, latency, cache hit rate, and Prometheus metrics — embedded in the binary.</span><span data-lang-id>Logs, analytics, latency, cache hit rate, dan metrik Prometheus — menyatu di binary.</span></p></div>
+          <div class="feature reveal"><div class="fi">🧩</div><h3><span data-lang-en>MCP Server</span><span data-lang-id>MCP Server</span></h3><p><span data-lang-en>Built-in Model Context Protocol server (JSON-RPC over HTTP + SSE) with 14 tools.</span><span data-lang-id>Model Context Protocol server bawaan (JSON-RPC via HTTP + SSE) dengan 14 tools.</span></p></div>
+          <div class="feature reveal"><div class="fi">🧠</div><h3><span data-lang-en>Vector Memory</span><span data-lang-id>Vector Memory</span></h3><p><span data-lang-en>Store, search, and recall context with a built-in vector memory layer over SQLite.</span><span data-lang-id>Simpan, cari, dan recall konteks dengan layer vector memory bawaan di atas SQLite.</span></p></div>
+          <div class="feature reveal"><div class="fi">🔌</div><h3><span data-lang-en>Plugin System</span><span data-lang-id>Sistem Plugin</span></h3><p><span data-lang-en>Extend behavior without touching the core — guardrails, budgets, quotas, and more.</span><span data-lang-id>Perluas perilaku tanpa menyentuh core — guardrails, budget, quota, dan lainnya.</span></p></div>
+          <div class="feature reveal"><div class="fi">📦</div><h3><span data-lang-en>Single Binary Deploy</span><span data-lang-id>Deploy Satu Binary</span></h3><p><span data-lang-en>UI + API in one executable. Download, run, done — or use Docker. No Node process needed.</span><span data-lang-id>UI + API dalam satu executable. Unduh, jalankan, selesai — atau pakai Docker. Tanpa proses Node.</span></p></div>
+        </div>
+      </section>
+
+      <!-- QUICK START -->
+      <section class="block" id="quickstart">
+        <div class="sec-head reveal">
+          <h2><span data-lang-en>Up and running in seconds</span><span data-lang-id>Jalan dalam hitungan detik</span></h2>
+          <p><span data-lang-en>Pick your path. The dashboard is served from the same binary at port 20180.</span><span data-lang-id>Pilih jalurmu. Dashboard dilayani dari binary yang sama di port 20180.</span></p>
+        </div>
+        <div class="qs reveal">
+          <div class="tabs">
+            <button class="tab active" data-qs="bin"><span data-lang-en>Binary</span><span data-lang-id>Binary</span></button>
+            <button class="tab" data-qs="docker">Docker</button>
+            <button class="tab" data-qs="src"><span data-lang-en>From Source</span><span data-lang-id>Dari Source</span></button>
+          </div>
+          <div class="qs-panel active" data-qs-panel="bin">
+<pre><button class="copybtn">copy</button><span class="cmt"># Download the single binary (Linux x86_64) and run</span>
+<span class="cmd">curl</span> -fL -o lintasan https://github.com/sanhaji182/lintasan-go/releases/latest/download/lintasan-linux-amd64
+<span class="cmd">chmod</span> +x lintasan
+<span class="cmd">./lintasan</span> start
+
+<span class="cmt"># UI + API → http://localhost:20180</span></pre>
+          </div>
+          <div class="qs-panel" data-qs-panel="docker">
+<pre><button class="copybtn">copy</button><span class="cmt"># Clone, then bring it up with Docker Compose</span>
+<span class="cmd">git</span> clone https://github.com/sanhaji182/lintasan-go.git
+<span class="cmd">cd</span> lintasan-go
+<span class="cmd">LINTASAN_MASTER_KEY</span>=$(openssl rand -hex 32) docker compose up --build
+
+<span class="cmt"># UI + API → http://localhost:20180</span></pre>
+          </div>
+          <div class="qs-panel" data-qs-panel="src">
+<pre><button class="copybtn">copy</button><span class="cmt"># Requires Go 1.22+ and Node 20+ (to build the dashboard)</span>
+<span class="cmd">git</span> clone https://github.com/sanhaji182/lintasan-go.git
+<span class="cmd">cd</span> lintasan-go
+<span class="cmd">make</span> build        <span class="cmt"># frontend → embed → ./lintasan</span>
+<span class="cmd">./lintasan</span> start</pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- WHY -->
+      <section class="block" id="why">
+        <div class="sec-head reveal">
+          <h2><span data-lang-en>Why Lintasan</span><span data-lang-id>Kenapa Lintasan</span></h2>
+          <p><span data-lang-en>Built lean in Go, so your gateway stops being the heaviest thing in the stack.</span><span data-lang-id>Dibangun ramping dengan Go, supaya gateway-mu bukan lagi yang paling berat di stack.</span></p>
+        </div>
+        <div class="why">
+          <div class="why-card reveal">
+            <h3>✅ <span data-lang-en>Lintasan (Go)</span><span data-lang-id>Lintasan (Go)</span></h3>
+            <ul class="why-list">
+              <li><span class="ck">✓</span> <span data-lang-en>Single ~24MB binary, ~18MB RAM at idle</span><span data-lang-id>Satu binary ~24MB, ~18MB RAM saat idle</span></li>
+              <li><span class="ck">✓</span> <span data-lang-en>Dashboard embedded — no separate Node process</span><span data-lang-id>Dashboard menyatu — tanpa proses Node terpisah</span></li>
+              <li><span class="ck">✓</span> <span data-lang-en>SQLite by default — no external database</span><span data-lang-id>SQLite secara default — tanpa database eksternal</span></li>
+              <li><span class="ck">✓</span> <span data-lang-en>Semantic cache + token compression built in</span><span data-lang-id>Semantic cache + token compression bawaan</span></li>
+              <li><span class="ck">✓</span> <span data-lang-en>Download &amp; run, Docker, or build from source</span><span data-lang-id>Unduh &amp; jalan, Docker, atau build dari source</span></li>
+            </ul>
+          </div>
+          <div class="why-card reveal">
+            <h3>⚖️ <span data-lang-en>Typical Node gateways</span><span data-lang-id>Gateway Node pada umumnya</span></h3>
+            <ul class="why-list">
+              <li><span class="xx">•</span> <span data-lang-en>100–120MB RAM, heavier runtime footprint</span><span data-lang-id>100–120MB RAM, footprint runtime lebih berat</span></li>
+              <li><span class="xx">•</span> <span data-lang-en>Separate frontend/backend processes to manage</span><span data-lang-id>Proses frontend/backend terpisah yang harus dikelola</span></li>
+              <li><span class="xx">•</span> <span data-lang-en>Often needs Redis/Postgres alongside</span><span data-lang-id>Sering butuh Redis/Postgres pendamping</span></li>
+              <li><span class="xx">•</span> <span data-lang-en>node_modules + build pipeline to ship</span><span data-lang-id>node_modules + build pipeline untuk rilis</span></li>
+              <li><span class="xx">•</span> <span data-lang-en>More moving parts to deploy &amp; monitor</span><span data-lang-id>Lebih banyak komponen untuk deploy &amp; monitor</span></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA -->
+      <section class="block">
+        <div class="cta-band reveal">
+          <h2><span data-lang-en>Ship your AI traffic through one lane</span><span data-lang-id>Salurkan traffic AI lewat satu jalur</span></h2>
+          <p><span data-lang-en>Open source, MIT licensed, and ready to self-host.</span><span data-lang-id>Open source, lisensi MIT, dan siap di-self-host.</span></p>
+          <div class="hero-cta" style="margin-bottom:0">
+            <a class="btn btn-primary" href="https://github.com/sanhaji182/lintasan-go/releases/latest" target="_blank" rel="noopener"><span data-lang-en>Download Latest</span><span data-lang-id>Unduh Terbaru</span></a>
+            <a class="btn btn-ghost" href="https://github.com/sanhaji182/lintasan-go" target="_blank" rel="noopener">GitHub →</a>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap foot">
+      <div class="brand" style="font-size:16px"><span class="logo" style="width:28px;height:28px;font-size:15px">L</span> Lintasan</div>
+      <div class="foot-links">
+        <a href="https://github.com/sanhaji182/lintasan-go" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/sanhaji182/lintasan-go/blob/main/README.md" target="_blank" rel="noopener">Docs</a>
+        <a href="https://github.com/sanhaji182/lintasan-go/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/sanhaji182/lintasan-go/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </div>
+      <div class="muted">© 2026 Lintasan · Built with Go</div>
+    </div>
+  </footer>
+
+  <script>
+    // ── Theme ──
+    const htmlEl = document.documentElement;
+    const themeBtn = document.getElementById('themeToggle');
+    function applyTheme(t) {
+      htmlEl.setAttribute('data-theme', t);
+      themeBtn.textContent = t === 'dark' ? '☀️' : '🌙';
+      try { localStorage.setItem('lintasan_landing_theme', t); } catch (e) {}
+    }
+    let savedTheme = 'light';
+    try { savedTheme = localStorage.getItem('lintasan_landing_theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); } catch (e) {}
+    applyTheme(savedTheme);
+    themeBtn.addEventListener('click', () => applyTheme(htmlEl.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'));
+
+    // ── Language ──
+    const langBtn = document.getElementById('langToggle');
+    function applyLang(l) {
+      htmlEl.setAttribute('data-lang', l);
+      htmlEl.setAttribute('lang', l);
+      langBtn.textContent = l === 'id' ? 'EN' : 'ID';
+      try { localStorage.setItem('lintasan_landing_lang', l); } catch (e) {}
+    }
+    let savedLang = 'en';
+    try { savedLang = localStorage.getItem('lintasan_landing_lang') || (navigator.language && navigator.language.startsWith('id') ? 'id' : 'en'); } catch (e) {}
+    applyLang(savedLang);
+    langBtn.addEventListener('click', () => applyLang(htmlEl.getAttribute('data-lang') === 'id' ? 'en' : 'id'));
+
+    // ── Quick start tabs ──
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        const key = tab.getAttribute('data-qs');
+        document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t === tab));
+        document.querySelectorAll('[data-qs-panel]').forEach(p => p.classList.toggle('active', p.getAttribute('data-qs-panel') === key));
+      });
+    });
+
+    // ── Copy buttons ──
+    document.querySelectorAll('.copybtn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const pre = btn.parentElement.cloneNode(true);
+        pre.querySelector('.copybtn')?.remove();
+        const text = pre.textContent.trim();
+        navigator.clipboard.writeText(text).then(() => {
+          const old = btn.textContent; btn.textContent = '✓ copied';
+          setTimeout(() => btn.textContent = old, 1400);
+        }).catch(() => {});
+      });
+    });
+
+    // ── Reveal on scroll ──
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { threshold: 0.12 });
+    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+  </script>
+</body>
+</html>
