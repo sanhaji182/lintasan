@@ -33,6 +33,12 @@ func TestMain(m *testing.M) {
 	case "acp-agent":
 		runScriptedACPAgent()
 		return
+	case "codex-fixture":
+		// Replays the recorded codex-acp spec-ACP frame sequence (testdata/
+		// codex-acp-session.jsonl) — the in-process wire-truth anchor for the
+		// Codex Protocol + Acceptance gates. Defined in codex_test.go.
+		runCodexFixtureAgent()
+		return
 	case "acp-agent-assert-secret":
 		// Same agent, but FIRST assert the injected secret is visible to the
 		// child (proves credential injection reached the process env) and that
