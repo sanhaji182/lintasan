@@ -297,6 +297,24 @@ func (c *ACPClient) Initialize(ctx context.Context, params InitializeParams) (*I
 	return &res, nil
 }
 
+// AuthenticateParams selects an auth method by id for the ACP `authenticate`
+// method. For an env_var auth method the secret is already in the child's
+// environment (injected by G4); authenticate tells the agent WHICH method to
+// use so it can validate the precondition before any session is created.
+type AuthenticateParams struct {
+	MethodID string `json:"methodId"`
+}
+
+// Authenticate selects an auth method on the agent (the ACP `authenticate`
+// request). Spec ordering: initialize → authenticate (if the agent requires it)
+// → session/new. A spec-faithful agent (e.g. codex-acp) rejects session/new
+// with "Authentication required" until authenticate succeeds. Agents that need
+// no explicit auth selection simply return an empty result; callers that do not
+// set an auth method skip this step entirely.
+func (c *ACPClient) Authenticate(ctx context.Context, params AuthenticateParams) error {
+	return c.call(ctx, "authenticate", params, nil)
+}
+
 // NewSession opens a new agent session and returns its id.
 func (c *ACPClient) NewSession(ctx context.Context, params any) (string, error) {
 	var res NewSessionResult

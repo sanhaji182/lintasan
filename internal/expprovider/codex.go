@@ -43,6 +43,15 @@ const CodexProviderName = "codex"
 // plain API key is the deterministic staging path — see the onboarding review.)
 const CodexAuthEnvVar = "OPENAI_API_KEY"
 
+// CodexAuthMethodID is the ACP `authenticate` method id codex-acp exposes for
+// the OPENAI_API_KEY env-var auth method. The broker selects it after
+// initialize and BEFORE session/new — codex-acp rejects session/new with
+// "Authentication required" until an auth method is selected. (The key itself
+// is delivered out-of-band via CodexAuthEnvVar / G4 env injection; this id only
+// names WHICH already-present credential codex-acp should use. codex-acp also
+// offers "codex-api-key" and "chatgpt"; we pin the OPENAI_API_KEY path.)
+const CodexAuthMethodID = "openai-api-key"
+
 // CodexLaunchSpec returns the LaunchSpec for the Codex ACP adapter. baseEnv is
 // the NON-secret child environment (PATH/HOME/etc.); the secret is injected by
 // G4 at launch, never placed in baseEnv. path is the codex-acp executable
@@ -62,6 +71,7 @@ func CodexLaunchSpec(path string, args []string, baseEnv []string) LaunchSpec {
 		Args:           args,
 		AuthMode:       AuthAPIKey,
 		AuthEnvVar:     CodexAuthEnvVar,
+		AuthMethodID:   CodexAuthMethodID,
 		BaseEnv:        baseEnv,
 		StartTimeout:   30 * time.Second,
 		RequestTimeout: 120 * time.Second, // a tool-loop turn can be long

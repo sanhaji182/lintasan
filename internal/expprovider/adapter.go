@@ -32,6 +32,8 @@ package expprovider
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 
 	"github.com/sanhaji182/lintasan-go/internal/experimental"
 	"github.com/sanhaji182/lintasan-go/internal/provider"
@@ -159,6 +161,18 @@ func (p *ACPProvider) start(ctx context.Context) error {
 		_ = client.Close()
 		return err
 	}
+	// ACP auth ordering: initialize → authenticate (if the spec names a method)
+	// → session/new. A spec-faithful agent (codex-acp) rejects session/new with
+	// "Authentication required" until authenticate succeeds. The secret is
+	// already in the child env (G4 injected AuthEnvVar); authenticate only tells
+	// the agent WHICH present credential to use. Skipped when AuthMethodID is
+	// empty (agent needs no explicit selection) or AuthMode is none.
+	if p.spec.AuthMode != AuthNone && strings.TrimSpace(p.spec.AuthMethodID) != "" {
+		if err := client.Authenticate(ctx, experimental.AuthenticateParams{MethodID: p.spec.AuthMethodID}); err != nil {
+			_ = client.Close()
+			return err
+		}
+	}
 	p.proc = proc
 	p.client = client
 	return nil
@@ -169,10 +183,68 @@ func (p *ACPProvider) Run(ctx context.Context, turn AgentTurn) (*experimental.Pr
 	if err := p.start(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := p.client.NewSession(ctx, turn.SessionParams); err != nil {
+	sessionID, err := p.client.NewSession(ctx, p.sessionParams(turn))
+	if err != nil {
 		return nil, err
 	}
-	return p.client.Prompt(ctx, experimental.PromptParams{Prompt: turn.Prompt}, turn.OnPermission)
+	// Spec ACP requires the sessionId on session/prompt and the prompt as a
+	// ContentBlock array. A spec-faithful agent (codex-acp) rejects a prompt that
+	// omits the sessionId or sends a non-array prompt payload. encodePrompt
+	// normalizes turn.Prompt to the ContentBlock[] shape.
+	return p.client.Prompt(ctx, experimental.PromptParams{
+		SessionID: sessionID,
+		Prompt:    encodePrompt(turn.Prompt),
+	}, turn.OnPermission)
+}
+
+// sessionParams returns the params for session/new. If the caller supplied
+// explicit turn.SessionParams, those win (full control). Otherwise the adapter
+// builds the spec ACP default — {cwd, mcpServers:[]} — which a spec-faithful
+// agent (codex-acp) requires (it rejects session/new with -32602 when cwd is
+// absent). cwd is spec.WorkDir, falling back to the host's current directory.
+func (p *ACPProvider) sessionParams(turn AgentTurn) any {
+	if turn.SessionParams != nil {
+		return turn.SessionParams
+	}
+	cwd := strings.TrimSpace(p.spec.WorkDir)
+	if cwd == "" {
+		if wd, err := os.Getwd(); err == nil {
+			cwd = wd
+		}
+	}
+	return map[string]any{"cwd": cwd, "mcpServers": []any{}}
+}
+
+// encodePrompt normalizes an AgentTurn.Prompt into the spec ACP ContentBlock[]
+// shape ([]{"type":"text","text":...}). It accepts:
+//   - a plain string                          → one text block
+//   - map[string]any{"text": "..."}           → one text block (legacy shape)
+//   - an already-shaped []any / []map[...]any  → passed through unchanged
+//   - any other value                          → wrapped via fmt as a text block
+//
+// This keeps existing callers (which pass {"text": ...}) working while sending
+// the wire shape a real agent requires.
+func encodePrompt(prompt any) any {
+	switch v := prompt.(type) {
+	case nil:
+		return []any{}
+	case string:
+		return []map[string]any{{"type": "text", "text": v}}
+	case []any:
+		return v // assume already a ContentBlock array
+	case []map[string]any:
+		return v // assume already a ContentBlock array
+	case map[string]any:
+		if t, ok := v["text"]; ok {
+			if s, ok := t.(string); ok {
+				return []map[string]any{{"type": "text", "text": s}}
+			}
+		}
+		// Unknown map shape: pass through (caller built a custom block/array).
+		return v
+	default:
+		return prompt
+	}
 }
 
 // StopAgent tears down the subprocess. Idempotent; safe if never started.

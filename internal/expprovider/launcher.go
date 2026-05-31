@@ -62,10 +62,23 @@ type LaunchSpec struct {
 	// AuthEnvVar is the environment variable the credential is injected into
 	// when AuthMode is api_key/oauth (e.g. "OPENAI_API_KEY"). Empty for AuthNone.
 	AuthEnvVar string
+	// AuthMethodID is the ACP `authenticate` method id to select after
+	// initialize, BEFORE session/new (e.g. "openai-api-key" for codex-acp). A
+	// spec-faithful agent rejects session/new with "Authentication required"
+	// until authenticate succeeds. Empty means the agent needs no explicit auth
+	// selection (the broker skips the authenticate step). The secret itself is
+	// still delivered out-of-band via AuthEnvVar (G4 env injection); AuthMethodID
+	// only tells the agent WHICH already-present credential to use.
+	AuthMethodID string
 	// BaseEnv is the NON-secret environment the child needs (e.g. PATH, HOME,
 	// flags). Secrets are NEVER placed here — G4 adds the credential separately
 	// at launch time. The child sees EXACTLY BaseEnv + the injected credential.
 	BaseEnv []string
+	// WorkDir is the working directory advertised to the agent in the spec ACP
+	// session/new params (`cwd`). A spec-faithful agent (codex-acp) rejects
+	// session/new with -32602 when cwd is absent. Empty means the adapter falls
+	// back to the host process's current directory at launch.
+	WorkDir string
 	// StartTimeout / RequestTimeout / StopTimeout bound the subprocess; zero
 	// uses the experimental package defaults.
 	StartTimeout   time.Duration
