@@ -73,6 +73,12 @@ type ProxyHandler struct {
 	providerReg     *provider.Registry
 	defaultProvider provider.Provider
 	providerSDK     bool
+
+	// capabilityShadow is the F2.3 kill-switch (default false): when true, the
+	// chat router evaluates candidate capability eligibility in OBSERVE-ONLY
+	// mode (records would-exclude, never actually excludes). Read once at
+	// startup in initProviderSDK. See provider_bootstrap.go + capability_shadow.go.
+	capabilityShadow bool
 }
 
 func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
@@ -575,6 +581,14 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	candidates = p.reorderCandidatesForTask(candidates, taskClass, routeProfile)
+
+	// F2.3 capability shadow routing (observe-only, flag-gated, default OFF).
+	// When enabled, evaluate whether each candidate would satisfy the request's
+	// required capabilities and RECORD the result. This NEVER mutates, reorders,
+	// or filters `candidates` — selection below is byte-identical regardless.
+	// Enforcement (dropping non-satisfying candidates) is F2.4, gated separately.
+	p.runCapabilityShadow(w, req, stream, candidates)
+
 	req["model"] = resolvedModel
 	body, _ = json.Marshal(req)
 

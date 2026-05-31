@@ -40,6 +40,18 @@ func (p *ProxyHandler) initProviderSDK(database *db.DB) {
 			p.providerSDK = true
 		}
 	}
+
+	// F2.3 capability shadow kill-switch: independent of provider_sdk_enabled,
+	// default false. When on, the chat router evaluates candidate capability
+	// eligibility in OBSERVE-ONLY mode (records, never excludes). Same parsing
+	// contract. Read once at startup so the hot path only checks a bool.
+	p.capabilityShadow = false
+	if v, err := database.GetSetting("capability_shadow_enabled"); err == nil {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1", "on", "yes":
+			p.capabilityShadow = true
+		}
+	}
 }
 
 // providerSDKEligible reports whether a connection may use the SDK path.
