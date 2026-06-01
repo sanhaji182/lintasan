@@ -67,8 +67,21 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     // Other 403s (e.g. admin-only routes) fall through to the generic handler.
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(err.error?.message || err.error || res.statusText);
+    // Parse the body and surface a rich ApiError so callers can read the
+    // OpenAI-standard envelope (code/type/message/param/hint) instead of a
+    // flattened string. ApiError preserves the original shape on `.detail`.
+    const body = await res.json().catch(() => ({}));
+    const inner = (body && typeof body === 'object' && body.error !== undefined) ? body.error : body;
+    const message =
+      (inner && typeof inner === 'object' && inner.message) ? inner.message :
+      (typeof inner === 'string' ? inner : res.statusText);
+    const err: any = new Error(message);
+    err.status = res.status;
+    // Preserve the full envelope (code/type/param/hint) and the Lintasan fields
+    // (latency_ms, data, success) so the UI can show them all.
+    err.detail = (inner && typeof inner === 'object') ? inner : { message: String(inner) };
+    err.envelope = body; // the full {data, error, hint, latency_ms, success} shape
+    throw err;
   }
   return res.json();
 }

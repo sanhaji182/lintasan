@@ -1,16 +1,17 @@
 package server
 
 import (
-	"database/sql"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
-	"time"
+    "database/sql"
+    "encoding/json"
+    "fmt"
+    "io"
+    "net/http"
+    "strings"
+    "time"
 
-	"github.com/google/uuid"
-	"github.com/sanhaji182/lintasan-go/internal/discover"
+    "github.com/google/uuid"
+    "github.com/sanhaji182/lintasan-go/internal/discover"
+    "github.com/sanhaji182/lintasan-go/internal/errfmt"
 )
 
 func (s *Server) registerParityRoutes() {
@@ -226,7 +227,7 @@ func (s *Server) handlePresetTest(w http.ResponseWriter, r *http.Request){
     authPrefix,_:=preset["authPrefix"].(string)
     apiKey,_:=in["apiKey"].(string)
     start:=time.Now()
-    models,err:=fetchModels(baseUrl,modelsPath,apiKey,authHeader,authPrefix)
+    models,_,_,err:=fetchModels(baseUrl,modelsPath,apiKey,authHeader,authPrefix)
     if err!=nil{
         writeJSON(w,map[string]any{"success":false,"error":err.Error(),"latency_ms":time.Since(start).Milliseconds()})
         return
@@ -234,22 +235,119 @@ func (s *Server) handlePresetTest(w http.ResponseWriter, r *http.Request){
     writeJSON(w,map[string]any{"success":true,"message":fmt.Sprintf("Connected · %d models found · %dms",len(models),time.Since(start).Milliseconds()),"models_count":len(models),"latency_ms":time.Since(start).Milliseconds(),"models":models})
 }
 
-func fetchModels(base, path, key, h, prefix string)([]any,error){
-    if base=="" { return nil, fmt.Errorf("base_url required") }
+func fetchModels(base, path, key, h, prefix string)([]any,int,[]byte,error){
+    if base=="" { return nil,0,nil,fmt.Errorf("base_url required") }
     req,_:=http.NewRequest("GET", strings.TrimRight(base,"/")+path, nil)
     if key!=""{ if h==""{h="Authorization"}; req.Header.Set(h,prefix+key) }
-    c:=&http.Client{Timeout:20*time.Second}; resp,err:=c.Do(req); if err!=nil{return nil,err}; defer resp.Body.Close()
-    b,_:=io.ReadAll(resp.Body); if resp.StatusCode>=400 { return nil, fmt.Errorf("upstream status %d: %s",resp.StatusCode,string(b)) }
+    c:=&http.Client{Timeout:20*time.Second}; resp,err:=c.Do(req); if err!=nil{return nil,0,nil,err}; defer resp.Body.Close()
+    b,_:=io.ReadAll(resp.Body)
+    if resp.StatusCode>=400 { return nil,resp.StatusCode,b,fmt.Errorf("upstream status %d",resp.StatusCode) }
     var data map[string]any; json.Unmarshal(b,&data)
-    if arr,ok:=data["data"].([]any); ok { return arr,nil }
-    if arr,ok:=data["models"].([]any); ok { return arr,nil }
-    return []any{},nil
+    if arr,ok:=data["data"].([]any); ok { return arr,resp.StatusCode,b,nil }
+    if arr,ok:=data["models"].([]any); ok { return arr,resp.StatusCode,b,nil }
+    return []any{},resp.StatusCode,b,nil
 }
 
+// pingChat sends a minimal chat-completion request to verify the upstream
+// accepts chat traffic. Used as a fallback when the provider does not expose
+// /v1/models. Returns (statusCode, body, err) — a 2xx/3xx/4xx-non-404 result
+// means the upstream is reachable and auth works (a 400 "model not found" is
+// fine — that proves auth succeeded and traffic flows).
+func pingChat(base, key, h, prefix string)(int,[]byte,error){
+    if base=="" { return 0,nil,fmt.Errorf("base_url required") }
+    body:=`{"model":"__lintasan_ping__","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}`
+    req,_:=http.NewRequest("POST", strings.TrimRight(base,"/")+"/v1/chat/completions", strings.NewReader(body))
+    if key!=""{ if h==""{h="Authorization"}; req.Header.Set(h,prefix+key) }
+    req.Header.Set("Content-Type","application/json")
+    c:=&http.Client{Timeout:20*time.Second}; resp,err:=c.Do(req); if err!=nil{return 0,nil,err}
+    defer resp.Body.Close()
+    b,_:=io.ReadAll(resp.Body)
+    return resp.StatusCode,b,nil
+}
+
+func truncateBody(b []byte, n int) string { if len(b)<=n { return string(b) }; return string(b[:n])+"..." }
+
 func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
-    var in map[string]any; json.NewDecoder(r.Body).Decode(&in); base,_:=in["base_url"].(string); if base==""{base,_=in["baseUrl"].(string)}; key,_:=in["api_key"].(string); if key==""{key,_=in["apiKey"].(string)}; path,_:=in["models_path"].(string); if path==""{path,_=in["modelsPath"].(string)}; if path==""{path="/v1/models"}
-    start:=time.Now(); models,err:=fetchModels(base,path,key,"Authorization","Bearer "); if err!=nil{writeJSON(w,map[string]any{"success":false,"error":err.Error(),"latency_ms":time.Since(start).Milliseconds()});return}
-    writeJSON(w,map[string]any{"success":true,"message":fmt.Sprintf("Connected successfully · %d models found · %dms", len(models), time.Since(start).Milliseconds()),"latency_ms":time.Since(start).Milliseconds(),"models_count":len(models)})
+    var in map[string]any; json.NewDecoder(r.Body).Decode(&in)
+    base,_:=in["base_url"].(string); if base==""{base,_=in["baseUrl"].(string)}
+    key,_:=in["api_key"].(string); if key==""{key,_=in["apiKey"].(string)}
+    path,_:=in["models_path"].(string); if path==""{path,_=in["modelsPath"].(string)}; if path==""{path="/v1/models"}
+    // If only an id was supplied (list-view Test button), look up the saved
+    // connection from the DB so we can re-test it without re-typing the key.
+    if base=="" {
+        if id,_:=in["id"].(string); id!="" {
+            var dbBase, dbKey string
+            err:=s.db.Conn().QueryRow("SELECT base_url, api_key FROM connections WHERE id=?", id).Scan(&dbBase, &dbKey)
+            if err==nil {
+                base=dbBase
+                if key=="" { key=dbKey }
+            }
+        }
+    }
+    if base=="" {
+        e:=errfmt.New("base_url is required (and no saved connection found for the given id)", errfmt.TypeInvalidRequestError, errfmt.CodeBadFormat)
+        errfmt.Write(w, http.StatusBadRequest, e, nil, map[string]any{"success": false, "latency_ms": 0})
+        return
+    }
+    start:=time.Now()
+
+    models,status,body,err:=fetchModels(base,path,key,"Authorization","Bearer ")
+    latency:=time.Since(start).Milliseconds()
+
+    if err==nil{
+        msg:=fmt.Sprintf("Connected successfully · %d models found · %dms", len(models), latency)
+        errfmt.Write(w, http.StatusOK, nil, map[string]any{"models": models, "models_count": len(models)}, map[string]any{
+            "success": true, "message": msg, "latency_ms": latency, "models_count": len(models),
+        })
+        return
+    }
+
+    // /v1/models failed. Decide whether to fall back to a chat-ping.
+    // Only 5xx triggers fallback — it means the upstream itself is broken,
+    // so /v1/chat/completions might still work. For 4xx, the endpoint exists
+    // and the request itself was wrong (auth, format, model) — retrying with
+    // chat-ping won't help and will just add latency.
+    if key!="" && status>=500 && status<=599{
+        pingStatus,pingBody,pingErr:=pingChat(base,key,"Authorization","Bearer ")
+        if pingErr!=nil{
+            e:=errfmt.FromNetworkError(pingErr)
+            e.Message="models endpoint failed and chat-ping network error: "+e.Message
+            errfmt.Write(w, http.StatusBadGateway, e, nil, map[string]any{
+                "success": false, "latency_ms": latency, "hint": errfmt.HintForMessage(e.Message),
+            })
+            return
+        }
+        // 2xx/3xx → success via fallback
+        if pingStatus<400{
+            msg:=fmt.Sprintf("Reachable via chat endpoint (no /v1/models) · %dms",latency)
+            errfmt.Write(w, http.StatusOK, nil, nil, map[string]any{
+                "success": true, "message": msg, "latency_ms": latency, "models_count": 0, "fallback": "chat_ping",
+            })
+            return
+        }
+        // chat-ping returned 4xx/5xx → return standard error
+        e:=errfmt.FromStatus(pingStatus, pingBody, fmt.Sprintf("chat-ping status %d",pingStatus))
+        errfmt.Write(w, http.StatusBadGateway, e, nil, map[string]any{
+            "success": false, "latency_ms": latency, "hint": errfmt.HintForMessage(e.Message),
+        })
+        return
+    }
+
+    // Direct /v1/models failure — distinguish network vs HTTP
+    if status==0 {
+        // status==0 means we never even got a response (dial/timeout/DNS)
+        e:=errfmt.FromNetworkError(err)
+        errfmt.Write(w, http.StatusBadGateway, e, nil, map[string]any{
+            "success": false, "latency_ms": latency, "hint": errfmt.HintForMessage(e.Message),
+        })
+        return
+    }
+    e:=errfmt.FromStatus(status, body, fmt.Sprintf("upstream status %d",status))
+    httpStatus:=http.StatusBadGateway
+    if status>=400 && status<500 { httpStatus=http.StatusBadRequest }
+    errfmt.Write(w, httpStatus, e, nil, map[string]any{
+        "success": false, "latency_ms": latency, "hint": errfmt.HintForMessage(e.Message),
+    })
 }
 
 func (s *Server) handleModelsSyncByID(w http.ResponseWriter, r *http.Request) {
