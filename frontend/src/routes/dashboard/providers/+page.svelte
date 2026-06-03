@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { Server, ChevronDown, ChevronRight, Search, Brain, Zap, Eye, Wrench, FileJson, Activity, ExternalLink, Cpu } from 'lucide-svelte';
+  import { Server, ChevronDown, ChevronRight, Search, Brain, Zap, Eye, Wrench, FileJson, Activity, ExternalLink, Cpu } from 'lucide-svelte/icons';
 
   interface Model {
     id: string; name: string; provider: string;

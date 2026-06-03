@@ -6,8 +6,8 @@
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import {
     Webhook, Plus, Trash2, X, Save, Send, ToggleLeft, ToggleRight,
-    Globe, Bell, AlertCircle, CheckCircle2, Clock
-  } from 'lucide-svelte';
+    Globe, Bell, AlertCircle, CheckCircle2, Clock, Check
+  } from 'lucide-svelte/icons';
 
   interface WebhookRecord {
     id: string;

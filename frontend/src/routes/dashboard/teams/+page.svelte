@@ -6,7 +6,7 @@
   import {
     Users, Plus, Trash2, UserPlus, UserMinus,
     Crown, Shield, User, X, Settings
-  } from 'lucide-svelte';
+  } from 'lucide-svelte/icons';
 
   interface Team {
     id: string;

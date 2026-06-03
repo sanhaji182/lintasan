@@ -7,8 +7,8 @@
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
-    BrainCircuit, DollarSign, Gauge, Layers, ToggleLeft, ToggleRight
-  } from 'lucide-svelte';
+    BrainCircuit, DollarSign, Gauge, Layers, ToggleLeft, ToggleRight, X, Sparkles
+  } from 'lucide-svelte/icons';
 
   interface Combo {
     id: string;

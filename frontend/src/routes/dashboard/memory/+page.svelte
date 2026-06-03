@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { Brain, Search, Plus, Trash2, X, Tag, Database } from 'lucide-svelte';
+  import { Brain, Search, Plus, Trash2, X, Tag, Database } from 'lucide-svelte/icons';
 
   interface MemoryItem {
     key: string;

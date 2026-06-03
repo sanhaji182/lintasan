@@ -6,8 +6,8 @@
   import {
     Puzzle, Store, Sparkles, Settings, Trash2, Power,
     PowerOff, Search, Download, Tag, ChevronRight,
-    AlertCircle, CheckCircle2, Loader2, Wand2, Eye, X
-  } from 'lucide-svelte';
+    AlertCircle, CheckCircle2, Box, Info, X, Loader2, Wand2, Eye
+  } from 'lucide-svelte/icons';
 
   interface Plugin {
     id: string;

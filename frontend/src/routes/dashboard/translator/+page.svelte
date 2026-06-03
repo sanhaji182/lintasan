@@ -1,7 +1,7 @@
-<script>
+<script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  let formats = $state([]);
+  let formats = $state<any[]>([]);
   let sourceFormat = $state('openai');
   let targetFormat = $state('anthropic');
   let inputJson = $state(JSON.stringify({
@@ -14,7 +14,7 @@
 
   onMount(async () => {
     try {
-      const data = await api.get('/api/translate/formats');
+      const data: any = await api.get('/api/translate/formats');
       formats = data.formats || [];
     } catch (e) {
       console.error('Failed to load formats:', e);
@@ -32,7 +32,7 @@
       });
       const data = await res.json();
       outputJson = JSON.stringify(data, null, 2);
-    } catch (e) {
+    } catch (e: any) {
       outputJson = `Error: ${e.message}`;
     }
     translating = false;

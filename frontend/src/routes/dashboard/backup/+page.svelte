@@ -7,7 +7,7 @@
   import {
     Database, Download, Upload, RotateCcw, Trash2, Clock,
     FileJson, HardDrive, Shield, CheckCircle2, AlertCircle
-  } from 'lucide-svelte';
+  } from 'lucide-svelte/icons';
 
   interface BackupRecord {
     id: string;

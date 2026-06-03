@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { BarChart3 } from 'lucide-svelte';
+  import { BarChart3, ChartColumn, DollarSign, Database, Server, RefreshCw } from 'lucide-svelte/icons';
 
   let data = $state<any>(null);
   let quotaData = $state<any[]>([]);
@@ -88,7 +88,7 @@
   {#if loading}
     <Spinner />
   {:else if !data}
-    <div class="card"><EmptyState icon={BarChart3} title="No usage data" /></div>
+    <div class="card"><EmptyState icon={ChartColumn} title="No usage data" /></div>
   {:else}
     <!-- Summary stats -->
     <div class="card mb-5" style="padding: 0; overflow: hidden;">

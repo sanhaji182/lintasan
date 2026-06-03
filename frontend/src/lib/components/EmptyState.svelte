@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Component } from 'svelte';
 
-  let { icon: Icon, title, description }: { icon?: Component; title: string; description?: string } = $props();
+  let { icon: Icon, title, description }: { icon?: any; title: string; description?: string } = $props();
 </script>
 
 <div class="flex flex-col items-center justify-center text-center" style="padding: 48px 32px;">

@@ -6,7 +6,7 @@
   import {
     ShieldAlert, Plus, Trash2, ArrowDown, Link2,
     Brain, Server, ChevronRight, Save
-  } from 'lucide-svelte';
+  } from 'lucide-svelte/icons';
 
   interface FallbackChain {
     id: string;

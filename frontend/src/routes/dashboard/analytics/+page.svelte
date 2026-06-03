@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { TrendingUp, Zap, Database, Clock, Activity, Server, Cpu } from 'lucide-svelte';
+  import { TrendingUp, Zap, Database, Clock, Activity, Server, Cpu } from 'lucide-svelte/icons';
 
   interface LogEntry {
     id: string;

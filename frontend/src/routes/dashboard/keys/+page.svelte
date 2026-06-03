@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { Key, Plus, Copy, Trash2, X, Check } from 'lucide-svelte';
+  import { Key, Plus, Copy, Trash2, X, Check } from 'lucide-svelte/icons';
 
   let keys = $state<any[]>([]);
   let loading = $state(true);

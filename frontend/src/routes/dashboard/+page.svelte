@@ -8,7 +8,7 @@
   import {
     Activity, Zap, Clock, Coins, RefreshCw, ArrowUpRight,
     AlertCircle, Link2, CheckCircle2
-  } from 'lucide-svelte';
+  } from 'lucide-svelte/icons';
 
   interface DashboardStats {
     total_requests: number;
@@ -154,21 +154,21 @@
   >
     <StatCard
       label="Total Requests"
-      value={formatNumber(stats?.total_requests ?? 0)}
+      value={formatNumber((stats as any)?.total_requests ?? 0)}
       icon={Activity}
       color="var(--color-primary)"
       subtitle="Last 24 hours"
     />
     <StatCard
       label="Cache Hit Rate"
-      value="{stats?.cache_hit_rate ?? 0}%"
+      value="{(stats as any)?.cache_hit_rate ?? 0}%"
       icon={Zap}
       color="var(--color-success)"
       subtitle="Requests served from cache"
     />
     <StatCard
       label="Avg Latency"
-      value={formatLatency(stats?.avg_latency ?? 0)}
+      value={formatLatency((stats as any)?.avg_latency ?? 0)}
       icon={Clock}
       color="var(--color-warning)"
       subtitle="Mean response time"

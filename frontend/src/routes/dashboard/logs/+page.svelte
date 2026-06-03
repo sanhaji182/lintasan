@@ -8,7 +8,7 @@
     ScrollText, Search, RefreshCw, Filter,
     Clock, Zap, ArrowDownToLine, ArrowUpFromLine,
     Database, Timer, X
-  } from 'lucide-svelte';
+  } from 'lucide-svelte/icons';
 
   interface LogEntry {
     id: string;
@@ -269,7 +269,7 @@
                   {/if}
                 </td>
                 <td>
-                  <StatusBadge status={getStatusDisplay(log.status, log.cached)} />
+                  <StatusBadge status={getStatusDisplay(log.status, log.cached === 1) as any} />
                 </td>
                 <td>
                   <span class="font-mono" style="font-size: 12px; color: var(--color-fg-1);">

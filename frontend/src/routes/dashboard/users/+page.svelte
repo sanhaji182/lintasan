@@ -5,7 +5,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import {
     UserCog, Plus, Trash2, X, Save, Search, Shield, KeyRound, User, Crown
-  } from 'lucide-svelte';
+  } from 'lucide-svelte/icons';
 
   // Real backend schema (internal/auth/users.go → User).
   interface UserRecord {

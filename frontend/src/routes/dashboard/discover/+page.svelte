@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { Search, Globe, Zap, Clock, Shield, Check, Plus } from 'lucide-svelte';
+  import { Search, Globe, Zap, Clock, Shield, Check, Plus } from 'lucide-svelte/icons';
 
   interface FreeProvider {
     name: string;

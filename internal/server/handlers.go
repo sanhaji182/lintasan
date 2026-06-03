@@ -242,14 +242,38 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
-	var input struct { ID string `json:"id"`; IsActive *int `json:"is_active"` }
+	var input struct {
+		ID       string  `json:"id"`
+		Name     *string `json:"name"`
+		BaseURL  *string `json:"base_url"`
+		APIKey   *string `json:"api_key"`
+		IsActive *int    `json:"is_active"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil { /* body may be empty */ }
 	// Accept id from query param if not in body (frontend sends as query)
 	if input.ID == "" { input.ID = r.URL.Query().Get("id") }
 	if input.ID == "" {
 		http.Error(w, `{"error":{"message":"id is required"}}`, http.StatusBadRequest); return
 	}
-	if input.IsActive != nil { s.db.Conn().Exec("UPDATE connections SET is_active=?, updated_at=datetime('now', 'localtime') WHERE id=?", *input.IsActive, input.ID) }
+	
+	var updates []string
+	var args []any
+	if input.Name != nil { updates = append(updates, "name = ?"); args = append(args, *input.Name) }
+	if input.BaseURL != nil { updates = append(updates, "base_url = ?"); args = append(args, *input.BaseURL) }
+	if input.IsActive != nil { updates = append(updates, "is_active = ?"); args = append(args, *input.IsActive) }
+	if input.APIKey != nil {
+		newKey := *input.APIKey
+		if !(strings.Contains(newKey, "...") && len(newKey) < 20) {
+			updates = append(updates, "api_key = ?")
+			args = append(args, newKey)
+		}
+	}
+
+	if len(updates) > 0 {
+		updates = append(updates, "updated_at = datetime('now', 'localtime')")
+		args = append(args, input.ID)
+		s.db.Conn().Exec("UPDATE connections SET " + strings.Join(updates, ", ") + " WHERE id=?", args...)
+	}
 	w.Header().Set("Content-Type", "application/json"); json.NewEncoder(w).Encode(map[string]any{"success":true,"data":map[string]any{"id":input.ID}})
 }
 

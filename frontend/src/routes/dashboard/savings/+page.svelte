@@ -1,8 +1,8 @@
-<script>
+<script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  let summary = $state(null);
-  let history = $state([]);
+  let summary = $state<any>(null);
+  let history = $state<any[]>([]);
   let loading = $state(true);
 
   onMount(async () => {
@@ -12,18 +12,18 @@
         api.get('/api/savings/history')
       ]);
       summary = summaryData;
-      history = historyData.history || [];
+      history = (historyData as any).history || [];
     } catch (e) {
       console.error('Failed to load savings:', e);
     }
     loading = false;
   });
 
-  function formatCurrency(val) {
+  function formatCurrency(val: any) {
     return '$' + (val || 0).toFixed(2);
   }
 
-  function formatNumber(val) {
+  function formatNumber(val: any) {
     return (val || 0).toLocaleString();
   }
 </script>

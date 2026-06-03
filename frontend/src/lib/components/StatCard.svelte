@@ -5,7 +5,7 @@
     label, value, icon: Icon, color = 'var(--color-primary)',
     trend, subtitle
   }: {
-    label: string; value: string | number; icon?: Component;
+    label: string; value: string | number; icon?: any;
     color?: string; trend?: string; subtitle?: string;
   } = $props();
 </script>
