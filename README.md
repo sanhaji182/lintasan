@@ -2,7 +2,7 @@
 
 > **Setiap Koneksi Punya Jalannya** — Jalur cerdas yang menghubungkan manusia, AI, dan sistem dalam satu aliran terintegrasi.
 
-> ⚡ 35x lebih ringan dari Node.js v1 · single binary 24MB · 373 tests · 113 provider presets · Go + SvelteKit
+> ⚡ 35x lebih ringan dari Node.js v1 · single binary ~24MB · 500+ tests · 113+ provider presets · Go + SvelteKit Embedded SPA
 
 ---
 
@@ -10,7 +10,7 @@
 
 > **Every Connection Has Its Path** — An intelligent pathway connecting humans, AI, and systems in one integrated flow.
 
-> ⚡ 35x lighter than Node.js v1 · single 24MB binary · 373 tests · 113 provider presets · Go + SvelteKit
+> ⚡ 35x lighter than Node.js v1 · single ~24MB binary · 500+ tests · 113+ provider presets · Go + SvelteKit Embedded SPA
 
 ---
 
@@ -121,7 +121,7 @@ Lintasan is an **LLM proxy gateway** with 40+ optimization features. One OpenAI-
 | **Startup** | 3-5 detik | <50ms | **60-100x lebih cepat** |
 | **Concurrent req/s** | ~10,000 | ~50,000+ | **5x throughput** |
 | **Dependencies** | 800+ npm packages | 1 (go-sqlite3) | **800x lebih sedikit** |
-| **Tests** | Manual | 373 / 33 packages | **Automated** |
+| **Tests** | Manual | 500+ / 35 packages | **Automated** |
 | **Provider presets** | 27 | 113 | **4x lebih banyak** |
 | **Deployment** | Docker + npm install | `scp` 24MB binary | **Zero setup** |
 
@@ -133,11 +133,11 @@ Lintasan is an **LLM proxy gateway** with 40+ optimization features. One OpenAI-
 |-------|-----------|-------|
 | **Backend** | Go 1.22+ | HTTP server, routing, proxy, streaming |
 | **Database** | SQLite (go-sqlite3) | Embedded, zero config, single-file |
-| **Frontend** | SvelteKit 5 + TypeScript | Dashboard SPA, client-rendered, **embedded into the Go binary** |
+| **Frontend** | SvelteKit 5 + TypeScript | Dashboard SPA, client-rendered, **embedded into the Go binary via go:embed** |
 | **Styling** | Tailwind CSS v4 + CSS variables | Dark/light mode, responsive |
 | **CLI** | Cobra | `start`, `setup`, `mitm`, `version` |
 | **Testing** | Go standard library | 581 tests, 39 packages |
-| **Deployment** | **Single self-contained binary** + systemd | UI + API in one executable; no Node, no nginx required |
+| **Deployment** | **Single self-contained binary** + systemd | UI + API in one executable; **no Node.js required**. Pure proxy |
 
 ---
 
@@ -145,9 +145,9 @@ Lintasan is an **LLM proxy gateway** with 40+ optimization features. One OpenAI-
 
 > **⚠️ Kebijakan Legal & Etika / Legal & Ethics Policy**
 >
-> **🇮🇩** Lintasan didesain untuk menggunakan **API resmi yang sah** (Legal API). Kami secara tegas **tidak melakukan/mendukung Reverse Engineering** terhadap endpoint internal IDE komersial. Lintasan berfokus pada integrasi provider API resmi.
+> **🇮🇩** Lintasan didesain untuk menggunakan **API resmi yang sah** (Legal API). Kami secara tegas **tidak melakukan/mendukung Reverse Engineering** terhadap endpoint internal IDE komersial. Lintasan berfokus pada integrasi provider API resmi dan Experimental Provider (ACP).
 >
-> **🇬🇧** Lintasan is designed to use **legitimate, official APIs**. We strictly do **not support reverse engineering** of commercial IDE internal endpoints. Lintasan focuses on official API provider integrations.
+> **🇬🇧** Lintasan is designed to use **legitimate, official APIs**. We strictly do **not support reverse engineering** of commercial IDE internal endpoints. Lintasan focuses on official API provider integrations and Experimental Provider pipelines (ACP).
 
 <details open>
 <summary>🇮🇩 Fitur</summary>
@@ -185,6 +185,9 @@ Lintasan is an **LLM proxy gateway** with 40+ optimization features. One OpenAI-
 | 29 | **Zero Config** | SQLite embedded — no setup required |
 | 30 | **CLI (Cobra)** | `start`, `setup`, `mitm`, `version` |
 | 31 | **MITM Bridge** | Optional HTTPS bridge untuk LocalAI/LM Studio |
+| 32 | **Experimental Mode** | Cohort Provider ACP execution environment |
+| 33 | **Vector Search** | In-memory TF-IDF + auto context injection |
+| 34 | **Credential Vault** | AES-256-GCM UI Credential Dashboard |
 
 </details>
 
@@ -224,6 +227,9 @@ Lintasan is an **LLM proxy gateway** with 40+ optimization features. One OpenAI-
 | 29 | **Zero Config** | SQLite embedded — no setup required |
 | 30 | **CLI (Cobra)** | `start`, `setup`, `mitm`, `version` |
 | 31 | **MITM Bridge** | Optional HTTPS bridge for LocalAI/LM Studio |
+| 32 | **Experimental Mode** | Cohort Provider ACP execution environment |
+| 33 | **Vector Search** | In-memory TF-IDF + auto context injection |
+| 34 | **Credential Vault** | AES-256-GCM UI Credential Dashboard |
 
 </details>
 
@@ -234,23 +240,18 @@ Lintasan is an **LLM proxy gateway** with 40+ optimization features. One OpenAI-
 ```
 Client (App / Agent / curl / IDE)
         │
-        ▼
-┌──────────────────────────────────┐
-│     Nginx (SSL Termination)       │
-│     lintasan.sans.biz.id          │
-│                                   │
-│  /api/* /v1/* /health  → Go:20180│
-│  /* (dashboard)        → Svelte:5173│
-└──────────┬───────────────────────┘
-           │
-    ┌──────┴──────┐
     ▼             ▼
-┌──────────┐ ┌──────────────┐
-│ Go API   │ │ SvelteKit    │
-│ :20180   │ │ Dashboard    │
-│          │ │ :5173        │
-│ 24MB bin │ │ adapter-node │
-└────┬─────┘ └──────────────┘
+┌─────────────────────────────────────────────────────┐
+│ Nginx (SSL Termination) — lintasan.sans.biz.id      │
+│  * All traffic proxies to Go:20180                  │
+└─────────────────────────┬───────────────────────────┘
+                          │
+         ┌────────────────▼──────────────────┐
+         │ Go Backend :20180 (lintasan start)│
+         │ ── Serves BOTH API & UI ──        │
+         │ • Embedded SPA UI (go:embed)      │
+         │ • OpenAI-compatible LLM proxy     │
+         └──────────────┬────────────────────┘
      │
      │  ┌─────────────────────────┐
      │  │  API Gateway            │
@@ -277,8 +278,8 @@ Client (App / Agent / curl / IDE)
      │  │  • Settings Cache (5s)  │
      │  │  • Request Logging      │
      │  │  • Cost Tracking        │
-     │  │  • Combo Resolver       │
-     │  │  • Plugin Pipeline      │
+     │  │  • Vector Context Inject│
+     │  │  • RTK Compressor       │
      │  └──────────┬──────────────┘
      │             │
      │  ┌──────────▼──────────────┐
@@ -306,9 +307,9 @@ The dashboard UI is **embedded inside the binary**, so one executable serves the
 
 ```bash
 # Download the pre-built binary (Linux x86_64) and run
-curl -L -o lintasan https://github.com/sanhaji182/lintasan-go/releases/latest/download/lintasan-linux-amd64
-chmod +x lintasan
-./lintasan start
+# curl -L -o lintasan https://github.com/sanhaji182/lintasan-go/releases/latest/download/lintasan-linux-amd64
+# chmod +x lintasan
+# ./lintasan start
 
 # Dashboard → http://localhost:20180/   (redirects to /dashboard)
 # API       → http://localhost:20180/v1/chat/completions
@@ -490,7 +491,11 @@ curl -X POST http://localhost:20180/api/connections/test \
 
 # Vector memory search
 curl "http://localhost:20180/v1/memory/search?q=hello&limit=5" \
-  -H "Authorization: Bearer YOUR_MASTER_KEY"
+  -H "Authorization: Bearer ***
+  
+# Import curl via API Connection Creation
+curl -X POST "http://localhost:20180/api/connections/import-curl" \
+  -H "Authorization: Bearer ***
 
 # Web search augmented chat
 curl http://localhost:20180/v1/web/search \
@@ -627,6 +632,7 @@ lintasan-go/
 │   ├── db/                    # SQLite database layer
 │   ├── discover/              # Model auto-discovery
 │   ├── freeproviders/         # Free provider scanner
+│   ├── expprovider/           # AES-256-GCM Credentials
 │   ├── memory/                # Vector memory (pluggable embedder)
 │   ├── mitm/                  # MITM HTTPS bridge
 │   ├── mlrouter/              # ML-based routing
@@ -651,7 +657,7 @@ lintasan-go/
 │   └── package.json           # Frontend dependencies
 ├── data/                      # Runtime data (auto-created)
 ├── docs/                      # Documentation
-│   ├── api-reference.md       # Full API reference
+│   ├── api-reference.md       # Full API reference (deprecated, read AGENTS.md)
 │   └── design-system.md       # UI design system
 ├── .env.example               # Example environment file
 ├── Dockerfile                 # Docker build
@@ -676,14 +682,14 @@ go run ./cmd/lintasan start        # Run server (hot-reload with air if installe
 
 # Frontend
 cd frontend
-npm install
-npm run dev -- --port 5173        # Dev server with HMR
+# UI Dev Mode
+npm run dev -- --port 5173        # Dev server with HMR (Deprecated mode)
 
 # Build all
 make build                         # go build + npm run build
 
 # Run tests
-go test ./...                      # 373 tests
+go test ./...                      # 500+ tests
 cd frontend && npm run check       # SvelteKit type-check
 ```
 
@@ -693,7 +699,7 @@ cd frontend && npm run check       # SvelteKit type-check
 
 ```bash
 # All backend tests
-go test ./...                      # 373 passed, 0 failed, 33 packages
+go test ./...                      # 500+ passed, 0 failed, 39 packages
 
 # With coverage
 go test -cover ./...
@@ -756,9 +762,6 @@ server {
     location /api/ { proxy_pass http://127.0.0.1:20180; }
     location /v1/  { proxy_pass http://127.0.0.1:20180; }
 
-    # Dashboard → SvelteKit
-    location / { proxy_pass http://127.0.0.1:5173; }
-}
 ```
 
 </details>
