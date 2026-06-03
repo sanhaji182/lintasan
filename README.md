@@ -2,7 +2,7 @@
 
 > **Setiap Koneksi Punya Jalannya** — Jalur cerdas yang menghubungkan manusia, AI, dan sistem dalam satu aliran terintegrasi.
 
-> ⚡ 35x lebih ringan dari Node.js v1 · single binary ~24MB · 500+ tests · 113+ provider presets · Go (v2.4.0) + SvelteKit Embedded SPA
+> ⚡ 35x lebih ringan dari Node.js v1 · single binary ~24MB · 700+ tests · 118+ provider presets · Go (v2.4.0) + SvelteKit Embedded SPA
 
 ---
 
@@ -10,7 +10,7 @@
 
 > **Every Connection Has Its Path** — An intelligent pathway connecting humans, AI, and systems in one integrated flow.
 
-> ⚡ 35x lighter than Node.js v1 · single ~24MB binary · 500+ tests · 113+ provider presets · Go (v2.4.0) + SvelteKit Embedded SPA
+> ⚡ 35x lighter than Node.js v1 · single ~24MB binary · 700+ tests · 118+ provider presets · Go (v2.4.0) + SvelteKit Embedded SPA
 
 ---
 
@@ -121,8 +121,8 @@ Lintasan is an **LLM proxy gateway** with 40+ optimization features. One OpenAI-
 | **Startup** | 3-5 detik | <50ms | **60-100x lebih cepat** |
 | **Concurrent req/s** | ~10,000 | ~50,000+ | **5x throughput** |
 | **Dependencies** | 800+ npm packages | 1 (go-sqlite3) | **800x lebih sedikit** |
-| **Tests** | Manual | 500+ / 35 packages | **Automated** |
-| **Provider presets** | 27 | 113 | **4x lebih banyak** |
+| **Tests** | Manual | 700+ / 35 packages | **Automated** |
+| **Provider presets** | 27 | 118 | **4x lebih banyak** |
 | **Deployment** | Docker + npm install | `scp` 24MB binary | **Zero setup** |
 
 ---
@@ -301,7 +301,7 @@ Client (App / Agent / curl / IDE)
          ┌─────────┼─────────┬──────────┐
          ▼         ▼         ▼          ▼
     ┌────────┐ ┌──────┐ ┌──────┐ ┌──────────┐
-    │ OpenAI │ │Gemini│ │Groq  │ │Sumopod   │ ...113 providers
+    │ OpenAI │ │Gemini│ │Groq  │ │Sumopod   │ ...118 providers
     └────────┘ └──────┘ └──────┘ └──────────┘
 ```
 
@@ -580,7 +580,7 @@ Access: `http://localhost:20180/dashboard` (via nginx reverse-proxy to SvelteKit
 
 ---
 
-## 🔌 Provider Presets (113 Ready)
+## 🔌 Provider Presets (118 Ready)
 
 <details open>
 <summary>🇮🇩 Daftar Provider</summary>
@@ -639,7 +639,7 @@ lintasan-go/
 │   ├── dashboard/             # (deprecated, moved to frontend/)
 │   ├── db/                    # SQLite database layer
 │   ├── discover/              # Model auto-discovery
-│   ├── freeproviders/         # Free provider scanner (113+ presets)
+│   ├── freeproviders/         # Free provider scanner (118+ presets)
 │   ├── expprovider/           # AES-256-GCM Credentials
 │   ├── memory/                # Vector memory (pluggable embedder)
 │   ├── mitm/                  # MITM HTTPS bridge
@@ -696,7 +696,7 @@ npm run dev -- --port 5173        # Dev UI + Vite server with HMR (Requires GO R
 make build                         # go build + npm run build
 
 # Run tests
-go test ./...                      # 500+ tests
+go test ./...                      # 700+ tests
 cd frontend && npm run check       # SvelteKit type-check
 ```
 
@@ -706,7 +706,7 @@ cd frontend && npm run check       # SvelteKit type-check
 
 ```bash
 # All backend tests
-go test ./...                      # 500+ passed, 0 failed, 39 packages
+go test ./...                      # 700+ passed, 0 failed, 39 packages
 
 # With coverage
 go test -cover ./...
