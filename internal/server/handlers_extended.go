@@ -43,7 +43,7 @@ func (s *Server) validDashboardAPIKey(key string) bool {
 
 func (s *Server) audit(action, actor, resource string, details any) {
 	b, _ := json.Marshal(details)
-	s.db.Conn().Exec("INSERT INTO audit_events(id, action, actor, resource, details, created_at) VALUES(?,?,?,?,?,datetime('now'))", uuid.New().String(), action, actor, resource, string(b))
+	s.db.Conn().Exec("INSERT INTO audit_events(id, action, actor, resource, details, created_at) VALUES(?,?,?,?,?,datetime('now', 'localtime'))", uuid.New().String(), action, actor, resource, string(b))
 }
 
 func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +232,7 @@ func (s *Server) deliverWebhooks(event string, payload map[string]any) {
 			req, _ := http.NewRequest("POST", target, bytes.NewReader(b)); req.Header.Set("Content-Type","application/json")
 			resp, err := (&http.Client{Timeout:10*time.Second}).Do(req)
 			status:=0; text:=""; if err!=nil{text=err.Error()} else {status=resp.StatusCode; rb,_:=io.ReadAll(io.LimitReader(resp.Body,1024)); text=string(rb); resp.Body.Close()}
-			s.db.Conn().Exec("INSERT INTO webhook_deliveries(id, webhook_id, event, status, response, created_at) VALUES(?,?,?,?,?,datetime('now'))", uuid.New().String(), webhookID, event, status, text)
+			s.db.Conn().Exec("INSERT INTO webhook_deliveries(id, webhook_id, event, status, response, created_at) VALUES(?,?,?,?,?,datetime('now', 'localtime'))", uuid.New().String(), webhookID, event, status, text)
 		}(id,url,body)
 	}
 }

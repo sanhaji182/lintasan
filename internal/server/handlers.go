@@ -249,7 +249,7 @@ func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
 	if input.ID == "" {
 		http.Error(w, `{"error":{"message":"id is required"}}`, http.StatusBadRequest); return
 	}
-	if input.IsActive != nil { s.db.Conn().Exec("UPDATE connections SET is_active=?, updated_at=datetime('now') WHERE id=?", *input.IsActive, input.ID) }
+	if input.IsActive != nil { s.db.Conn().Exec("UPDATE connections SET is_active=?, updated_at=datetime('now', 'localtime') WHERE id=?", *input.IsActive, input.ID) }
 	w.Header().Set("Content-Type", "application/json"); json.NewEncoder(w).Encode(map[string]any{"success":true,"data":map[string]any{"id":input.ID}})
 }
 

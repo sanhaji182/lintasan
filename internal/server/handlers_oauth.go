@@ -86,7 +86,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// Use raw SQL to create/update the session with proper expiry
 	_, err := s.db.Conn().Exec(
 		`INSERT INTO oauth_sessions (id, provider, access_token, refresh_token, expires_at, status, created_at)
-		 VALUES (?, ?, ?, ?, datetime('now', '+24 hours'), 'active', datetime('now'))
+		 VALUES (?, ?, ?, ?, datetime('now', '+24 hours'), 'active', datetime('now', 'localtime'))
 		 ON CONFLICT(id) DO UPDATE SET access_token = ?, refresh_token = ?, expires_at = datetime('now', '+24 hours'), status = 'active'`,
 		state, provider, accessToken, refreshToken,
 		accessToken, refreshToken,

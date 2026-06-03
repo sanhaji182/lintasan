@@ -72,7 +72,7 @@ func (m *Manager) Register(wh Webhook) error {
 	}
 	_, err := m.db.Exec(`
 		INSERT OR REPLACE INTO webhooks (id, endpoint, secret, events, active, created_at)
-		VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM webhooks WHERE id=?), datetime('now')))
+		VALUES (?, ?, ?, ?, ?, COALESCE((SELECT created_at FROM webhooks WHERE id=?), datetime('now', 'localtime')))
 	`, wh.ID, wh.Endpoint, wh.Secret, wh.Events, active, wh.ID)
 	return err
 }
@@ -166,8 +166,8 @@ func (m *Manager) deliverOne(wh Webhook, event string, payload map[string]interf
 	// Record delivery attempt as pending
 	m.db.Exec(`
 		INSERT INTO webhook_deliveries (id, webhook_id, event, payload, status, attempts, response, created_at)
-		VALUES (?, ?, ?, ?, 'pending', ?, '', datetime('now'))
-		ON CONFLICT(id) DO UPDATE SET attempts = ?, status = 'pending', last_attempt = datetime('now')
+		VALUES (?, ?, ?, ?, 'pending', ?, '', datetime('now', 'localtime'))
+		ON CONFLICT(id) DO UPDATE SET attempts = ?, status = 'pending', last_attempt = datetime('now', 'localtime')
 	`, deliveryID, wh.ID, event, string(body), attempt+1, attempt+1)
 
 	req, err := http.NewRequest("POST", wh.Endpoint, bytes.NewReader(body))
@@ -247,7 +247,7 @@ func (m *Manager) retryDelivery(d *Delivery) {
 
 func (m *Manager) updateDeliveryStatus(deliveryID, status, response string) {
 	m.db.Exec(`
-		UPDATE webhook_deliveries SET status = ?, response = ?, last_attempt = datetime('now') WHERE id = ?
+		UPDATE webhook_deliveries SET status = ?, response = ?, last_attempt = datetime('now', 'localtime') WHERE id = ?
 	`, status, response, deliveryID)
 }
 
@@ -267,7 +267,7 @@ func ensureWebhooksTable(db *sql.DB) error {
 			secret TEXT DEFAULT '',
 			events TEXT NOT NULL,
 			active INTEGER DEFAULT 1,
-			created_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)
 	`)
 	return err
@@ -285,7 +285,7 @@ func ensureWebhookDeliveriesTable(db *sql.DB) error {
 			attempts INTEGER DEFAULT 0,
 			response TEXT DEFAULT '',
 			last_attempt TEXT,
-			created_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)
 	`)
 	return err

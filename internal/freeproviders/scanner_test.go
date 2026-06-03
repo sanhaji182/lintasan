@@ -38,8 +38,8 @@ func newTestDB(t *testing.T) *sql.DB {
 			priority INTEGER DEFAULT 0,
 			last_sync TEXT,
 			models_count INTEGER DEFAULT 0,
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
+			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS discovered_models (
 			id TEXT PRIMARY KEY,
@@ -47,7 +47,7 @@ func newTestDB(t *testing.T) *sql.DB {
 			model_id TEXT NOT NULL,
 			model_name TEXT,
 			owned_by TEXT,
-			discovered_at TEXT DEFAULT (datetime('now')),
+			discovered_at TEXT DEFAULT (datetime('now', 'localtime')),
 			is_active INTEGER DEFAULT 1,
 			FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
 		)`,

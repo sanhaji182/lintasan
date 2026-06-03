@@ -203,7 +203,7 @@ func (d *Discoverer) syncOne(conn map[string]any) (*SyncResult, error) {
 
 	// Update connection metadata.
 	if _, err := d.db.Conn().Exec(
-		`UPDATE connections SET models_count = ?, last_sync = datetime('now') WHERE id = ?`,
+		`UPDATE connections SET models_count = ?, last_sync = datetime('now', 'localtime') WHERE id = ?`,
 		count, cid,
 	); err != nil {
 		return nil, fmt.Errorf("update connection metadata: %w", err)

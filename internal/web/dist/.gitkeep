@@ -1,6 +1,0 @@
-# This file ensures internal/web/dist/ exists in a fresh clone so that
-# `go:embed all:dist` compiles even before the frontend has been built.
-#
-# When only this placeholder is present, the binary runs as an API-only server
-# (the dashboard UI reports as unavailable). Run `make build` to compile the
-# SvelteKit frontend into this directory and embed the full dashboard.

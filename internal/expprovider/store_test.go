@@ -27,8 +27,8 @@ func setupTestDB(t *testing.T) *sql.DB {
 		deactivated_at TEXT DEFAULT NULL,
 		validation_evidence TEXT NOT NULL DEFAULT '',
 		risk_badge TEXT NOT NULL DEFAULT 'experimental',
-		created_at TEXT DEFAULT (datetime('now')),
-		updated_at TEXT DEFAULT (datetime('now'))
+		created_at TEXT DEFAULT (datetime('now', 'localtime')),
+		updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 	)`)
 	if err != nil {
 		t.Fatalf("create table: %v", err)

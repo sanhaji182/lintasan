@@ -211,7 +211,7 @@ func (s *Server) deliverWebhookTo(id, url, event string, payload map[string]any)
 			text = string(rb)
 			resp.Body.Close()
 		}
-		s.db.Conn().Exec("INSERT INTO webhook_deliveries(id, webhook_id, event, status, response, created_at) VALUES(?,?,?,?,?,datetime('now'))", uuid.New().String(), id, event, status, text)
+		s.db.Conn().Exec("INSERT INTO webhook_deliveries(id, webhook_id, event, status, response, created_at) VALUES(?,?,?,?,?,datetime('now', 'localtime'))", uuid.New().String(), id, event, status, text)
 	}()
 }
 

@@ -229,7 +229,7 @@ func (s *Scanner) syncDiscoveredModels(connID string, models []string) {
 	}
 
 	// Update models_count on the connection
-	s.db.Exec(`UPDATE connections SET models_count = ?, updated_at = datetime('now') WHERE id = ?`,
+	s.db.Exec(`UPDATE connections SET models_count = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`,
 		len(models), connID)
 }
 

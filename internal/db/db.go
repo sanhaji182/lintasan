@@ -71,8 +71,8 @@ func (d *DB) migrate() error {
 			priority INTEGER DEFAULT 0,
 			last_sync TEXT,
 			models_count INTEGER DEFAULT 0,
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
+			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS provider_presets (
 			id TEXT PRIMARY KEY,
@@ -83,8 +83,8 @@ func (d *DB) migrate() error {
 			key_label TEXT NOT NULL DEFAULT 'API Key',
 			category TEXT NOT NULL DEFAULT 'foundation',
 			is_builtin INTEGER DEFAULT 0,
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
+			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS preset_categories (
 			key TEXT PRIMARY KEY,
@@ -93,8 +93,8 @@ func (d *DB) migrate() error {
 			color TEXT NOT NULL DEFAULT '#8b5cf6',
 			sort_order INTEGER DEFAULT 0,
 			is_builtin INTEGER DEFAULT 0,
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
+			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS discovered_models (
 			id TEXT PRIMARY KEY,
@@ -102,7 +102,7 @@ func (d *DB) migrate() error {
 			model_id TEXT NOT NULL,
 			model_name TEXT,
 			owned_by TEXT,
-			discovered_at TEXT DEFAULT (datetime('now')),
+			discovered_at TEXT DEFAULT (datetime('now', 'localtime')),
 			is_active INTEGER DEFAULT 1,
 			FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
 		)`,
@@ -116,7 +116,7 @@ func (d *DB) migrate() error {
 			output_tokens INTEGER DEFAULT 0,
 			latency_ms INTEGER DEFAULT 0,
 			error TEXT,
-			created_at TEXT DEFAULT (datetime('now')),
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
 			combo_name TEXT,
 			cached INTEGER DEFAULT 0
 		)`,
@@ -125,7 +125,7 @@ func (d *DB) migrate() error {
 			value BLOB NOT NULL,
 			model TEXT DEFAULT '',
 			hits INTEGER DEFAULT 0,
-			created_at TEXT DEFAULT (datetime('now')),
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
 			expires_at TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS semantic_cache (
@@ -135,7 +135,7 @@ func (d *DB) migrate() error {
 			messages_hash TEXT NOT NULL,
 			response TEXT NOT NULL,
 			hits INTEGER DEFAULT 0,
-			created_at TEXT DEFAULT (datetime('now')),
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
 			expires_at DATETIME NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_semantic_cache_model_expires ON semantic_cache(model, expires_at)`,
@@ -167,8 +167,8 @@ func (d *DB) migrate() error {
 			username TEXT NOT NULL UNIQUE,
 			password_hash TEXT NOT NULL,
 			role TEXT NOT NULL DEFAULT 'user',
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
+			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS oauth_sessions (
 			id TEXT PRIMARY KEY,
@@ -177,7 +177,7 @@ func (d *DB) migrate() error {
 			refresh_token TEXT DEFAULT '',
 			expires_at TEXT,
 			status TEXT DEFAULT 'pending',
-			created_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS plugins (
 			id TEXT PRIMARY KEY,
@@ -186,7 +186,7 @@ func (d *DB) migrate() error {
 			enabled INTEGER DEFAULT 1,
 			priority INTEGER DEFAULT 100,
 			code TEXT NOT NULL,
-			created_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS audit_events (
 			id TEXT PRIMARY KEY,
@@ -194,7 +194,7 @@ func (d *DB) migrate() error {
 			actor TEXT DEFAULT '',
 			resource TEXT DEFAULT '',
 			details TEXT DEFAULT '{}',
-			created_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS webhook_deliveries (
 			id TEXT PRIMARY KEY,
@@ -202,7 +202,7 @@ func (d *DB) migrate() error {
 			event TEXT,
 			status INTEGER DEFAULT 0,
 			response TEXT DEFAULT '',
-			created_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_discovered_models_connection ON discovered_models(connection_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_discovered_models_model ON discovered_models(model_id)`,
@@ -229,8 +229,8 @@ func (d *DB) migrate() error {
 			deactivated_at TEXT DEFAULT NULL,
 			validation_evidence TEXT NOT NULL DEFAULT '',
 			risk_badge TEXT NOT NULL DEFAULT 'experimental',
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
+			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 		// Credential Management V1: encrypted credential storage for Experimental
 		// providers. Dashboard-managed credentials override environment variables.
@@ -239,8 +239,8 @@ func (d *DB) migrate() error {
 			provider_name TEXT PRIMARY KEY,
 			encrypted_value TEXT NOT NULL,
 			source TEXT NOT NULL DEFAULT 'dashboard',
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
+			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
 	}
 

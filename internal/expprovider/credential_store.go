@@ -55,8 +55,8 @@ func EnsureCredentialTable(db *sql.DB) error {
 			provider_name TEXT PRIMARY KEY,
 			encrypted_value TEXT NOT NULL,
 			source TEXT NOT NULL DEFAULT 'dashboard',
-			created_at TEXT DEFAULT (datetime('now')),
-			updated_at TEXT DEFAULT (datetime('now'))
+			created_at TEXT DEFAULT (datetime('now', 'localtime')),
+			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)
 	`)
 	return err

@@ -339,7 +339,7 @@ func TestRetryPending(t *testing.T) {
 
 	// Insert a pending delivery directly
 	db.Exec(`INSERT INTO webhook_deliveries (id, webhook_id, event, payload, status, attempts, created_at)
-		VALUES ('retry-test-1', 'wh-retry-pending', 'request.success', '{"event":"request.success","payload":{"model":"gpt-4"}}', 'pending', 0, datetime('now'))`)
+		VALUES ('retry-test-1', 'wh-retry-pending', 'request.success', '{"event":"request.success","payload":{"model":"gpt-4"}}', 'pending', 0, datetime('now', 'localtime'))`)
 
 	// Register the webhook that the delivery references
 	received := make(chan bool, 1)

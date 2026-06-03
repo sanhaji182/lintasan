@@ -113,6 +113,7 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 				MaxConnsPerHost:       128,
 				IdleConnTimeout:       180 * time.Second,
 				ResponseHeaderTimeout: 30 * time.Second,
+				DisableCompression:    true, // prevent Go from auto-decompressing upstream responses
 				TLSClientConfig:       &tls.Config{InsecureSkipVerify: false},
 			},
 		},
@@ -856,6 +857,9 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		}
 
 		for k, v := range resp.Header {
+			if strings.EqualFold(k, "Content-Encoding") {
+				continue // strip: we disable upstream compression (Accept-Encoding: identity)
+			}
 			for _, vv := range v {
 				w.Header().Add(k, vv)
 			}
@@ -1037,6 +1041,7 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 		}
 		// X-Command-Code-Version passthrough is commandcode-only and is excluded
 		// by providerSDKEligible, so it is intentionally not replayed here.
+		upReq.Header.Set("Accept-Encoding", "identity") // prevent upstream gzip issues
 		return p.client.Do(upReq)
 	}
 
@@ -1063,6 +1068,7 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 		return nil, err
 	}
 	upReq.Header.Set("Content-Type", "application/json")
+	upReq.Header.Set("Accept-Encoding", "identity") // prevent upstream from gzipping if body isn't actually compressed
 	authHeader := conn.AuthHeader
 	if authHeader == "" {
 		authHeader = "Authorization"
@@ -1685,7 +1691,7 @@ func (p *ProxyHandler) logRequest(model, connID, provider string, status int, la
 	id := uuid.New().String()
 	p.db.Conn().Exec(`
 		INSERT INTO request_logs (id, connection_id, provider, model, status, input_tokens, output_tokens, latency_ms, cached, error, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
 	`, id, connID, provider, model, status, tokensIn, tokensOut, latencyMs, cachedInt, errMsg)
 	if p.telemetry != nil {
 		p.telemetry.Observe(provider, taskClass, mode, latencyMs, status, cached)
@@ -1743,6 +1749,7 @@ func (p *ProxyHandler) HandleEmbeddings(w http.ResponseWriter, r *http.Request) 
 		}
 
 		upReq.Header.Set("Content-Type", "application/json")
+		upReq.Header.Set("Accept-Encoding", "identity")
 		authHeader := conn.AuthHeader
 		if authHeader == "" {
 			authHeader = "Authorization"
@@ -1764,6 +1771,9 @@ func (p *ProxyHandler) HandleEmbeddings(w http.ResponseWriter, r *http.Request) 
 	defer resp.Body.Close()
 
 	for k, v := range resp.Header {
+		if strings.EqualFold(k, "Content-Encoding") {
+			continue
+		}
 		for _, vv := range v {
 			w.Header().Add(k, vv)
 		}
@@ -1789,6 +1799,7 @@ func (p *ProxyHandler) proxyPath(w http.ResponseWriter, r *http.Request, upstrea
 	if upReq.Header.Get("Content-Type") == "" {
 		upReq.Header.Set("Content-Type", "application/json")
 	}
+	upReq.Header.Set("Accept-Encoding", "identity")
 	if conn.APIKey != "" {
 		h := conn.AuthHeader
 		if h == "" {
@@ -1807,6 +1818,9 @@ func (p *ProxyHandler) proxyPath(w http.ResponseWriter, r *http.Request, upstrea
 	}
 	defer resp.Body.Close()
 	for k, v := range resp.Header {
+		if strings.EqualFold(k, "Content-Encoding") {
+			continue
+		}
 		for _, vv := range v {
 			w.Header().Add(k, vv)
 		}
@@ -1814,6 +1828,7 @@ func (p *ProxyHandler) proxyPath(w http.ResponseWriter, r *http.Request, upstrea
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
+
 func (p *ProxyHandler) HandleImages(w http.ResponseWriter, r *http.Request) {
 	p.proxyPath(w, r, "/v1/images/generations")
 }

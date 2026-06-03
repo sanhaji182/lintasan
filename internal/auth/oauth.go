@@ -40,7 +40,7 @@ func (m *OAuthManager) CreateSession(provider string) (*OAuthSession, error) {
 	}
 
 	_, err := m.db.Conn().Exec(
-		`INSERT INTO oauth_sessions (id, provider, access_token, refresh_token, expires_at, status, created_at) VALUES (?, ?, '', '', ?, ?, datetime('now'))`,
+		`INSERT INTO oauth_sessions (id, provider, access_token, refresh_token, expires_at, status, created_at) VALUES (?, ?, '', '', ?, ?, datetime('now', 'localtime'))`,
 		session.ID, session.Provider, session.ExpiresAt.Format(time.RFC3339), session.Status,
 	)
 	if err != nil {

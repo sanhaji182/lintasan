@@ -72,7 +72,7 @@ func InitQuotaSchema(db *sql.DB) {
 		requests_month INTEGER DEFAULT 0,
 		last_reset_day TEXT,
 		last_reset_month TEXT,
-		updated_at TEXT DEFAULT (datetime('now'))
+		updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 	)`)
 }
 
@@ -82,7 +82,7 @@ func RecordQuota(db *sql.DB, connID string, tokens int) {
 	
 	res, err := db.Exec(`
 		UPDATE quota_usage 
-		SET tokens_today=tokens_today+?, tokens_month=tokens_month+?, requests_today=requests_today+1, requests_month=requests_month+1, updated_at=datetime('now')
+		SET tokens_today=tokens_today+?, tokens_month=tokens_month+?, requests_today=requests_today+1, requests_month=requests_month+1, updated_at=datetime('now', 'localtime')
 		WHERE connection_id=? AND last_reset_day=? AND last_reset_month=?
 	`, tokens, tokens, connID, day, month)
 	

@@ -15,6 +15,12 @@
   let syncing = $state<string | null>(null);
   let presetSearch = $state('');
 
+  // Curl import state
+  let showCurlImport = $state(false);
+  let curlText = $state('');
+  let curlImporting = $state(false);
+  let curlResult = $state<{success: boolean; id?: string; name?: string; base_url?: string; discovery?: any; error?: string} | null>(null);
+
   // Preset management state
   let presets = $state<any[]>([]);
   let presetsLoading = $state(true);
@@ -584,6 +590,28 @@
     testBounce = false;
   }
 
+  // --- Curl Import ---
+  async function importFromCurl() {
+    if (!curlText.trim()) return;
+    curlImporting = true;
+    curlResult = null;
+    try {
+      const res = await api.post<any>('/api/connections/import-curl', { curl: curlText.trim() });
+      const d = res.data || res;
+      curlResult = { success: true, ...d };
+      showToast(`Imported: ${d.name} · ${d.discovery?.models_count ?? 0} models`, 'success');
+      await fetchConnections();
+      showCurlImport = false;
+      curlText = '';
+    } catch (e: any) {
+      const msg = e?.envelope?.error || e.message || 'Import failed';
+      curlResult = { success: false, error: msg };
+      showToast('Curl import failed: ' + msg, 'error');
+    } finally {
+      curlImporting = false;
+    }
+  }
+
   function openManage(tab: 'presets' | 'categories') {
     manageTab = tab;
     showManageModal = true;
@@ -610,10 +638,16 @@
   <!-- Actions -->
   <div class="flex items-center justify-between mb-5">
     <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0);">Connections</h2>
-    <button class="btn-primary flex items-center gap-2" onclick={() => showForm = !showForm}>
-      {#if showForm}<X size={16} />{:else}<Plus size={16} />{/if}
-      {showForm ? 'Cancel' : 'Add Connection'}
-    </button>
+    <div class="flex items-center gap-2">
+      <button class="btn-secondary flex items-center gap-2" onclick={() => { showCurlImport = !showCurlImport; curlResult = null; }} title="Import from curl command">
+        <Copy size={16} />
+        {showCurlImport ? 'Cancel' : 'Import Curl'}
+      </button>
+      <button class="btn-primary flex items-center gap-2" onclick={() => showForm = !showForm}>
+        {#if showForm}<X size={16} />{:else}<Plus size={16} />{/if}
+        {showForm ? 'Cancel' : 'Add Connection'}
+      </button>
+    </div>
   </div>
 
   <!-- Create form -->
@@ -738,6 +772,49 @@
           title={!testResult?.success ? 'Click Test Connection first' : ''}
         >
           {testResult?.success ? 'Save Connection' : 'Save'}
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Curl Import -->
+  {#if showCurlImport}
+    <div class="card mb-5" style="animation: fadeInScale 0.3s ease-out;">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <Copy size={16} style="color: var(--color-primary);" />
+          <h3 style="font-size: 15px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Import from Curl</h3>
+          <span style="font-size: 11px; color: var(--color-fg-3);">Paste a curl command from any provider docs</span>
+        </div>
+      </div>
+      <textarea
+        class="input-field"
+        bind:value={curlText}
+        placeholder="curl https://api.example.com/v1/chat/completions -H Authorization: Bearer *** -H Content-Type: application/json -d 'JSON_BODY'"
+        style="width: 100%; min-height: 100px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; resize: vertical;"
+        rows="4"
+      ></textarea>
+      {#if curlResult?.success}
+        <div style="margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(16,185,129,0.06); border: 1px solid rgba(16,185,129,0.2);">
+          <div style="font-size: 12px; font-weight: 600; color: var(--color-success);">✅ Imported: {curlResult.name}</div>
+          <div style="font-size: 11px; color: var(--color-fg-2); margin-top: 2px;">
+            Base URL: {curlResult.base_url}{#if curlResult.discovery} · {curlResult.discovery.models_count} models discovered{/if}
+          </div>
+        </div>
+      {:else if curlResult?.error}
+        <div style="margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(239,68,68,0.06); border: 1px solid rgba(239,68,68,0.2);">
+          <div style="font-size: 12px; font-weight: 600; color: var(--color-error);">❌ Import failed</div>
+          <div style="font-size: 11px; color: var(--color-fg-2); margin-top: 2px;">{curlResult.error}</div>
+        </div>
+      {/if}
+      <div class="flex justify-end gap-2 mt-3">
+        <button class="btn-primary flex items-center gap-2" onclick={importFromCurl} disabled={curlImporting || !curlText.trim()}>
+          {#if curlImporting}
+            <span class="inline-block" style="width: 12px; height: 12px; border: 2px solid var(--color-border); border-top-color: white; border-radius: 50%; animation: spin 0.8s linear infinite;"></span>
+            Importing...
+          {:else}
+            <Copy size={14} /> Import & Discover
+          {/if}
         </button>
       </div>
     </div>
