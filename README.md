@@ -188,6 +188,8 @@ Lintasan is an **LLM proxy gateway** with 40+ optimization features. One OpenAI-
 | 32 | **Experimental Mode** | Cohort Provider ACP execution environment |
 | 33 | **Vector Search** | In-memory TF-IDF + auto context injection |
 | 34 | **Credential Vault** | AES-256-GCM UI Credential Dashboard |
+| 35 | **cURL Import** | Quick-add connections from cURL commands |
+| 36 | **Metrics Endpoint** | Exposes `/metrics` endpoint and Dashboard Observability UI |
 
 </details>
 
@@ -230,6 +232,8 @@ Lintasan is an **LLM proxy gateway** with 40+ optimization features. One OpenAI-
 | 32 | **Experimental Mode** | Cohort Provider ACP execution environment |
 | 33 | **Vector Search** | In-memory TF-IDF + auto context injection |
 | 34 | **Credential Vault** | AES-256-GCM UI Credential Dashboard |
+| 35 | **cURL Import** | Quick-add connections from cURL commands |
+| 36 | **Metrics Endpoint** | Exposes `/metrics` endpoint and Dashboard Observability UI |
 
 </details>
 
@@ -243,7 +247,7 @@ Client (App / Agent / curl / IDE)
     ▼             ▼
 ┌─────────────────────────────────────────────────────┐
 │ Nginx (SSL Termination) — lintasan.sans.biz.id      │
-│  * All traffic proxies to Go:20180                  │
+│   * All traffic proxies to Go:20180                 │
 └─────────────────────────┬───────────────────────────┘
                           │
          ┌────────────────▼──────────────────┐
@@ -256,9 +260,11 @@ Client (App / Agent / curl / IDE)
      │  ┌─────────────────────────┐
      │  │  API Gateway            │
      │  │  /v1/chat/completions   │
+     │  │  /api/connections/import-curl │
      │  │  /v1/embeddings         │
      │  │  /v1/images/generations │
      │  │  /v1/audio/*            │
+     │  │  /metrics               │
      │  │  /v1/models             │
      │  │  /v1/memory/*           │
      │  └──────────┬──────────────┘
@@ -525,6 +531,7 @@ Lintasan dilengkapi dashboard interaktif berbasis **SvelteKit 5 + Tailwind v4** 
 | **Fallback** | Multi-level fallback chain per model/connection |
 | **Logs** | Real-time request log dengan filter & search |
 | **Usage** | Token usage + cost per provider/model |
+| **Observability** | Exportable `/metrics` + Real-time Grafana-like panels |
 | **Analytics** | Metrics dashboard — latency, throughput, savings |
 | **API Keys** | Generate, copy, revoke API keys |
 | **Teams** | Team-based access control |
@@ -550,10 +557,11 @@ Lintasan comes with an interactive dashboard built with **SvelteKit 5 + Tailwind
 |------|----------|
 | **Overview** | Global stats — requests, tokens, cache hit rate, latency |
 | **Accounts** | Manage provider connections (add/test/sync/delete) |
-| **Routing** | Combo config + load balancer + aliases |
+| **Routing** | Smart-route configs, combo + load balancer + aliases |
 | **Fallback** | Multi-level fallback chains per model/connection |
 | **Logs** | Real-time request log with filter & search |
 | **Usage** | Token usage + cost per provider/model |
+| **Observability** | Exportable `/metrics` + Real-time Grafana-like panels |
 | **Analytics** | Metrics dashboard — latency, throughput, savings |
 | **API Keys** | Generate, copy, revoke API keys |
 | **Teams** | Team-based access control |
@@ -589,8 +597,8 @@ Codestral API · GitHub Copilot API · Pydantic AI Agents · Meta Llama API
 ### Aggregators (8)
 OpenRouter · Replicate · HuggingFace Inference · Vercel AI Gateway · AIML API · Poe by Quora · CometAPI · NanoGPT
 
-### High-Speed Inference (10)
-Groq · Together AI · Fireworks AI · Cerebras · NVIDIA NIM · Cloudflare Workers AI · Hyperbolic · Lambda AI · FriendliAI · Anyscale Endpoints
+### High-Speed Inference (11)
+Groq · Together AI · Fireworks AI · Cerebras · NVIDIA NIM · Cloudflare Workers AI · Hyperbolic · Lambda AI · FriendliAI · Anyscale Endpoints · SambaNova
 
 ### GPU Cloud (12)
 Baseten · OctoAI · Lepton AI · Featherless AI · Crusoe Cloud · nscale AI · PublicAI · Galadriel · Chutes · GMI Cloud · Heroku AI · Novita AI
@@ -607,8 +615,8 @@ Sumopod · Apertis AI (Stima API)
 ### Enterprise & Cloud (8)
 Snowflake Cortex AI · Oracle Cloud (OCI) · SAP AI Core · IBM watsonx · Gradient AI · NLP Cloud · Petals · Clarifai
 
-### Specialized (20)
-Perplexity · Cohere · DeepInfra · SambaNova · Nebius AI · Aleph Alpha · AI21 Labs · Reka AI · Voyage AI · Deepgram · Black Forest Labs · Stability AI · Runway ML · Recraft AI · fal.ai · Helicone · Lemonade AI · Bytez · Sarvam AI · MorphDB
+### Specialized (19)
+Perplexity · Cohere · DeepInfra · Nebius AI · Aleph Alpha · AI21 Labs · Reka AI · Voyage AI · Deepgram · Black Forest Labs · Stability AI · Runway ML · Recraft AI · fal.ai · Helicone · Lemonade AI · Bytez · Sarvam AI · MorphDB
 
 ### Self-Hosted (3)
 Ollama · vLLM · LM Studio
@@ -631,7 +639,7 @@ lintasan-go/
 │   ├── dashboard/             # (deprecated, moved to frontend/)
 │   ├── db/                    # SQLite database layer
 │   ├── discover/              # Model auto-discovery
-│   ├── freeproviders/         # Free provider scanner
+│   ├── freeproviders/         # Free provider scanner (113+ presets)
 │   ├── expprovider/           # AES-256-GCM Credentials
 │   ├── memory/                # Vector memory (pluggable embedder)
 │   ├── mitm/                  # MITM HTTPS bridge
@@ -655,7 +663,7 @@ lintasan-go/
 │   ├── svelte.config.js       # SvelteKit config (adapter-node)
 │   ├── vite.config.ts         # Vite config
 │   └── package.json           # Frontend dependencies
-├── data/                      # Runtime data (auto-created)
+├── data/                      # Runtime data DB (auto-created)
 ├── docs/                      # Documentation
 │   ├── api-reference.md       # Full API reference (deprecated, read AGENTS.md)
 │   └── design-system.md       # UI design system
@@ -682,8 +690,7 @@ go run ./cmd/lintasan start        # Run server (hot-reload with air if installe
 
 # Frontend
 cd frontend
-# UI Dev Mode
-npm run dev -- --port 5173        # Dev server with HMR (Deprecated mode)
+npm run dev -- --port 5173        # Dev UI + Vite server with HMR (Requires GO RUNNING)
 
 # Build all
 make build                         # go build + npm run build
@@ -719,11 +726,11 @@ cd frontend && npm run check       # SvelteKit type-check + lint
 <summary>🇮🇩 Production Deployment</summary>
 
 ```bash
-# Build binary
+# Build statically linked production binary
 cd lintasan-go
 go build -ldflags="-s -w" -o lintasan ./cmd/lintasan
 
-# Build frontend
+# Build frontend inside go executable
 cd frontend && npm install && npm run build && cd ..
 
 # Copy to server
@@ -734,6 +741,7 @@ scp -r frontend/build user@server:/opt/lintasan/frontend-build/
 sudo tee /etc/systemd/system/lintasan.service << 'EOF'
 [Unit]
 Description=Lintasan LLM Proxy Gateway
+Documentation=https://github.com/sanhaji182/lintasan-go
 After=network.target
 
 [Service]
