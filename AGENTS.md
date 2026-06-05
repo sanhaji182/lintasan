@@ -315,7 +315,7 @@ DB ada di `$LINTASAN_DATA_DIR/` (default `./data/`). Migrasi otomatis saat start
 ```bash
 cd /home/ubuntu/lintasan-go
 go build -o lintasan ./cmd/...     # build binary
-go test ./...                       # 508 tests, 35 packages — harus PASS
+go test ./...                       # 816 tests, 44 packages — harus PASS
 ```
 
 **Frontend:**
@@ -377,4 +377,91 @@ journalctl -u lintasan -n 50 --no-pager
 
 ---
 
-*Last updated: 2026-05-31 · Stack: Go 1.22.2 + SvelteKit 5 (embedded SPA) · 581 backend tests · single self-contained binary (v0.24.0)*
+## 12. Repo Audit State — 2026-06-05 (FINAL, audit closed)
+
+> **Status:** Audit closed. Repo clean. Main `main @ c030fdd` is the last
+> housekeeping state; this section is the authoritative snapshot for the next
+> session — re-running the audit from scratch is **not required**. Update this
+> section whenever the state materially changes (new release tag, new
+> intentional branch, new deferred TODO).
+
+### Headline
+
+- **`main` HEAD:** `c030fdd` (post-audit final)
+- **Release tag:** `v0.24.1` (code state at `c030fdd`)
+- **Predecessor tag:** `v0.24.0` (versioning reset only, no code change)
+- **Production:** `v0.24.1` deployed to `lintasan.sans.biz.id:20180`
+- **Tests:** **816 passing in 44 packages** (zero regressions; 28 new tests
+  since v0.24.0 covering `curl_import.go`)
+
+### Branches — final state
+
+| Branch | Status | Reason |
+|--------|--------|--------|
+| `main` | **HEAD** | Production. Always. |
+| `feat/codex-m0-skeleton` | **KEEP** (intentional) | Shape-1 (Codex Responses ingress). Orthogonal to Shape-2 (Experimental). Per §6 + AGENT.md Codex lifecycle: never merge into Shape-2. Fork fresh worktree to continue. |
+| `gh-pages` | **KEEP** (intentional) | GitHub Pages static landing. Per project convention, landing lives on `gh-pages`; main is the product. Do not rebase, do not touch. |
+
+**Dropped (do not resurrect):**
+- 30+ merged `feat/*` and `fix/*` branches — work is in main.
+- `feat/provider-sdk-foundation` — superseded; work landed via F1+F2 chain.
+- `frontend-t949aa391` — kanban worktree orphan; both branch and
+  `~/.hermes/kanban/workspaces/t_949aa391` removed.
+- `feat/curl-import-connection` — base was 9 commits stale, 47-file diff
+  mostly noise. The one substantive fix (proxy response header forwarding)
+  was re-extracted and landed in main as `c030fdd` applied to **all three**
+  call sites in `proxy.go` (the original branch only fixed one).
+
+### Worktrees — final state
+
+Only one worktree exists:
+
+```
+/home/ubuntu/lintasan-go    main    c030fdd
+```
+
+All other worktrees removed (kanban `t_949aa391` and `/tmp/lintasan-curl-import`).
+
+### Deferred (acknowledged, not blocking)
+
+- `cmd/lintasan/main.go:118` — `fmt.Println("TODO: Interactive setup")` in
+  the fallback `print` branch of the setup wizard command. The full wizard
+  is not implemented. Not critical path; can be picked up as a separate
+  task or folded into a future `feat/setup-wizard` branch.
+- `feat/codex-m0-skeleton` M5 live validation — blocked on
+  `OPENAI_API_KEY` env. M0–M4 framework is in place.
+- Cohort-A ACP live validation — per-provider checkpoint loop pending.
+
+### Housekeeping log (what was done in this audit)
+
+1. `84874cf` — test(server): add 28 tests for `internal/server/curl_import.go`
+2. `c030fdd` — fix(proxy): strip stale `Content-Length` / `Transfer-Encoding`
+   from upstream response headers (3 call sites in `proxy.go`)
+3. CHANGELOG `v0.24.1` entry added; AGENTS.md §9 test count refreshed;
+   this §12 added as authoritative state snapshot.
+4. 30+ merged branches deleted (local + remote). 2 stale unmerged
+   branches deleted. 1 branch (`feat/curl-import-connection`) dropped with
+   fix re-extracted clean.
+5. Orphaned worktree `~/.hermes/kanban/workspaces/t_949aa391` removed.
+6. Tag `v0.24.1` created at `c030fdd`. GitHub release published with
+   binary attachment.
+
+### Recovery notes (per §9 conventions)
+
+- **Main worktree scrub pitfall** (May 2026): `~/lintasan-go` is subject to
+  external git processes (GitKraken `.git/gk/`, `filter-repo`) that can wipe
+  untracked files within ~60s. **Always** work in an isolated worktree
+  (`git worktree add -b feat/x /tmp/x main`), commit to a branch, and
+  diff `vs HEAD~1` not `vs main`. Full recipe:
+  `~/.hermes/skills/lintasan-development/references/parallel-foundation-commits.md`.
+- **Pre-deploy build hygiene:** before any `make build` or `systemctl restart`,
+  run `git status --porcelain` and either commit or park (`.gitignore`) any
+  untracked files. Untracked files left in main will be included in the
+  build artifact and can cause silent breakage.
+- **Test count drift:** if `go test ./...` count differs from the headline
+  in this section, **trust the live count** and update the section.
+  Mismatch = audit signal.
+
+---
+
+*Last updated: 2026-06-05 · Stack: Go 1.22.2 + SvelteKit 5 (embedded SPA) · 816 backend tests / 44 packages · single self-contained binary (v0.24.1)*

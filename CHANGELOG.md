@@ -10,6 +10,39 @@ semantic-ish versioning.
 > history as a reference point; `v0.24.0` is the first release of the new
 > numbering scheme (the `.24` keeps continuity with the prior work).
 
+## [0.24.1] — 2026-06-05
+
+### Added
+- **Test coverage for `internal/server/curl_import.go`.** The endpoint
+  `POST /api/connections/import-curl` was active in production with zero unit
+  tests; the gap is now closed with 28 tests covering `parseCurlCommand`
+  (header/body extraction, quoting, multiline), `inferNameFromHost`
+  (provider hints, edge cases), `tokenizeCurl` / `stripQuotes` helpers, and
+  `handleCurlImport` HTTP error paths (bad JSON, missing URL, unsupported
+  method). Commit `84874cf`.
+
+### Fixed
+- **Proxy response header forwarding.** The Go `http.Transport` auto-decompresses
+  `Content-Encoding: gzip` and resets the response `Content-Length` and
+  `Transfer-Encoding` headers on read. The proxy was forwarding the upstream's
+  stale `Content-Length` and `Transfer-Encoding: chunked` to clients, which
+  caused empty bodies when the client tried to read the declared length.
+  Now stripping those two hop-by-hop-style headers at all three forwarding
+  sites in `internal/proxy/proxy.go` (chat completions + 2 streaming paths).
+  Commit `c030fdd`.
+
+### Housekeeping
+- Dropped 30+ merged `feat/*` and `fix/*` branches (lokal + remote).
+- Removed two stale unmerged branches: `feat/provider-sdk-foundation`
+  (work already in main via F1+F2 chain) and `frontend-t949aa391`
+  (kanban worktree orphan, worktree dir removed).
+- Dropped `feat/curl-import-connection` (2-ahead branch with noisy base).
+  The one substantive fix it contained was re-extracted and merged
+  properly to all three call sites (see "Fixed" above).
+- 5 intentional branches preserved: `feat/codex-m0-skeleton`,
+  `gh-pages` (kept per project convention), plus the working
+  `main`.
+
 ## [0.24.0] — 2026-06-05
 
 ### Changed
