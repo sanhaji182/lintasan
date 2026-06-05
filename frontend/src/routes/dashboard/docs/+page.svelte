@@ -1520,7 +1520,7 @@ OPENAI_BASE_URL="http://localhost:20180/v1"
 → Semua provider gagal. Cek: Test Connection di dashboard per provider.
 
 **"gzip: invalid header" (atau body kosong)**
-→ Provider upstream kirim encoding header tapi body nggak compressed. Lintasan sudah auto-handle ini sejak v2.4.0. Kalau masih terjadi, report issue.
+→ Provider upstream kirim encoding header tapi body nggak compressed. Lintasan sudah auto-handle ini sejak v0.24.0. Kalau masih terjadi, report issue.
 
 **"Too many requests"**
 → Rate limit kena. Default 60 req/menit. Naikkan di Settings → Rate Limit.`,
@@ -1534,7 +1534,7 @@ OPENAI_BASE_URL="http://localhost:20180/v1"
 → All providers failed. Check: Test Connection in dashboard per provider.
 
 **"gzip: invalid header" (or empty body)**
-→ Upstream provider sends encoding header but body isn't actually compressed. Lintasan auto-handles this since v2.4.0. If still happening, report issue.
+→ Upstream provider sends encoding header but body isn't actually compressed. Lintasan auto-handles this since v0.24.0. If still happening, report issue.
 
 **"Too many requests"**
 → Rate limit hit. Default 60 req/min. Increase in Settings → Rate Limit.`,

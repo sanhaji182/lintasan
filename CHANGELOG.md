@@ -4,6 +4,23 @@ All notable changes to Lintasan Go are documented here. The format is loosely
 based on [Keep a Changelog](https://keepachangelog.com/), and this project uses
 semantic-ish versioning.
 
+> **Versioning note (2026-06-05):** Lintasan is now numbered as **0.x.x** (pre-1.0)
+> to honestly reflect that the project is still in active development — the API
+> and on-disk formats may still change. The previous `v2.4.0` tag remains in
+> history as a reference point; `v0.24.0` is the first release of the new
+> numbering scheme (the `.24` keeps continuity with the prior work).
+
+## [0.24.0] — 2026-06-05
+
+### Changed
+- **Versioning scheme reset to 0.x.x.** The first release of the pre-1.0 series
+  is `v0.24.0`, continuing from the `v2.4.0` work. Semver signal: API and config
+  formats are not yet frozen.
+
+### Notes
+- No code or behavior change vs the prior `main @ 6b29d79`. Only version strings,
+  docs, and CHANGELOG were updated.
+
 ## [2.4.0] — 2026-05-30
 
 ### Added
@@ -70,6 +87,7 @@ semantic-ish versioning.
 - Security & Reliability release: fail-closed auth, bootstrap/active state
   machine, first-run setup redesign.
 
+[0.24.0]: https://github.com/sanhaji182/lintasan-go/releases/tag/v0.24.0
 [2.4.0]: https://github.com/sanhaji182/lintasan-go/releases/tag/v2.4.0
 [2.3.7]: https://github.com/sanhaji182/lintasan-go/releases/tag/v2.3.7
 [2.3.6]: https://github.com/sanhaji182/lintasan-go/releases/tag/v2.3.6

@@ -2,7 +2,7 @@
 
 > **Setiap Koneksi Punya Jalannya** — Jalur cerdas yang menghubungkan manusia, AI, dan sistem dalam satu aliran terintegrasi.
 
-> ⚡ 35x lebih ringan dari Node.js v1 · single binary ~24MB · 700+ tests · 118+ provider presets · Go (v2.4.0) + SvelteKit Embedded SPA
+> ⚡ 35x lebih ringan dari Node.js v1 · single binary ~24MB · 700+ tests · 118+ provider presets · Go (v0.24.0) + SvelteKit Embedded SPA
 
 ---
 
@@ -10,7 +10,7 @@
 
 > **Every Connection Has Its Path** — An intelligent pathway connecting humans, AI, and systems in one integrated flow.
 
-> ⚡ 35x lighter than Node.js v1 · single ~24MB binary · 700+ tests · 118+ provider presets · Go (v2.4.0) + SvelteKit Embedded SPA
+> ⚡ 35x lighter than Node.js v1 · single ~24MB binary · 700+ tests · 118+ provider presets · Go (v0.24.0) + SvelteKit Embedded SPA
 
 ---
 

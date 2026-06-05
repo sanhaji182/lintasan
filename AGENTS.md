@@ -39,7 +39,7 @@ Lintasan adalah **LLM proxy gateway** — satu endpoint OpenAI-compatible yang m
             └───────────────────────────────────┘
 ```
 
-**Single binary (sejak v2.4.0):** Dashboard SvelteKit dikompilasi ke static SPA (`adapter-static`) lalu di-`go:embed` ke binary Go via package `internal/web`. Satu proses `lintasan start` di `:20180` menyajikan UI **dan** API — tidak ada proses Node terpisah.
+**Single binary (sejak v0.24.0):** Dashboard SvelteKit dikompilasi ke static SPA (`adapter-static`) lalu di-`go:embed` ke binary Go via package `internal/web`. Satu proses `lintasan start` di `:20180` menyajikan UI **dan** API — tidak ada proses Node terpisah.
 
 **Pembagian routing nginx (sekarang sederhana):**
 - Semua path → Go `:20180`. Backend yang membedakan: `/api/*` `/v1/*` `/mcp` `/health` ditangani handler; sisanya (`/`, `/login`, `/dashboard/*`, `/_app/*`, favicon) dilayani SPA embedded.
@@ -377,4 +377,4 @@ journalctl -u lintasan -n 50 --no-pager
 
 ---
 
-*Last updated: 2026-05-31 · Stack: Go 1.22.2 + SvelteKit 5 (embedded SPA) · 581 backend tests · single self-contained binary (v2.4.0)*
+*Last updated: 2026-05-31 · Stack: Go 1.22.2 + SvelteKit 5 (embedded SPA) · 581 backend tests · single self-contained binary (v0.24.0)*
