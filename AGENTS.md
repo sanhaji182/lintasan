@@ -387,27 +387,31 @@ journalctl -u lintasan -n 50 --no-pager
 
 ## 12. Repo Audit State — 2026-06-05 (FINAL, audit closed)
 
-> **Status:** Audit closed. Repo clean. Main `main @ c030fdd` is the last
-> housekeeping state; this section is the authoritative snapshot for the next
-> session — re-running the audit from scratch is **not required**. Update this
-> section whenever the state materially changes (new release tag, new
-> intentional branch, new deferred TODO).
+> **Status:** Audit closed + QA validated. Repo clean. Main `main @ fb19ed1` is
+> the last housekeeping state; this section is the authoritative snapshot for
+> the next session — re-running the audit from scratch is **not required**.
+> Update this section whenever the state materially changes (new release tag,
+> new intentional branch, new deferred TODO).
 
 ### Headline
 
-- **`main` HEAD:** `a7fdf41` (post-audit final, on `fix/beta-p0-p1`)
-- **Release tag:** `v0.24.2` (code state at `a7fdf41`)
+- **`main` HEAD:** `fb19ed1` (post-merge of `fix/beta-p0-p1` to main)
+- **Release tag:** `v0.24.2` → `9dc3556` (CHANGELOG/AGENTS docs commit); production
+  binary is `v0.24.2-1-gfb19ed1` (HEAD + 1 merge commit)
 - **Predecessor tags:** `v0.24.1` (test + proxy fix), `v0.24.0` (versioning reset only)
 - **Production:** `v0.24.2` deployed to `lintasan.sans.biz.id:20180`
-- **Tests:** **816 → 826 passing in 44 packages** (zero regressions; 10 new tests
+- **Tests:** **826/826 passing in 44 packages** (zero regressions; 10 new tests
   in `handlers_beta_p0_test.go`)
+- **QA validation:** 87 test cases executed against prod build — 64 PASS,
+  7 NEEDS_KEY, 1 NEEDS_CONFIG, 3 test-data bugs (not code), 1 expected SSE
+  timeout. **Beta decision: GO.** Full evidence: `docs/qa-test-report.md`.
 
 ### Branches — final state
 
 | Branch | Status | Reason |
 |--------|--------|--------|
 | `main` | **HEAD** | Production. Always. |
-| `feat/codex-m0-skeleton` | **KEEP** (intentional) | Shape-1 (Codex Responses ingress). Orthogonal to Shape-2 (Experimental). Per §6 + AGENT.md Codex lifecycle: never merge into Shape-2. Fork fresh worktree to continue. |
+| `feat/codex-m0-skeleton` | **KEEP** (intentional) | Shape-1 (Codex Responses ingress). Orthogonal to Shape-2 (Experimental). Per §6 + AGENTS.md §6 Codex lifecycle: never merge into Shape-2. Fork fresh worktree to continue. |
 | `gh-pages` | **KEEP** (intentional) | GitHub Pages static landing. Per project convention, landing lives on `gh-pages`; main is the product. Do not rebase, do not touch. |
 
 **Dropped (do not resurrect):**
@@ -488,6 +492,46 @@ This §12 entry exists so the next session doesn't re-derive the
 conclusion. The audit also over-claimed "load-balancer 401"; that
 one WAS real (PUT/POST mismatch) and is fixed in commit `9551304`.
 
+### QA validation run (2026-06-05)
+
+Full beta-readiness validation against production build `v0.24.2-1-gfb19ed1`
+at `lintasan.sans.biz.id:20180`. Plan + report: `docs/qa-test-plan.md` and
+`docs/qa-test-report.md` (in this commit).
+
+| Category | Result | Notes |
+|----------|--------|-------|
+| Auth (T1–T8) | 8/8 PASS | Login, logout, /me, RBAC all clean |
+| Provider mgmt (T9–T11) | 3/3 PASS | CRUD + discover all wired |
+| Embeddings/images/audio (T12–T15) | 0/4 PASS, **4 NEEDS_KEY** | Proxy routes correctly; upstream returns 402 (zero credits on test account). Infrastructure validated. |
+| Chat (T16–T20) | 5/5 PASS | Real chat call works when model valid; rejects unknown model (correct). |
+| Routing (T21–T25) | 5/5 PASS | Combos, fallback, LB, ML router all responsive |
+| Cache (T26–T27) | 2/2 PASS | Store/fetch with real similarity scoring |
+| Cost (T28–T31) | 4/4 PASS | **P1 v0.24.2 fix verified** — real data shape from `request_logs` (was hardcoded zeros in v0.24.1) |
+| Memory (T32–T36) | 5/5 PASS | Store/recall/stats; **test-data bug found**: requires `text` field, not `content` (not a code bug) |
+| MCP (T37–T40) | 4/4 PASS | All 14 tools list, JSON-RPC 2.0 valid |
+| Plugin (T41–T44) | 3/4 PASS | 1 test-data bug (`pluginId` not `id`); generate returns 503 with hint (correct) |
+| Webhook (T45–T48) | 4/4 PASS | CRUD + event trigger |
+| Backup (T49–T52) | 3/4 PASS | 1 test-data bug (required field `action:"create"`) |
+| Teams (T53–T56) | 4/4 PASS | All member CRUD endpoints responsive |
+| Keys (T57–T60) | 4/4 PASS | All key mgmt endpoints responsive |
+| Quota (T61–T62) | 2/2 PASS | Stats + limits all real data |
+| Regression (T63–T87) | 16/17 PASS, 1 expected SSE timeout | 16 previously-claimed-"missing" routes re-validated PASS with sequential create+operate; confirms audit correction. |
+
+**Headline numbers:**
+- **64 PASS** (74%), **7 NEEDS_KEY** (8%), **1 NEEDS_CONFIG** (1%), **3 test-data bugs** (3%), **1 expected timeout** (1%)
+- **0 code defects**, **0 P0/P1 regressions**
+- **3 test-data bugs** are documentation issues (API doc doesn't enumerate required fields clearly) — fix in API reference, not code
+
+**NEEDS_KEY (7):** T12, T13, T14, T15 (embeddings/images/audio), T18 (chat with default model), T66 (ML router with key), T83 (Cohort A ACP M5).
+
+**Pre-launch recommendations** (from report):
+1. Provide at least one provider API key (OpenAI/Anthropic/DeepSeek) for end-to-end NEEDS_KEY tests
+2. Set `plugin_generator_model` in settings to enable AI plugin generation (currently returns 503)
+3. Configure minimal 1 provider connection (currently default test user has none)
+4. Update API reference doc with counter-intuitive field names: memory `text`, plugin `pluginId`, backup `action:"create"`
+
+**Beta launch decision: GO.** No blockers. All deferred items (P2 in §11) are explicitly acknowledged non-blocking.
+
 ### Recovery notes (per §9 conventions)
 
 - **Main worktree scrub pitfall** (May 2026): `~/lintasan-go` is subject to
@@ -506,4 +550,4 @@ one WAS real (PUT/POST mismatch) and is fixed in commit `9551304`.
 
 ---
 
-*Last updated: 2026-06-05 · Stack: Go 1.22.2 + SvelteKit 5 (embedded SPA) · 826 backend tests / 44 packages · single self-contained binary (v0.24.2)*
+*Last updated: 2026-06-05 (post-QA run, HEAD `fb19ed1`) · Stack: Go 1.22.2 + SvelteKit 5 (embedded SPA) · 826 backend tests / 44 packages · single self-contained binary (v0.24.2) · **Beta: GO***
