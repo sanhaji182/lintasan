@@ -10,6 +10,39 @@ semantic-ish versioning.
 > history as a reference point; `v0.24.0` is the first release of the new
 > numbering scheme (the `.24` keeps continuity with the prior work).
 
+## [0.24.2] — 2026-06-05
+
+### Fixed
+- **`handlePluginGenerate` is no longer a stub.** The "AI Generate" tab in
+  the Plugins page used to return a hardcoded template regardless of the
+  prompt, which was misleading. New behavior: if `plugin_generator_model`
+  is unset, return `503` with a clear "set this setting" hint instead of a
+  fake template. If set, self-call `/v1/chat/completions` with the master
+  key, pass a system prompt that anchors the output to a single
+  JavaScript plugin module, and return the model-generated code.
+- **`handleCosts` reads real data.** Previously returned hardcoded zeros.
+  Now aggregates `request_logs` by model for "today" and "this month" and
+  computes cost per row via `cost.NewCalculator()` with the built-in
+  pricing table. Returns the full shape (totals, by-model breakdown
+  sorted by cost desc, request counts, input/output token counts).
+- **Frontend/backend method mismatch on `/api/load-balancer`.** The
+  routing page sent `PUT` but the server registered `POST`. Aligned the
+  frontend to `POST` (1-line change, no server-side handler added).
+
+### Changed
+- **AGENTS.md §11 quick reference.** Removed the stale `admin/admin123`
+  login example (the password is randomly generated on first start and
+  forced to rotate). Replaced with a recovery-flow comment block.
+
+### Tests
+- 10 new unit tests in `internal/server/handlers_beta_p0_test.go`:
+  - `TestHandlePluginGenerate_*` (5 cases) — bad JSON, empty prompt, no
+    model, test mode (port=0), no master key
+  - `TestHandleCosts_*` (2 cases) — empty-DB shape, real aggregation
+    from seeded `request_logs` rows
+  - `TestStripCodeFences`, `TestSanitizeName`, `TestRound2` — helpers
+- Suite: 35/35 packages pass, `go vet` clean.
+
 ## [0.24.1] — 2026-06-05
 
 ### Added

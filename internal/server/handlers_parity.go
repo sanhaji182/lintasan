@@ -5,11 +5,14 @@ import (
     "encoding/json"
     "fmt"
     "io"
+    "math"
     "net/http"
+    "sort"
     "strings"
     "time"
 
     "github.com/google/uuid"
+    "github.com/sanhaji182/lintasan-go/internal/cost"
     "github.com/sanhaji182/lintasan-go/internal/discover"
     "github.com/sanhaji182/lintasan-go/internal/errfmt"
 )
@@ -524,7 +527,58 @@ func (s *Server) handleCache(w http.ResponseWriter, r *http.Request) {
 	})
 }
 func (s *Server) handleCacheAction(w http.ResponseWriter,r *http.Request){ s.db.Conn().Exec("DELETE FROM embedding_cache"); s.db.Conn().Exec("DELETE FROM semantic_cache"); writeJSON(w,map[string]any{"success":true,"status":"cleared"}) }
-func (s *Server) handleCosts(w http.ResponseWriter,r *http.Request){ writeData(w,map[string]any{"today":0,"month":0,"currency":"USD","by_model":[]any{}}) }
+// handleCosts implements GET /api/costs. It computes real aggregated costs
+// from request_logs (written by the proxy on every chat completion) using
+// the cost package's Calculator and the built-in pricing table. Replaces
+// the prior stub that returned hardcoded zeros.
+//
+// The proxy doesn't persist a separate `cost_entries` row yet, so we
+// recompute on read by joining tokens with model pricing. Cheap, and the
+// read path is hit rarely (dashboard refresh). If a `cost_entries` table
+// is added later, swap the read for Tracker.Summary() and keep the JSON
+// shape stable.
+func (s *Server) handleCosts(w http.ResponseWriter, r *http.Request) {
+	calc := cost.NewCalculator()
+	cutoffToday := "datetime('now', 'localtime', 'start of day')"
+	cutoffMonth := "datetime('now', 'localtime', 'start of month')"
+	aggregate := func(cutoffExpr string) (float64, []map[string]any, int, int, int) {
+		var totalCost float64
+		byModelMap := map[string]*struct{ cost float64; requests, inTok, outTok int }{}
+		byModel := []map[string]any{}
+		totalReq, totalIn, totalOut := 0, 0, 0
+		rows, err := s.db.Conn().Query("SELECT model, SUM(input_tokens), SUM(output_tokens), COUNT(*) FROM request_logs WHERE created_at >= " + cutoffExpr + " GROUP BY model")
+		if err != nil { return 0, byModel, 0, 0, 0 }
+		defer rows.Close()
+		for rows.Next() {
+			var model string
+			var inTok, outTok, reqs int
+			if err := rows.Scan(&model, &inTok, &outTok, &reqs); err != nil { continue }
+			c := calc.CalculateCost(model, inTok, outTok)
+			totalCost += c.TotalCostUSD
+			e, ok := byModelMap[model]
+			if !ok { e = &struct{ cost float64; requests, inTok, outTok int }{}; byModelMap[model] = e }
+			e.cost += c.TotalCostUSD; e.requests += reqs; e.inTok += inTok; e.outTok += outTok
+			totalReq += reqs; totalIn += inTok; totalOut += outTok
+		}
+		for model, e := range byModelMap {
+			byModel = append(byModel, map[string]any{"model": model, "requests": e.requests, "input_tokens": e.inTok, "output_tokens": e.outTok, "cost_usd": round2(e.cost)})
+		}
+		// Stable order by cost desc so the dashboard doesn't shuffle.
+		sort.SliceStable(byModel, func(i, j int) bool { return byModel[i]["cost_usd"].(float64) > byModel[j]["cost_usd"].(float64) })
+		return round2(totalCost), byModel, totalReq, totalIn, totalOut
+	}
+	todayCost, todayByModel, todayReq, todayIn, todayOut := aggregate(cutoffToday)
+	monthCost, monthByModel, monthReq, monthIn, monthOut := aggregate(cutoffMonth)
+	writeData(w, map[string]any{
+		"today": todayCost, "month": monthCost, "currency": "USD",
+		"by_model": todayByModel, "month_by_model": monthByModel,
+		"requests_today": todayReq, "requests_month": monthReq,
+		"input_tokens_today": todayIn, "output_tokens_today": todayOut,
+		"input_tokens_month": monthIn, "output_tokens_month": monthOut,
+	})
+}
+
+func round2(f float64) float64 { return math.Round(f*100) / 100 }
 func (s *Server) handleQuota(w http.ResponseWriter,r *http.Request){ writeData(w,[]any{map[string]any{"limits":s.getJSONSetting("quota_limits",map[string]any{}),"usage":map[string]any{"requests_today":0,"tokens_today":0}}}) }
 func (s *Server) handleAudit(w http.ResponseWriter,r *http.Request){
 	rows,_:=s.db.Conn().Query("SELECT id, action, actor, resource, details, created_at FROM audit_events ORDER BY created_at DESC LIMIT 100")

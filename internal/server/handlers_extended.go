@@ -184,7 +184,105 @@ func (s *Server) handlePlugins(w http.ResponseWriter,r *http.Request){ writeData
 func (s *Server) handlePluginsAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); arr:=s.getJSONSetting("plugins",[]any{}).([]any); action,_:=in["action"].(string); if action=="create"||action=="install"{ in["id"]=uuid.New().String(); in["enabled"]=true; arr=append(arr,in); s.setJSONSetting("plugins",arr); writeJSON(w,map[string]any{"status":"created"}); return}; writeJSON(w,map[string]any{"status":"ok"}) }
 func (s *Server) handlePluginStore(w http.ResponseWriter,r *http.Request){ writeData(w,[]map[string]any{{"name":"Request Logger","category":"observability","author":"Lintasan","version":"1.0.0","description":"Log request metadata","tags":[]string{"logs","debug"}},{"name":"Rate Limiter","category":"security","author":"Lintasan","version":"1.0.0","description":"Basic per-key rate limits","tags":[]string{"rate-limit"}},{"name":"Cost Guard","category":"cost","author":"Lintasan","version":"1.0.0","description":"Block expensive requests","tags":[]string{"cost"}}}) }
 func (s *Server) handlePluginStoreAction(w http.ResponseWriter,r *http.Request){ s.handlePluginsAction(w,r) }
-func (s *Server) handlePluginGenerate(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); name,_:=in["name"].(string); if name==""{name="generated-plugin"}; code:=fmt.Sprintf("// %s\nexport default async function plugin(ctx) {\n  return ctx.next();\n}\n",name); writeJSON(w,map[string]any{"name":name,"code":code,"model":"lintasan-go-template"}) }
+func (s *Server) handlePluginGenerate(w http.ResponseWriter, r *http.Request) {
+	var in map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON"})
+		return
+	}
+	prompt, _ := in["prompt"].(string)
+	name, _ := in["name"].(string)
+	if prompt == "" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "prompt required"})
+		return
+	}
+	if name == "" {
+		// Derive a default name from the first line of the prompt so the
+		// generated plugin isn't literally called "generated-plugin".
+		name = "lintasan-plugin"
+		if i := strings.IndexAny(prompt, "\n."); i > 0 && i < 60 { name = sanitizeName(prompt[:i]) }
+	}
+	// Honest failure mode: if no model is configured, refuse to return a
+	// fake template (the prior behavior) and tell the operator exactly
+	// which setting to flip. The setting holds a combo or model alias
+	// the operator picks (e.g. "gpt-4o-mini", "claude-haiku").
+	modelAlias, _ := s.db.GetSetting("plugin_generator_model")
+	if modelAlias == "" {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "plugin generator not configured",
+			"hint":  "set the `plugin_generator_model` setting to a combo or model alias (e.g. `gpt-4o-mini`, `claude-haiku`) and retry",
+		})
+		return
+	}
+	// Self-call the proxy on localhost with the master key. Reusing the
+	// existing /v1/chat/completions endpoint keeps codegen symmetric with
+	// how every other Lintasan client calls the gateway.
+	host := "http://127.0.0.1:" + fmt.Sprint(s.cfg.Port)
+	if s.cfg.Port == 0 {
+		// Test mode (httptest): no bindable port, can't self-call.
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "plugin generator unavailable in test mode (no bindable port)",
+		})
+		return
+	}
+	masterKey, _ := s.db.GetSetting("master_key")
+	if masterKey == "" { masterKey = s.cfg.MasterKey }
+	if masterKey == "" {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "plugin generator unavailable: no master key configured",
+		})
+		return
+	}
+	systemPrompt := "You generate Lintasan gateway plugins. A plugin is a JavaScript module with the shape: export default async function plugin(ctx) { ... return ctx.next(); }. Return ONLY the JavaScript source code, no markdown fences, no prose."
+	body, _ := json.Marshal(map[string]any{
+		"model": modelAlias, "stream": false, "max_tokens": 2000,
+		"messages": []map[string]string{{"role": "system", "content": systemPrompt}, {"role": "user", "content": prompt}},
+	})
+	req, _ := http.NewRequest("POST", host+"/v1/chat/completions", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+masterKey)
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil { writeJSONStatus(w, http.StatusBadGateway, map[string]any{"error": "upstream call failed: " + err.Error()}); return }
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 400 { writeJSONStatus(w, resp.StatusCode, map[string]any{"error": "upstream returned " + resp.Status, "body": string(raw)}); return }
+	var parsed struct {
+		Choices []struct { Message struct { Content string `json:"content"` } `json:"message"` } `json:"choices"`
+		Model   string `json:"model"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil { writeJSONStatus(w, http.StatusBadGateway, map[string]any{"error": "upstream response not parseable: " + err.Error()}); return }
+	if len(parsed.Choices) == 0 { writeJSONStatus(w, http.StatusBadGateway, map[string]any{"error": "upstream returned no choices"}); return }
+	code := stripCodeFences(strings.TrimSpace(parsed.Choices[0].Message.Content))
+	s.audit("plugin.generate", "dashboard", name, map[string]any{"model": parsed.Model, "bytes": len(code)})
+	writeJSON(w, map[string]any{"name": name, "code": code, "model": parsed.Model})
+}
+
+// stripCodeFences removes leading/trailing ``` fences if a model returns
+// them despite the system prompt telling it not to.
+func stripCodeFences(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```") {
+		if i := strings.Index(s, "\n"); i >= 0 { s = s[i+1:] }
+		if strings.HasSuffix(s, "```") { s = s[:len(s)-3] }
+	}
+	return strings.TrimSpace(s)
+}
+
+// sanitizeName produces a short identifier-safe plugin name from arbitrary
+// text: lowercased, non-[a-z0-9-_] replaced with '-', capped at 40 chars.
+func sanitizeName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch { case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '_': out = append(out, c); default: out = append(out, '-') }
+		if len(out) >= 40 { break }
+	}
+	n := strings.Trim(string(out), "-")
+	if n == "" { return "lintasan-plugin" }
+	return n
+}
 
 func (s *Server) handleTeams(w http.ResponseWriter,r *http.Request){ writeData(w,s.getJSONSetting("teams",[]any{})) }
 func (s *Server) handleTeamsAction(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); arr:=s.getJSONSetting("teams",[]any{}).([]any); if in["action"]=="create"||in["name"]!=nil{ in["id"]=uuid.New().String(); in["members"]=[]any{}; arr=append(arr,in); s.setJSONSetting("teams",arr); writeJSON(w,map[string]any{"status":"created"}); return}; writeJSON(w,map[string]any{"status":"ok"}) }

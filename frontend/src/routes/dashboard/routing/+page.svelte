@@ -191,7 +191,7 @@
 
   async function setGlobalStrategy(strategy: string) {
     try {
-      await api.put('/api/load-balancer', { strategy });
+      await api.post('/api/load-balancer', { strategy });
       loadBalancerStrategy = strategy;
       showToast(`Load balancer set to ${strategy}`, 'success');
     } catch (e: any) {
