@@ -2,8 +2,8 @@
 bin/
 /lintasan
 /lintasan-go
-/lintasan-go-new
-/lintasan-go.old
+/lintasan-go*
+/lintasan.*
 
 # Data
 data/
