@@ -42,11 +42,11 @@ type Provider struct {
 // Catalog is the full 9router OAUTH_PROVIDERS set (8 entries).
 func Catalog() []Provider {
 	return []Provider{
-		{ID: "claude", Name: "Claude Code", Flow: FlowPKCE, Impl: ImplPlanned, Deprecated: true, RiskNotice: RiskNotice,
-			Notes: "Port CLAUDE_CONFIG + PKCE from 9router"},
+		{ID: "claude", Name: "Claude Code", Flow: FlowPKCE, Impl: ImplReady, Deprecated: true, RiskNotice: RiskNotice,
+			Notes: "PKCE via claude.ai + api.anthropic.com token"},
 		{ID: "antigravity", Name: "Antigravity", Flow: FlowPKCE, Impl: ImplPlanned, Deprecated: true,
 			DeprecationNote: "Antigravity IDE only — proxy use may trigger bans", RiskNotice: RiskNotice},
-		{ID: "codex", Name: "OpenAI Codex", Flow: FlowPKCE, Impl: ImplPlanned, Deprecated: true, RiskNotice: RiskNotice,
+		{ID: "codex", Name: "OpenAI Codex", Flow: FlowPKCE, Impl: ImplReady, Deprecated: true, RiskNotice: RiskNotice,
 			Notes: "OpenAI auth.openai.com PKCE"},
 		{ID: "github", Name: "GitHub Copilot", Flow: FlowDevice, Impl: ImplReady, Deprecated: true, RiskNotice: RiskNotice,
 			Notes: "Device code + copilot_internal token (9router GITHUB_CONFIG)"},

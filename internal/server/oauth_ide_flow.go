@@ -21,7 +21,7 @@ func (s *Server) handleOAuthStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if enabled {
 		out["public_base"] = s.oauthPublicBaseURL()
-		out["hint"] = "ready: xai (browser), github (device code + poll). Others planned."
+		out["hint"] = "ready: xai, claude, codex (browser PKCE); github (device + poll). Others planned."
 	}
 	writeJSON(w, out)
 }
@@ -37,15 +37,28 @@ func startOAuthAuthorize(s *Server, provider, sessionID, publicBase string) (red
 	return res.RedirectURL, nil
 }
 
-func exchangeOAuthCallback(provider, code, redirectURI, pkceVerifier string) (access, refresh string, expiresIn int, err error) {
+func exchangeOAuthCallback(provider, code, redirectURI, pkceVerifier, oauthState string) (access, refresh string, expiresIn int, flowMeta string, err error) {
 	switch provider {
 	case "xai":
 		tok, err := oauthide.ExchangeXAIToken(code, redirectURI, pkceVerifier)
 		if err != nil {
-			return "", "", 0, err
+			return "", "", 0, "", err
 		}
-		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, nil
+		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, "", nil
+	case "claude":
+		tok, err := oauthide.ExchangeClaudeToken(code, redirectURI, pkceVerifier, oauthState)
+		if err != nil {
+			return "", "", 0, "", err
+		}
+		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, "", nil
+	case "codex":
+		tok, meta, err := oauthide.ExchangeCodexToken(code, redirectURI, pkceVerifier)
+		if err != nil {
+			return "", "", 0, "", err
+		}
+		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, meta, nil
 	default:
-		return exchangeIdeOAuthCodeLegacy(provider, code, redirectURI)
+		a, r, e, err := exchangeIdeOAuthCodeLegacy(provider, code, redirectURI)
+		return a, r, e, "", err
 	}
 }

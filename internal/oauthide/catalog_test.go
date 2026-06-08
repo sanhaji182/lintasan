@@ -32,6 +32,15 @@ func TestGitHubReady(t *testing.T) {
 	}
 }
 
+func TestClaudeCodexReady(t *testing.T) {
+	for _, id := range []string{"claude", "codex"} {
+		p := ByID(id)
+		if p == nil || p.Impl != ImplReady {
+			t.Fatalf("%s should be ready, got %+v", id, p)
+		}
+	}
+}
+
 func TestPKCE(t *testing.T) {
 	pk, err := NewPKCE(32)
 	if err != nil || pk.Verifier == "" || pk.Challenge == "" {

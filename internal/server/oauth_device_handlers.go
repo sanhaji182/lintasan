@@ -35,6 +35,20 @@ func startOAuthAuthorizeFull(s *Server, provider, sessionID, publicBase string) 
 			Flow:        "browser_redirect",
 			RedirectURL: oauthide.BuildXAIAuthorizeURL(redirect, sessionID, pkce.Challenge),
 		}, nil
+	case "claude":
+		url, err := oauthide.StartBrowserPKCE(oauthide.ClaudePKCEBytes, oauthide.BuildClaudeAuthorizeURL, publicBase, "claude", sessionID,
+			func(v string) error { return s.oauthMgr.SetSessionPKCE(sessionID, v) })
+		if err != nil {
+			return nil, err
+		}
+		return &AuthorizeResult{Flow: "browser_redirect", RedirectURL: url}, nil
+	case "codex":
+		url, err := oauthide.StartBrowserPKCE(oauthide.CodexPKCEBytes, oauthide.BuildCodexAuthorizeURL, publicBase, "codex", sessionID,
+			func(v string) error { return s.oauthMgr.SetSessionPKCE(sessionID, v) })
+		if err != nil {
+			return nil, err
+		}
+		return &AuthorizeResult{Flow: "browser_redirect", RedirectURL: url}, nil
 	case "github":
 		dev, err := oauthide.StartGitHubDevice()
 		if err != nil {

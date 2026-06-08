@@ -8,9 +8,9 @@ Mirrors `9router` `OAUTH_PROVIDERS` @ v0.4.71:
 
 | id | flow | implementation |
 |----|------|----------------|
-| claude | PKCE | planned |
+| **claude** | PKCE | **ready** |
 | antigravity | PKCE | planned |
-| codex | PKCE | planned |
+| **codex** | PKCE | **ready** |
 | **github** | device_code | **ready** |
 | cursor | import_token | import_only |
 | **xai** | PKCE | **ready** |

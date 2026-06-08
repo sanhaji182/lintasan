@@ -130,7 +130,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	redirectURI := s.oauthPublicBaseURL() + "/api/oauth/callback/" + provider
-	access, refresh, expIn, exchErr := exchangeOAuthCallback(provider, code, redirectURI, pending.PKCEVerifier)
+	access, refresh, expIn, flowMeta, exchErr := exchangeOAuthCallback(provider, code, redirectURI, pending.PKCEVerifier, state)
 	if exchErr != nil {
 		s.audit("oauth.ide.callback_failed", provider, state, map[string]any{"error": exchErr.Error()})
 		oauthIdeDisabledHTML(w, "Token exchange failed: "+exchErr.Error())
@@ -141,7 +141,12 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if expIn <= 0 {
 		expires = time.Now().Add(24 * time.Hour)
 	}
-	if err := s.oauthMgr.UpdateSessionTokens(state, access, refresh, expires); err != nil {
+	if flowMeta != "" {
+		if err := s.oauthMgr.UpdateSessionTokensWithMeta(state, access, refresh, expires, flowMeta); err != nil {
+			oauthIdeDisabledHTML(w, "Failed to store tokens.")
+			return
+		}
+	} else if err := s.oauthMgr.UpdateSessionTokens(state, access, refresh, expires); err != nil {
 		oauthIdeDisabledHTML(w, "Failed to store tokens.")
 		return
 	}
