@@ -44,8 +44,9 @@ func Catalog() []Provider {
 	return []Provider{
 		{ID: "claude", Name: "Claude Code", Flow: FlowPKCE, Impl: ImplReady, Deprecated: true, RiskNotice: RiskNotice,
 			Notes: "PKCE via claude.ai + api.anthropic.com token"},
-		{ID: "antigravity", Name: "Antigravity", Flow: FlowPKCE, Impl: ImplPlanned, Deprecated: true,
-			DeprecationNote: "Antigravity IDE only — proxy use may trigger bans", RiskNotice: RiskNotice},
+		{ID: "antigravity", Name: "Antigravity", Flow: FlowAuthCode, Impl: ImplReady, Deprecated: true,
+			DeprecationNote: "Antigravity IDE only — proxy use may trigger bans", RiskNotice: RiskNotice,
+			Notes: "Google OAuth2 + loadCodeAssist (9router port)"},
 		{ID: "codex", Name: "OpenAI Codex", Flow: FlowPKCE, Impl: ImplReady, Deprecated: true, RiskNotice: RiskNotice,
 			Notes: "OpenAI auth.openai.com PKCE"},
 		{ID: "github", Name: "GitHub Copilot", Flow: FlowDevice, Impl: ImplReady, Deprecated: true, RiskNotice: RiskNotice,
@@ -54,9 +55,9 @@ func Catalog() []Provider {
 			Notes: "Import from state.vscdb — no browser OAuth URL"},
 		{ID: "xai", Name: "xAI (Grok)", Flow: FlowPKCE, Impl: ImplReady,
 			Notes: "PKCE; public client from 9router/xAI upstream"},
-		{ID: "kilocode", Name: "Kilo Code", Flow: FlowCustomDevice, Impl: ImplPlanned,
+		{ID: "kilocode", Name: "Kilo Code", Flow: FlowCustomDevice, Impl: ImplReady,
 			Notes: "api.kilo.ai device-auth poll"},
-		{ID: "cline", Name: "Cline", Flow: FlowLocalApp, Impl: ImplPlanned,
+		{ID: "cline", Name: "Cline", Flow: FlowLocalApp, Impl: ImplReady,
 			Notes: "app.cline.bot callback flow"},
 	}
 }

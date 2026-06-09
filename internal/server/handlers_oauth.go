@@ -20,6 +20,7 @@ func (s *Server) registerOAuthRoutes() {
 	s.mux.HandleFunc("POST /api/oauth/device/poll", s.handleOAuthDevicePoll)
 	s.mux.HandleFunc("GET /api/oauth/sessions", s.handleOAuthSessions)
 	s.mux.HandleFunc("DELETE /api/oauth/sessions/{id}", s.handleOAuthRevokeSession)
+	s.registerOAuthCursorRoutes()
 }
 
 // POST /api/oauth/authorize — admin starts OAuth flow for an IDE provider.
@@ -48,6 +49,13 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if !auth.IsIdeOAuthProvider(input.Provider) {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unknown provider: %s", input.Provider)})
+		return
+	}
+	if input.Provider == "cursor" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
+			"error": "cursor uses import — POST /api/oauth/cursor/import with accessToken and machineId",
+			"import": "/api/oauth/cursor/import",
+		})
 		return
 	}
 	if !input.AcknowledgeRisk && !input.AcknowledgeRiskAlt {
@@ -92,7 +100,13 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		out["message"] = fmt.Sprintf("Open redirect_url in a browser logged into your %s account (BYO subscription).", input.Provider)
 	} else {
 		out["device"] = result.Device
-		out["message"] = "Enter user_code at GitHub, then click Poll until active."
+		msg := "Enter user_code at provider site, then click Poll until active."
+		if input.Provider == "github" {
+			msg = "Enter user_code at GitHub, then click Poll until active."
+		} else if input.Provider == "kilocode" {
+			msg = "Open verification URL for Kilo Code, then click Poll until active."
+		}
+		out["message"] = msg
 	}
 	writeJSON(w, out)
 }

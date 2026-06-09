@@ -49,6 +49,18 @@ func startOAuthAuthorizeFull(s *Server, provider, sessionID, publicBase string) 
 			return nil, err
 		}
 		return &AuthorizeResult{Flow: "browser_redirect", RedirectURL: url}, nil
+	case "antigravity":
+		redirect := publicBase + "/api/oauth/callback/antigravity"
+		return &AuthorizeResult{
+			Flow:        "browser_redirect",
+			RedirectURL: oauthide.BuildAntigravityAuthorizeURL(redirect, sessionID),
+		}, nil
+	case "cline":
+		redirect := publicBase + "/api/oauth/callback/cline"
+		return &AuthorizeResult{
+			Flow:        "browser_redirect",
+			RedirectURL: oauthide.BuildClineAuthorizeURL(redirect),
+		}, nil
 	case "github":
 		dev, err := oauthide.StartGitHubDevice()
 		if err != nil {
@@ -60,6 +72,23 @@ func startOAuthAuthorizeFull(s *Server, provider, sessionID, publicBase string) 
 			"verification_uri_complete": dev.VerificationURIComplete,
 			"expires_in":                dev.ExpiresIn,
 			"interval":                  dev.Interval,
+		})
+		if err := s.oauthMgr.SetSessionDevice(sessionID, dev.DeviceCode, string(uiMeta)); err != nil {
+			return nil, err
+		}
+		return &AuthorizeResult{Flow: "device_code", Device: dev}, nil
+	case "kilocode":
+		dev, err := oauthide.StartKilocodeDevice()
+		if err != nil {
+			return nil, err
+		}
+		uiMeta, _ := json.Marshal(map[string]any{
+			"user_code":                 dev.UserCode,
+			"verification_uri":          dev.VerificationURI,
+			"verification_uri_complete": dev.VerificationURIComplete,
+			"expires_in":                dev.ExpiresIn,
+			"interval":                  dev.Interval,
+			"provider":                  "kilocode",
 		})
 		if err := s.oauthMgr.SetSessionDevice(sessionID, dev.DeviceCode, string(uiMeta)); err != nil {
 			return nil, err
@@ -92,17 +121,40 @@ func (s *Server) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"status": "active", "provider": sess.Provider})
 		return
 	}
-	if sess.Provider != "github" || sess.DeviceCode == "" {
+	if (sess.Provider != "github" && sess.Provider != "kilocode") || sess.DeviceCode == "" {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "not a pending device session"})
 		return
 	}
-	res, err := oauthide.PollGitHubDeviceOnce(sess.DeviceCode)
+	var res *oauthide.DevicePollResult
+	switch sess.Provider {
+	case "github":
+		res, err = oauthide.PollGitHubDeviceOnce(sess.DeviceCode)
+	case "kilocode":
+		res, err = oauthide.PollKilocodeOnce(sess.DeviceCode)
+	default:
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "unsupported device provider"})
+		return
+	}
 	if err != nil {
 		writeJSONStatus(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
 	}
+	if res.Error != "" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": res.Error})
+		return
+	}
 	if res.Pending {
-		writeJSON(w, map[string]any{"status": "pending", "hint": "complete GitHub device login"})
+		hint := "complete device login"
+		if sess.Provider == "github" {
+			hint = "complete GitHub device login"
+		} else if sess.Provider == "kilocode" {
+			hint = "complete Kilo Code authorization in browser"
+		}
+		writeJSON(w, map[string]any{"status": "pending", "hint": hint})
+		return
+	}
+	if !res.Done {
+		writeJSON(w, map[string]any{"status": "pending", "hint": "still pending"})
 		return
 	}
 	expires := time.Now().Add(time.Duration(res.ExpiresIn) * time.Second)
@@ -113,6 +165,6 @@ func (s *Server) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) {
 		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "store tokens failed"})
 		return
 	}
-	s.audit("oauth.ide.device_ok", "github", sessionID, map[string]any{"provider": "github"})
-	writeJSON(w, map[string]any{"status": "active", "provider": "github"})
+	s.audit("oauth.ide.device_ok", sess.Provider, sessionID, map[string]any{"provider": sess.Provider})
+	writeJSON(w, map[string]any{"status": "active", "provider": sess.Provider})
 }

@@ -9,15 +9,15 @@ Mirrors `9router` `OAUTH_PROVIDERS` @ v0.4.71:
 | id | flow | implementation |
 |----|------|----------------|
 | **claude** | PKCE | **ready** |
-| antigravity | PKCE | planned |
+| **antigravity** | authorization_code | **ready** (env client id/secret) |
 | **codex** | PKCE | **ready** |
 | **github** | device_code | **ready** |
-| cursor | import_token | import_only |
+| **cursor** | import_token | **import_only** |
 | **xai** | PKCE | **ready** |
-| kilocode | custom_device | planned |
-| cline | local_app_callback | planned |
+| **kilocode** | custom_device | **ready** |
+| **cline** | local_app_callback | **ready** |
 
-All eight appear in `/api/oauth/status` → `catalog`. Only `implementation=ready` accepts **Authorize** today.
+Only `implementation=ready` (or cursor import) is actionable from the dashboard.
 
 ## Enable
 
@@ -26,16 +26,19 @@ export LINTASAN_OAUTH_IDE_ENABLED=true
 export LINTASAN_OAUTH_PUBLIC_BASE_URL=https://your-lintasan-host
 ```
 
-**xAI (Grok):** uses public client id ported from 9router — no env client secret. Redirect URI must match `.../api/oauth/callback/xai`.
+**Antigravity:** Google OAuth credentials are not in the repository. Use your own Google Cloud OAuth client or lab copy of 9router `ANTIGRAVITY_CONFIG`:
 
-## Next ports (from `/tmp/9router-decolua-fresh`)
+```bash
+export LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_ID=your-client-id.apps.googleusercontent.com
+export LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_SECRET=your-client-secret
+```
 
-1. github — `GITHUB_CONFIG` device flow + copilot_internal token  
-2. claude / codex — PKCE (`oauth.js` constants)  
-3. kilocode / cline — device/custom flows  
-4. cursor — import from vscdb  
-5. Proxy wire — `GetActiveToken` in connection resolver  
+**xAI (Grok):** public client id ported from 9router — redirect `.../api/oauth/callback/xai`.
+
+## Next
+
+- Proxy wire — `GetActiveToken` in connection resolver
 
 ## ToS
 
-Same as dashboard disclaimer — personal BYO only.
+Personal BYO only — same as dashboard disclaimer.

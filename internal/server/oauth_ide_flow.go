@@ -21,7 +21,7 @@ func (s *Server) handleOAuthStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if enabled {
 		out["public_base"] = s.oauthPublicBaseURL()
-		out["hint"] = "ready: xai, claude, codex (browser PKCE); github (device + poll). Others planned."
+		out["hint"] = "ready: xai, claude, codex, antigravity, cline (browser); github, kilocode (device + poll); cursor (import)."
 	}
 	writeJSON(w, out)
 }
@@ -53,6 +53,18 @@ func exchangeOAuthCallback(provider, code, redirectURI, pkceVerifier, oauthState
 		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, "", nil
 	case "codex":
 		tok, meta, err := oauthide.ExchangeCodexToken(code, redirectURI, pkceVerifier)
+		if err != nil {
+			return "", "", 0, "", err
+		}
+		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, meta, nil
+	case "antigravity":
+		tok, meta, err := oauthide.ExchangeAntigravityToken(code, redirectURI)
+		if err != nil {
+			return "", "", 0, "", err
+		}
+		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, meta, nil
+	case "cline":
+		tok, meta, err := oauthide.ExchangeClineToken(code, redirectURI)
 		if err != nil {
 			return "", "", 0, "", err
 		}

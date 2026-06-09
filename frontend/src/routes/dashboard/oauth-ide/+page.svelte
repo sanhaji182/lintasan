@@ -41,9 +41,12 @@
   let pollSessionId = $state('');
   let lastRedirect = $state('');
   let error = $state('');
+  let cursorToken = $state('');
+  let cursorMachineId = $state('');
 
   const catalog = $derived(status?.catalog ?? []);
   const readyProviders = $derived(catalog.filter((p) => p.implementation === 'ready'));
+  const importOnly = $derived(catalog.filter((p) => p.implementation === 'import_only'));
 
   async function load() {
     loading = true;
@@ -106,10 +109,33 @@
         deviceInfo = null;
         await load();
       } else {
-        error = res.hint || 'Still pending — complete device login on GitHub';
+        error = res.hint || 'Still pending — complete device login';
       }
     } catch (e: any) {
       error = e?.message || 'Poll failed';
+    } finally {
+      actionLoading = '';
+    }
+  }
+
+  async function importCursor() {
+    if (!acknowledge) {
+      error = 'Acknowledge the risks before continuing.';
+      return;
+    }
+    actionLoading = 'cursor-import';
+    error = '';
+    try {
+      await api.post('/api/oauth/cursor/import', {
+        accessToken: cursorToken,
+        machineId: cursorMachineId,
+        acknowledge_risk: true,
+      });
+      cursorToken = '';
+      cursorMachineId = '';
+      await load();
+    } catch (e: any) {
+      error = e?.message || 'Cursor import failed';
     } finally {
       actionLoading = '';
     }
@@ -207,9 +233,9 @@
         </div>
         {#if deviceInfo}
           <div class="device-box">
-            <p><strong>GitHub device login</strong></p>
+            <p><strong>Device login</strong> ({selectedProvider})</p>
             <p>Code: <code class="user-code">{deviceInfo.user_code}</code></p>
-            <p><a href={deviceInfo.verification_uri_complete || deviceInfo.verification_uri} target="_blank" rel="noopener noreferrer">Open GitHub <ExternalLink size={14} /></a></p>
+            <p><a href={deviceInfo.verification_uri_complete || deviceInfo.verification_uri} target="_blank" rel="noopener noreferrer">Open verification page <ExternalLink size={14} /></a></p>
             <button class="btn primary" disabled={actionLoading === 'poll'} onclick={pollDevice}>
               {actionLoading === 'poll' ? 'Polling…' : 'Poll for completion'}
             </button>
@@ -217,6 +243,18 @@
         {/if}
         {#if lastRedirect}
           <p class="muted small">Opened: <a href={lastRedirect} target="_blank" rel="noopener noreferrer">provider login <ExternalLink size={14} /></a></p>
+        {/if}
+
+        {#if importOnly.length > 0}
+          <div class="device-box" style="margin-top: 1rem;">
+            <p><strong>Cursor — import token</strong></p>
+            <p class="muted small">From <code>state.vscdb</code>: <code>cursorAuth/accessToken</code> + <code>storage.serviceMachineId</code></p>
+            <textarea class="import-ta" placeholder="accessToken" bind:value={cursorToken} rows="2"></textarea>
+            <input class="import-in" placeholder="machineId" bind:value={cursorMachineId} />
+            <button class="btn primary" disabled={!acknowledge || actionLoading === 'cursor-import'} onclick={importCursor}>
+              {actionLoading === 'cursor-import' ? 'Importing…' : 'Import Cursor session'}
+            </button>
+          </div>
         {/if}
       </section>
 
@@ -270,6 +308,7 @@
   .pill.warn { background: rgba(234, 179, 8, 0.2); color: #eab308; }
   .device-box { margin-top: 1rem; padding: 1rem; border: 1px dashed var(--border); border-radius: 8px; }
   .user-code { font-size: 1.25rem; letter-spacing: 0.1em; }
+  .import-ta, .import-in { width: 100%; margin: 0.35rem 0; padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border); background: #0f172a; font-family: ui-monospace, monospace; font-size: 0.8rem; }
   .mono { font-family: ui-monospace, monospace; font-size: 0.75rem; }
   .muted { color: var(--text-muted, #94a3b8); }
   .small { font-size: 0.85rem; }
