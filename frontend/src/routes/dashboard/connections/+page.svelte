@@ -5,7 +5,9 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
-  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu } from 'lucide-svelte';
+  import { OAUTH_IDE_PRESETS, type OAuthIdePreset } from '$lib/oauthIdePresets';
+  import { brandForProvider, logoPaths } from '$lib/oauthIdeBrands';
+  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert } from 'lucide-svelte';
 
   let connections = $state<any[]>([]);
   let loading = $state(true);
@@ -47,7 +49,11 @@
   let modelSyncing = $state(false);
   let togglingModelId = $state<string | null>(null);
 
-  let form = $state({ name: '', base_url: '', api_key: '', format: 'openai', priority: 1 });
+  let oauthIdeEnabled = $state(false);
+  let oauthSessions = $state<{ provider: string; status: string }[]>([]);
+  let wiringOAuth = $state('');
+
+  let form = $state({ name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' as string });
 
   // Test-before-save state for the new-connection form
   let testingForm = $state(false);
@@ -115,13 +121,65 @@
     return `https://www.google.com/s2/favicons?domain=${domain}&sz=${size}`;
   }
 
+  function pickOAuthIdePreset(p: OAuthIdePreset) {
+    form = {
+      name: p.name,
+      base_url: p.base_url,
+      api_key: '',
+      format: p.format,
+      priority: 5,
+      oauth_provider: p.oauth_provider
+    };
+    testResult = null;
+    showForm = true;
+    setTimeout(() => {
+      document.getElementById('add-connection-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  }
+
+  const formUsesOAuth = $derived(!!form.oauth_provider?.trim());
+
+  function oauthSessionActive(provider: string) {
+    return oauthSessions.some((s) => s.provider === provider && s.status === 'active');
+  }
+
+  async function fetchOAuthLab() {
+    try {
+      const st = await api.get<{ enabled?: boolean }>('/api/oauth/status');
+      oauthIdeEnabled = !!st.enabled;
+      if (st.enabled) {
+        const sess = await api.get<{ data: { provider: string; status: string }[] }>('/api/oauth/sessions');
+        oauthSessions = sess.data ?? [];
+      } else {
+        oauthSessions = [];
+      }
+    } catch {
+      oauthIdeEnabled = false;
+      oauthSessions = [];
+    }
+  }
+
+  async function quickWireOAuth(provider: string) {
+    wiringOAuth = provider;
+    try {
+      const res = await api.post<any>('/api/oauth/provision-connection', { provider });
+      showToast(`${res.action === 'created' ? 'Wired' : 'Updated'} ${res.name}`, 'success');
+      await fetchConnections();
+    } catch (e: any) {
+      showToast(e?.message || 'Wire failed', 'error');
+    } finally {
+      wiringOAuth = '';
+    }
+  }
+
   function pickPreset(preset: any) {
     form = {
       name: preset.name.toLowerCase().replace(/\s+/g, '-'),
       base_url: preset.base_url,
       api_key: '',
       format: preset.format,
-      priority: 1
+      priority: 1,
+      oauth_provider: ''
     };
     testResult = null; // reset prior test result when picking a new preset
     showForm = true;
@@ -309,7 +367,7 @@
   }
 
   onMount(async () => {
-    await Promise.all([fetchPresets(), fetchConnections(), fetchCategories()]);
+    await Promise.all([fetchPresets(), fetchConnections(), fetchCategories(), fetchOAuthLab()]);
   });
 
   async function fetchConnections() {
@@ -509,8 +567,9 @@
     try {
       const res = await api.post<any>('/api/connections/test', {
         base_url: form.base_url,
-        api_key: form.api_key,
-        format: form.format
+        api_key: formUsesOAuth ? '' : form.api_key,
+        format: form.format,
+        oauth_provider: form.oauth_provider || undefined
       });
       // Capture the full standard envelope
       testResult = {
@@ -577,14 +636,14 @@
       await api.post<any>('/api/connections', form);
       await fetchConnections();
       showForm = false;
-      form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1 };
+      form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' };
       testResult = null;
     } catch (e: any) { error = e.message; }
   }
 
   function cancelForm() {
     showForm = false;
-    form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1 };
+    form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' };
     testResult = null;
     testingForm = false;
     testBounce = false;
@@ -671,8 +730,17 @@
           <input id="connection-base-url" class="input-field" bind:value={form.base_url} placeholder="https://api.openai.com/v1" />
         </div>
         <div>
-          <label for="connection-api-key" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">API Key</label>
-          <input id="connection-api-key" class="input-field" type="password" bind:value={form.api_key} placeholder="sk-..." />
+          <label for="connection-api-key" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">
+            {formUsesOAuth ? 'API Key (OAuth session)' : 'API Key'}
+          </label>
+          {#if formUsesOAuth}
+            <div class="input-field" style="font-size: 12px; color: var(--color-fg-2); padding: 10px 12px; background: var(--color-bg-body);">
+              Uses OAuth IDE session for <code>{form.oauth_provider}</code> — authorize on <a href="/dashboard/oauth-ide">OAuth IDE</a> first.
+              <button type="button" class="btn-secondary" style="margin-left: 8px; padding: 2px 8px; font-size: 11px;" onclick={() => { form.oauth_provider = ''; }}>Clear OAuth</button>
+            </div>
+          {:else}
+            <input id="connection-api-key" class="input-field" type="password" bind:value={form.api_key} placeholder="sk-..." />
+          {/if}
         </div>
         <div>
           <label for="connection-format" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">Format</label>
@@ -819,6 +887,64 @@
       </div>
     </div>
   {/if}
+
+  <!-- OAuth IDE lab presets (proxy wiring) -->
+  <div class="card mb-5 oauth-lab-card">
+    <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+      <div class="flex items-center gap-2">
+        <ShieldAlert size={16} style="color: #a78bfa;" />
+        <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin: 0;">OAuth IDE (lab)</h3>
+        {#if oauthIdeEnabled}
+          <span class="badge" style="background: rgba(34,197,94,0.12); color: #22c55e;">enabled</span>
+        {:else}
+          <span class="badge" style="background: var(--color-bg-3); color: var(--color-fg-3);">server off</span>
+        {/if}
+      </div>
+      <a href="/dashboard/oauth-ide" style="font-size: 12px; color: var(--color-primary);">Open OAuth IDE →</a>
+    </div>
+    <p style="font-size: 11px; color: var(--color-fg-3); margin: 0 0 12px;">
+      No API key — token from OAuth session. <strong>Add</strong> opens the form; <strong>Wire</strong> upserts the Accounts connection (needs active session).
+    </p>
+    <div class="oauth-preset-grid">
+      {#each OAUTH_IDE_PRESETS as op}
+        {@const brand = brandForProvider(op.oauth_provider)}
+        {@const hasSession = oauthSessionActive(op.oauth_provider)}
+        <div
+          class="oauth-preset-tile"
+          style="border-color: {brand.border}; background: linear-gradient(145deg, {brand.bg}, var(--color-bg-card));"
+        ><div class="flex items-center gap-2 mb-1">
+          <div style="width:22px;height:22px;border-radius:5px;background:{brand.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <svg viewBox="0 0 24 24" width="14" height="14">
+              {#each logoPaths(brand) as path}
+                <path d={path.d} fill={path.fill} />
+              {/each}
+            </svg>
+          </div>
+          <div style="font-size: 12px; font-weight: 650; color: var(--color-fg-0);">{op.label}</div>
+        </div>
+          <div style="font-size: 10px; color: {brand.color}; margin-top: 2px;">{brand.company}</div>
+          {#if hasSession}
+            <span style="font-size: 9px; color: #22c55e; font-weight: 600; margin-top: 6px; display: block;">● session</span>
+          {/if}
+          <div class="oauth-tile-actions">
+            <button type="button" class="btn-secondary" style="padding: 5px 8px; font-size: 10px;" onclick={() => pickOAuthIdePreset(op)}>
+              Add
+            </button>
+            <button
+              type="button"
+              class="btn-primary"
+              style="padding: 5px 8px; font-size: 10px;"
+              disabled={!oauthIdeEnabled || !hasSession || wiringOAuth === op.oauth_provider}
+              title={!hasSession ? 'Authorize in OAuth IDE first' : 'Upsert connection'}
+              onclick={() => quickWireOAuth(op.oauth_provider)}
+            >
+              {wiringOAuth === op.oauth_provider ? '…' : 'Wire'}
+            </button>
+          </div>
+        </div>
+      {/each}
+    </div>
+  </div>
 
   <!-- Provider Preset Catalog -->
   <div class="card mb-5" style="padding: 0; overflow: hidden;">
@@ -1181,12 +1307,17 @@
 
           <div class="flex flex-wrap gap- 2 mb-3">
             <span class="badge" style="background: var(--color-purple-light); color: var(--color-purple);">{conn.format}</span>
+            {#if conn.oauth_provider}
+              <span class="badge" style="background: rgba(139,92,246,0.15); color: #a78bfa;">OAuth:{conn.oauth_provider}</span>
+            {/if}
             <span class="badge" style="background: var(--color-info-light); color: var(--color-info);">P{conn.priority}</span>
             <span class="badge" style="background: var(--color-border-light); color: var(--color-fg-2);">{conn.models_count || 0} models</span>
           </div>
 
           {#if conn.api_key}
             <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono); margin-bottom: 12px; padding: 4px 8px; background: var(--color-bg-body); border-radius: 4px;">{conn.api_key}</div>
+          {:else if conn.oauth_provider}
+            <div style="font-size: 11px; color: var(--color-fg-3); margin-bottom: 12px;">Token from OAuth IDE session</div>
           {/if}
 
           <div class="flex items-center gap-2">
@@ -1392,6 +1523,26 @@
   }
   .connection-card:hover {
     box-shadow: var(--shadow-md);
+  }
+
+  .oauth-lab-card {
+    padding: 16px 20px;
+    border-color: rgba(139, 92, 246, 0.28);
+  }
+  .oauth-preset-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px;
+  }
+  .oauth-preset-tile {
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .oauth-tile-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
   }
 
   .preset-card {

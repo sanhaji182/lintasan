@@ -2,12 +2,13 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Version](https://img.shields.io/badge/version-v0.24.2-blue)](https://github.com/sanhaji182/lintasan/releases)
-[![Tests](https://img.shields.io/badge/tests-700+-success)](.)
+[![Version](https://img.shields.io/badge/version-v0.25.0-blue)](https://github.com/sanhaji182/lintasan/releases)
+[![Tests](https://img.shields.io/badge/tests-900+-success)](.)
+[![Docker](https://img.shields.io/badge/docker-ready-2496ED?logo=docker)](docker-compose.yml)
 
 > **Setiap Koneksi Punya Jalannya** — Jalur cerdas yang menghubungkan manusia, AI, dan sistem dalam satu aliran terintegrasi.
 
-> ⚡ 35x lebih ringan dari Node.js v1 · single binary ~24MB · 700+ tests · 118+ provider presets · Go (v0.24.2) + SvelteKit Embedded SPA
+> ⚡ 35× lebih ringan dari Node.js v1 · single binary ~24MB · 900+ tests · 118+ provider presets · Go v2 + SvelteKit Embedded SPA
 
 ---
 
@@ -15,7 +16,7 @@
 
 > **Every Connection Has Its Path** — An intelligent pathway connecting humans, AI, and systems in one integrated flow.
 
-> ⚡ 35x lighter than Node.js v1 · single ~24MB binary · 700+ tests · 118+ provider presets · Go (v0.24.2) + SvelteKit Embedded SPA
+> ⚡ 35× lighter than Node.js v1 · single ~24MB binary · 900+ tests · 118+ provider presets · Go v2 + SvelteKit Embedded SPA
 
 ---
 
@@ -53,9 +54,10 @@ Lintasan exists as an intelligent pathway connecting humans, AI, and systems in 
 - [Fitur Utama / Key Features](#-fitur-utama--key-features)
 - [Arsitektur / Architecture](#-arsitektur--architecture)
 - [Quick Start](#-quick-start)
-- [Instalasi / Installation](#-instalasi--installation)
-- [Konfigurasi / Configuration](#-konfigurasi--configuration)
-- [API Usage](#-api-usage)
+- [5-Minute Quickstart](QUICKSTART.md)
+- [Instalasi / Installation](INSTALL.md)
+- [Konfigurasi / Configuration](CONFIGURATION.md)
+- [API Reference](docs/api-reference.md)
 - [Dashboard](#-dashboard)
 - [Provider Presets](#-provider-presets)
 - [Struktur Project / Project Structure](#-struktur-project--project-structure)
@@ -314,23 +316,31 @@ Client (App / Agent / curl / IDE)
 
 ## 🚀 Quick Start
 
+> ⏱ **Prefer a step-by-step walkthrough?** See [QUICKSTART.md](QUICKSTART.md) — from zero to first LLM request in <5 minutes.
+
 The dashboard UI is **embedded inside the binary**, so one executable serves the full app (UI + API) on `:20180` — no Node, no nginx.
 
 ```bash
-# Download the pre-built binary (Linux x86_64) and run
-# curl -L -o lintasan https://github.com/sanhaji182/lintasan/releases/latest/download/lintasan-linux-amd64
-# chmod +x lintasan
-# ./lintasan start
+# Download the pre-built binary and run
+curl -L -o lintasan https://github.com/sanhaji182/lintasan/releases/latest/download/lintasan-linux-amd64
+chmod +x lintasan
+./lintasan start
 
-# Dashboard → http://localhost:20180/   (redirects to /dashboard)
+# Dashboard → http://localhost:20180/dashboard
 # API       → http://localhost:20180/v1/chat/completions
 ```
 
-First run seeds an admin account and prints a one-time password to the console — log in, rotate it, and set a master key to finish setup.
+---
+
+> 🎥 **Setup demo coming soon** — GIF showing Lintasan from download to first chat request.
 
 ---
 
 ## 📦 Instalasi / Installation
+
+> **Full guide:** [INSTALL.md](INSTALL.md) — pre-built binary, build from source, Docker, systemd, nginx.
+
+3 methods — pick one:
 
 <details open>
 <summary>🇮🇩 3 Cara Install</summary>
@@ -422,6 +432,10 @@ PORT=8080 ./lintasan start
 
 ## ⚙ Konfigurasi / Configuration
 
+> **Full guide:** [CONFIGURATION.md](CONFIGURATION.md) — env vars, dashboard settings, connection setup, routing, security.
+
+Quick env reference:
+
 <details open>
 <summary>🇮🇩 Environment Variables</summary>
 
@@ -430,7 +444,7 @@ PORT=8080 ./lintasan start
 | `PORT` | `20180` | Port server utama |
 | `LINTASAN_DATA_DIR` | `./data` | Direktori data (DB, logs) |
 | `LINTASAN_MASTER_KEY` | auto-generated | Master API key |
-| `LINTASAN_OAUTH_IDE_ENABLED` | `false` | Experimental IDE OAuth lab (admin-only; see `docs/oauth-ide-experimental.md`) |
+| `LINTASAN_OAUTH_IDE_ENABLED` | `false` | Fallback jika setting dashboard belum disimpan; prefer Settings → Experimental → OAuth IDE |
 | `LINTASAN_OAUTH_PUBLIC_BASE_URL` | — | Public origin for OAuth redirect when IDE OAuth is enabled |
 | `MITM_PORT` | `8443` | MITM bridge port |
 
@@ -446,7 +460,7 @@ Tidak perlu `.env` file — set env vars atau gunakan default. Database auto-cre
 | `PORT` | `20180` | Main server port |
 | `LINTASAN_DATA_DIR` | `./data` | Data directory (DB, logs) |
 | `LINTASAN_MASTER_KEY` | auto-generated | Master API key |
-| `LINTASAN_OAUTH_IDE_ENABLED` | `false` | Experimental IDE OAuth lab (admin-only; see `docs/oauth-ide-experimental.md`) |
+| `LINTASAN_OAUTH_IDE_ENABLED` | `false` | Fallback jika setting dashboard belum disimpan; prefer Settings → Experimental → OAuth IDE |
 | `LINTASAN_OAUTH_PUBLIC_BASE_URL` | — | Public origin for OAuth redirect when IDE OAuth is enabled |
 | `MITM_PORT` | `8443` | MITM bridge port |
 
@@ -532,28 +546,35 @@ curl http://localhost:20180/v1/web/search \
 
 Lintasan dilengkapi dashboard interaktif berbasis **SvelteKit 5 + Tailwind v4** untuk monitoring dan konfigurasi real-time.
 
-| Halaman | Fungsi |
-|---------|--------|
-| **Overview** | Statistik global — requests, tokens, cache hit rate, latency |
-| **Accounts** | Kelola koneksi provider (add/test/sync/delete) |
-| **Routing** | Konfigurasi combo + load balancer + aliases |
-| **Fallback** | Multi-level fallback chain per model/connection |
-| **Logs** | Real-time request log dengan filter & search |
-| **Usage** | Token usage + cost per provider/model |
-| **Observability** | Exportable `/metrics` + Real-time Grafana-like panels |
-| **Analytics** | Metrics dashboard — latency, throughput, savings |
-| **API Keys** | Generate, copy, revoke API keys |
-| **Teams** | Team-based access control |
-| **Users** | User management + role assignment |
-| **Webhooks** | Event-driven webhook setup & testing |
-| **Backup** | Database backup, restore, export |
-| **Settings** | Global configuration — port, keys, limits |
-| **Plugins** | Plugin store + management + AI generator |
-| **Playground** | Interactive chat console untuk testing API |
-| **Models** | Model catalog dengan pricing |
-| **Docs** | Built-in API documentation |
+|| Halaman | Fungsi |
+||---------|--------|
+|| **Overview** | Statistik global — requests, tokens, cache hit rate, latency |
+|| **Accounts** | Kelola koneksi provider (add/test/sync/delete) |
+|| **Providers** | 118+ provider presets, one-click add |
+|| **Experimental** | Laboratorium fitur eksperimental |
+|| **Discover** | Auto-discover free & public provider API |
+|| **OAuth IDE** | OAuth flow untuk IDE agents (LAB) |
+|| **Routing** | Konfigurasi combo + load balancer + aliases |
+|| **Fallback** | Multi-level fallback chain per model/connection |
+|| **Logs** | Real-time request log dengan filter & search |
+|| **Usage** | Token usage + cost per provider/model |
+|| **Observability** | Exportable `/metrics` + Real-time Grafana-like panels |
+|| **Analytics** | Metrics dashboard — latency, throughput, savings |
+|| **Memory** | Vector memory untuk RAG (SQLite/Redis) |
+|| **API Keys** | Generate, copy, revoke API keys |
+|| **Teams** | Team-based access control |
+|| **Users** | User management + role assignment |
+|| **Webhooks** | Event-driven webhook setup & testing |
+|| **Backup** | Database backup, restore, export |
+|| **Settings** | Global configuration — port, keys, limits |
+|| **Plugins** | Plugin store + management + AI generator |
+|| **Playground** | Interactive chat console untuk testing API |
+|| **MCP Server** | Model Context Protocol server (14+ tools) |
+|| **Cost Savings** | Breakdown penghematan token & cache |
+|| **Format Translator** | Terjemahan format API lintas provider |
+|| **Docs** | Dokumentasi API built-in |
 
-Akses: `http://localhost:20180/dashboard` (via nginx reverse-proxy ke SvelteKit di port 5173)
+Akses: `http://localhost:20180/dashboard` — embedded di binary Go (tanpa Node.js terpisah).
 
 </details>
 
@@ -562,28 +583,35 @@ Akses: `http://localhost:20180/dashboard` (via nginx reverse-proxy ke SvelteKit 
 
 Lintasan comes with an interactive dashboard built with **SvelteKit 5 + Tailwind v4** for real-time monitoring and configuration.
 
-| Page | Function |
-|------|----------|
-| **Overview** | Global stats — requests, tokens, cache hit rate, latency |
-| **Accounts** | Manage provider connections (add/test/sync/delete) |
-| **Routing** | Smart-route configs, combo + load balancer + aliases |
-| **Fallback** | Multi-level fallback chains per model/connection |
-| **Logs** | Real-time request log with filter & search |
-| **Usage** | Token usage + cost per provider/model |
-| **Observability** | Exportable `/metrics` + Real-time Grafana-like panels |
-| **Analytics** | Metrics dashboard — latency, throughput, savings |
-| **API Keys** | Generate, copy, revoke API keys |
-| **Teams** | Team-based access control |
-| **Users** | User management + role assignment |
-| **Webhooks** | Event-driven webhook setup & testing |
-| **Backup** | Database backup, restore, export |
-| **Settings** | Global configuration — port, keys, limits |
-| **Plugins** | Plugin store + management + AI generator |
-| **Playground** | Interactive chat console for API testing |
-| **Models** | Model catalog with pricing |
-| **Docs** | Built-in API documentation |
+|| Page | Function |
+||------|----------|
+|| **Overview** | Global stats — requests, tokens, cache hit rate, latency |
+|| **Accounts** | Manage provider connections (add/test/sync/delete) |
+|| **Providers** | 118+ provider presets, one-click add |
+|| **Experimental** | Experimental features lab |
+|| **Discover** | Auto-discover free & public provider APIs |
+|| **OAuth IDE** | OAuth flow for IDE agents (LAB) |
+|| **Routing** | Smart-route configs: combo, load balancer, aliases |
+|| **Fallback** | Multi-level fallback chains per model/connection |
+|| **Logs** | Real-time request log with filter & search |
+|| **Usage** | Token usage & cost per provider/model |
+|| **Observability** | Exportable `/metrics` + real-time Grafana-like panels |
+|| **Analytics** | Metrics dashboard — latency, throughput, savings |
+|| **Memory** | Vector memory for RAG (SQLite/Redis) |
+|| **API Keys** | Generate, copy, revoke API keys |
+|| **Teams** | Team-based access control |
+|| **Users** | User management + role assignment |
+|| **Webhooks** | Event-driven webhook setup & testing |
+|| **Backup** | Database backup, restore, export |
+|| **Settings** | Global configuration — port, keys, limits |
+|| **Plugins** | Plugin store + management + AI generator |
+|| **Playground** | Interactive chat console for API testing |
+|| **MCP Server** | Model Context Protocol server (14+ tools) |
+|| **Cost Savings** | Token compression & cache savings breakdown |
+|| **Format Translator** | Cross-format API translation tool |
+|| **Docs** | Built-in API documentation |
 
-Access: `http://localhost:20180/dashboard` (via nginx reverse-proxy to SvelteKit at port 5173)
+Access: `http://localhost:20180/dashboard` — embedded in the Go binary (no separate Node process).
 
 </details>
 

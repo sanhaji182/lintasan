@@ -4,7 +4,7 @@
     LayoutDashboard, Link2, GitBranch, ShieldAlert, ScrollText,
     BarChart3, TrendingUp, Key, Users, UserCircle, Webhook,
     Database, Settings, Puzzle, MessageSquare, BookOpen,
-    Brain, Globe, Server, Activity, Sun, Moon, FlaskConical
+    Brain, Globe, Server, Activity, Sun, Moon, FlaskConical, KeyRound
   } from 'lucide-svelte';
   import { theme } from '$lib/stores/theme';
 
@@ -15,7 +15,7 @@
     { label: 'Accounts', path: '/dashboard/connections', icon: Link2 },
     { label: 'Providers', path: '/dashboard/providers', icon: Server },
     { label: 'Experimental', path: '/dashboard/experimental', icon: FlaskConical },
-    { label: 'OAuth IDE', path: '/dashboard/oauth-ide', icon: ShieldAlert },
+    { label: 'OAuth IDE', path: '/dashboard/oauth-ide', icon: KeyRound, experimental: true },
     { label: 'Discover', path: '/dashboard/discover', icon: Globe },
     { label: 'Routing', path: '/dashboard/routing', icon: GitBranch },
     { label: 'Fallback', path: '/dashboard/fallback', icon: ShieldAlert },
@@ -88,6 +88,9 @@
           >
             <item.icon size={18} stroke-width={1.6} />
             <span>{item.label}</span>
+            {#if 'experimental' in item && item.experimental}
+              <span class="nav-lab">LAB</span>
+            {/if}
           </a>
         {/each}
       </div>
@@ -201,6 +204,17 @@
     background: #eef2ff;
     color: #4f46e5;
     font-weight: 600;
+  }
+
+  .nav-lab {
+    margin-left: auto;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: rgba(139, 92, 246, 0.15);
+    color: #7c3aed;
   }
 
   .sidebar-footer {

@@ -11,9 +11,10 @@ import (
 
 // AuthorizeResult is returned from startOAuthAuthorize.
 type AuthorizeResult struct {
-	Flow        string         // browser_redirect | device_code
-	RedirectURL string
-	Device      *oauthide.DeviceStart
+	Flow            string // browser_redirect | device_code
+	RedirectURL     string
+	Device          *oauthide.DeviceStart
+	XaiLoopbackWarn string // non-fatal when loopback listener could not bind
 }
 
 func startOAuthAuthorizeFull(s *Server, provider, sessionID, publicBase string) (*AuthorizeResult, error) {
@@ -30,11 +31,16 @@ func startOAuthAuthorizeFull(s *Server, provider, sessionID, publicBase string) 
 		if err := s.oauthMgr.SetSessionPKCE(sessionID, pkce.Verifier); err != nil {
 			return nil, err
 		}
-		redirect := publicBase + "/api/oauth/callback/xai"
-		return &AuthorizeResult{
+		redirect := oauthide.XAILoopbackRedirect
+		loopbackOK, loopWarn := tryStartXAILoopbackProxy(s, sessionID)
+		res := &AuthorizeResult{
 			Flow:        "browser_redirect",
 			RedirectURL: oauthide.BuildXAIAuthorizeURL(redirect, sessionID, pkce.Challenge),
-		}, nil
+		}
+		if !loopbackOK && loopWarn != "" {
+			res.XaiLoopbackWarn = loopWarn
+		}
+		return res, nil
 	case "claude":
 		url, err := oauthide.StartBrowserPKCE(oauthide.ClaudePKCEBytes, oauthide.BuildClaudeAuthorizeURL, publicBase, "claude", sessionID,
 			func(v string) error { return s.oauthMgr.SetSessionPKCE(sessionID, v) })

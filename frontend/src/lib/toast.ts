@@ -1,9 +1,5 @@
 import { writable } from 'svelte/store';
 
-// A toast can be a simple message OR a structured "detail" object that the
-// renderer turns into a rich multi-line display. The structured form is used
-// to surface OpenAI-standard error envelopes (code + type + param + message + hint)
-// from the test endpoint.
 export interface ToastDetail {
   code?: string;
   type?: string;
@@ -15,7 +11,7 @@ export interface ToastDetail {
 export interface ToastItem {
   id: number;
   message: string;
-  type: 'success' | 'error' | 'info';
+  type: 'success' | 'error' | 'info' | 'warning';
   detail?: ToastDetail;
   duration: number;
 }
@@ -27,13 +23,19 @@ export const toasts = { subscribe };
 
 export function showToast(
   message: string,
-  type: 'success' | 'error' | 'info' = 'info',
+  type: 'success' | 'error' | 'info' | 'warning' = 'info',
   duration: number = 3000,
   detail?: ToastDetail,
 ) {
   const id = nextId++;
   update(t => [...t, { id, message, type, detail, duration }]);
-  setTimeout(() => {
-    update(t => t.filter(item => item.id !== id));
-  }, duration);
+  if (duration > 0) {
+    setTimeout(() => {
+      dismissToast(id);
+    }, duration);
+  }
+}
+
+export function dismissToast(id: number) {
+  update(t => t.filter(item => item.id !== id));
 }

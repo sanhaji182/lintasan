@@ -3,6 +3,7 @@ package auth
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/sanhaji182/lintasan-go/internal/db"
@@ -87,35 +88,39 @@ func (m *OAuthManager) GetActiveToken(provider string) (string, error) {
 	return token, nil
 }
 
-// RefreshToken refreshes an expired/expiring token for a provider.
+// RefreshToken exchanges refresh_token with the provider when supported.
 func (m *OAuthManager) RefreshToken(provider string) error {
-	var refreshToken string
-	var sessionID string
+	if m == nil || m.db == nil {
+		return fmt.Errorf("oauth manager not configured")
+	}
+	provider = strings.TrimSpace(strings.ToLower(provider))
 
+	var sessionID, refreshToken string
 	err := m.db.Conn().QueryRow(
-		`SELECT id, refresh_token FROM oauth_sessions WHERE provider = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
+		`SELECT id, refresh_token FROM oauth_sessions WHERE provider = ? AND status = 'active' ORDER BY datetime(created_at) DESC LIMIT 1`,
 		provider,
 	).Scan(&sessionID, &refreshToken)
-
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("no active session for provider %s", provider)
 	}
 	if err != nil {
 		return fmt.Errorf("refresh token: %w", err)
 	}
-
 	if refreshToken == "" {
 		return fmt.Errorf("no refresh token available for provider %s", provider)
 	}
 
-	// In production, this would call the provider's token refresh endpoint.
-	// For now, extend the expiration as a placeholder.
-	newExpiry := time.Now().Add(24 * time.Hour).Format(time.RFC3339)
+	tok, expiresAt, err := refreshOAuthProvider(provider, refreshToken)
+	if err != nil {
+		return err
+	}
+	if tok == nil || tok.Access == "" {
+		return fmt.Errorf("refresh returned empty access token for %s", provider)
+	}
 	_, err = m.db.Conn().Exec(
-		`UPDATE oauth_sessions SET expires_at = ? WHERE id = ?`,
-		newExpiry, sessionID,
+		`UPDATE oauth_sessions SET access_token = ?, refresh_token = CASE WHEN ? != '' THEN ? ELSE refresh_token END, expires_at = ?, status = 'active' WHERE id = ?`,
+		tok.Access, tok.Refresh, tok.Refresh, expiresAt.Format(time.RFC3339), sessionID,
 	)
-
 	return err
 }
 
@@ -146,10 +151,10 @@ func (m *OAuthManager) UpdateSessionTokens(id, accessToken, refreshToken string,
 	return err
 }
 
-// ListSessions returns all OAuth sessions.
+// ListSessions returns all non-revoked OAuth sessions.
 func (m *OAuthManager) ListSessions() ([]OAuthSession, error) {
 	rows, err := m.db.Conn().Query(
-		`SELECT id, provider, access_token, refresh_token, expires_at, status, created_at FROM oauth_sessions ORDER BY created_at DESC`,
+		`SELECT id, provider, access_token, refresh_token, expires_at, status, created_at FROM oauth_sessions WHERE status != 'revoked' ORDER BY created_at DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list sessions: %w", err)

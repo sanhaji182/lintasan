@@ -1,17 +1,26 @@
 <script lang="ts">
-  import { toasts, type ToastItem } from '$lib/toast';
-  import { CheckCircle2, AlertCircle, Info, X } from 'lucide-svelte';
+  import { toasts, dismissToast, type ToastItem } from '$lib/toast';
+  import { CheckCircle2, CircleAlert, Info, TriangleAlert, X } from 'lucide-svelte';
 
   const colorMap: Record<string, string> = {
     success: 'var(--color-success)',
     error: 'var(--color-error)',
-    info: 'var(--color-info)'
+    info: 'var(--color-info)',
+    warning: 'var(--color-warning)'
   };
   const bgMap: Record<string, string> = {
     success: 'var(--color-success-light)',
     error: 'var(--color-error-light)',
-    info: 'var(--color-info-light)'
+    info: 'var(--color-info-light)',
+    warning: 'var(--color-warning-light)'
   };
+
+  let dismissed = $state<Set<number>>(new Set());
+
+  function handleDismiss(id: number) {
+    dismissed.add(id);
+    setTimeout(() => dismissToast(id), 200);
+  }
 </script>
 
 {#if $toasts.length > 0}
@@ -20,13 +29,16 @@
       <div
         class="toast"
         class:toast-rich={!!toast.detail}
+        class:toast-dismissed={dismissed.has(toast.id)}
         style="background: {bgMap[toast.type]}; color: {colorMap[toast.type]}; border: 1px solid {colorMap[toast.type]};"
       >
         <div class="toast-icon">
           {#if toast.type === 'success'}
             <CheckCircle2 size={toast.detail ? 18 : 16} />
           {:else if toast.type === 'error'}
-            <AlertCircle size={toast.detail ? 18 : 16} />
+            <CircleAlert size={toast.detail ? 18 : 16} />
+          {:else if toast.type === 'warning'}
+            <TriangleAlert size={toast.detail ? 18 : 16} />
           {:else}
             <Info size={toast.detail ? 18 : 16} />
           {/if}
@@ -53,6 +65,13 @@
             {/if}
           {/if}
         </div>
+        <button
+          class="toast-dismiss"
+          onclick={() => handleDismiss(toast.id)}
+          aria-label="Dismiss notification"
+        >
+          <X size={14} />
+        </button>
       </div>
     {/each}
   </div>
@@ -73,10 +92,15 @@
     display: flex;
     align-items: flex-start;
     gap: 10px;
-    padding: 12px 16px;
+    padding: 12px 12px 12px 16px;
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-md);
     animation: slideIn 0.3s ease-out;
+    transition: opacity 0.2s, transform 0.2s;
+  }
+  .toast-dismissed {
+    opacity: 0;
+    transform: translateX(100%);
   }
   .toast-icon {
     flex-shrink: 0;
@@ -137,6 +161,22 @@
     font-size: 11.5px;
     line-height: 1.4;
     opacity: 0.92;
+  }
+  .toast-dismiss {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    margin: -2px -4px 0 0;
+    border-radius: 6px;
+    color: currentColor;
+    opacity: 0.5;
+    transition: opacity 0.15s, background 0.15s;
+  }
+  .toast-dismiss:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.08);
   }
   @keyframes slideIn {
     from { transform: translateX(100%); opacity: 0; }

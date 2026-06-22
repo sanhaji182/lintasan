@@ -19,6 +19,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/db"
 	"github.com/sanhaji182/lintasan-go/internal/discover"
 	"github.com/sanhaji182/lintasan-go/internal/freeproviders"
+	"github.com/sanhaji182/lintasan-go/internal/logging"
 	"github.com/sanhaji182/lintasan-go/internal/mcp"
 	"github.com/sanhaji182/lintasan-go/internal/metrics"
 	"github.com/sanhaji182/lintasan-go/internal/mitm"
@@ -48,6 +49,8 @@ type Server struct {
 	mitmSecret  string                 // random per-boot MITM bypass secret (empty = disabled)
 	setup       setupState             // bootstrap/active one-way latch
 	metrics     *metrics.Registry      // Prometheus metrics registry (/metrics)
+	startTime   time.Time              // server boot timestamp, used by /health
+	accessLogStore *logging.LogStore   // in-memory access log ring buffer
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
@@ -56,6 +59,7 @@ func New(cfg *config.Config, database *db.DB) *Server {
 		db:      database,
 		mux:     http.NewServeMux(),
 		metrics: metrics.NewRegistry(),
+		accessLogStore: logging.NewLogStore(),
 	}
 	// Register pull-based metric collectors. These run on every /metrics scrape
 	// and emit only numeric counters/gauges + bounded labels — no secrets.
@@ -63,20 +67,24 @@ func New(cfg *config.Config, database *db.DB) *Server {
 	s.metrics.RegisterCollector(memorySearchCollector)
 	s.metrics.RegisterCollector(cacheCollector)
 	s.metrics.RegisterCollector(metrics.RuntimeCollector)
+	s.oauthMgr = auth.NewOAuthManager(database)
 	s.proxy = NewProxyHandler(cfg, database)
+	s.proxy.SetOAuthManager(s.oauthMgr)
 	s.memHandler = NewMemoryHandler(s.proxy.mem)
 
-	// Wire OAuth manager (reuse the one from proxy or create standalone)
-	s.oauthMgr = auth.NewOAuthManager(database)
+	// OAuth manager also used by dashboard OAuth handlers
 
 	// Wire dashboard auth (JWT token-based)
 	jwtSecret := os.Getenv("LINTASAN_JWT_SECRET")
 	if jwtSecret == "" {
 		// Generate a random secret if not set (survives restarts because stored in DB)
-		jwtSecret, _ = database.GetSetting("jwt_secret")
-		if jwtSecret == "" {
+		var err error
+		jwtSecret, err = database.GetSetting("jwt_secret")
+		if err != nil || jwtSecret == "" {
 			jwtSecret = fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("lintasan-%d", time.Now().UnixNano()))))
-			database.SetSetting("jwt_secret", jwtSecret)
+			if setErr := database.SetSetting("jwt_secret", jwtSecret); setErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to persist auto-generated JWT secret: %v\n", setErr)
+			}
 		}
 	}
 	s.userMgr = auth.NewUserManager(database.Conn(), jwtSecret)
@@ -136,6 +144,7 @@ func New(cfg *config.Config, database *db.DB) *Server {
 }
 
 func (s *Server) Start() error {
+	s.startTime = time.Now()
 	// Start MITM bridge if configured
 	if s.mitmProxy != nil {
 		go func() {
@@ -312,11 +321,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{
 		"status":  "ok",
 		"version": version.Version,
-		"uptime":  time.Since(startTime).String(),
+		"uptime":  time.Since(s.startTime).String(),
 	})
 }
-
-var startTime = time.Now()
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -332,7 +339,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 }
 
 // requestUser resolves the authenticated user from a request, checking the
-// JWT cookie first then the Authorization: Bearer header. Returns nil if no
+// JWT cookie first then the Authorization: Bearer *** Returns nil if no
 // valid user token is present. Does NOT consult master key / dashboard API keys.
 func (s *Server) requestUser(r *http.Request) *auth.User {
 	if s.userMgr == nil {

@@ -6,7 +6,7 @@
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import {
     Database, Download, Upload, RotateCcw, Trash2, Clock,
-    FileJson, HardDrive, Shield, CheckCircle2, AlertCircle
+    FileJson, HardDrive, Shield, CheckCircle2, CircleAlert
   } from 'lucide-svelte/icons';
 
   interface BackupRecord {

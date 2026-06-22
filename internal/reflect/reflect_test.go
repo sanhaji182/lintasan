@@ -84,6 +84,81 @@ func TestReflectBestScore(t *testing.T) {
 	}
 }
 
+func TestReflectContextInjection(t *testing.T) {
+	// Test that error messages from previous iteration ARE injected into next generator call
+	var capturedErrors [][]string
+	gen := func(prompt string, prevErrors []string) (string, error) {
+		capturedErrors = append(capturedErrors, prevErrors)
+		return "```python\ndef foo(): pass\n```", nil
+	}
+
+	iteration := 0
+	ver := func(output string) VerifyResult {
+		iteration++
+		if iteration == 1 {
+			// First iteration: partial score with specific errors
+			return VerifyResult{
+				Score:  0.5,
+				Passed: 5,
+				Total:  10,
+				Errors: []string{"test_foo failed: expected 5 got 3", "test_bar failed: time out"},
+			}
+		}
+		// Second iteration: still not perfect
+		return VerifyResult{
+			Score:  0.8,
+			Passed: 8,
+			Total:  10,
+			Errors: []string{"test_baz failed: off by one"},
+		}
+	}
+
+	result, err := Reflect(context.Background(), 3, gen, ver, "write code", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// First call: prevErrors should be nil/empty
+	if len(capturedErrors) < 1 {
+		t.Fatal("expected at least 1 generator call")
+	}
+	if capturedErrors[0] != nil && len(capturedErrors[0]) > 0 {
+		t.Logf("first call prevErrors: %v (expected nil or empty)", capturedErrors[0])
+	}
+
+	// Second call: prevErrors should contain the errors from verifier's first call
+	if len(capturedErrors) < 2 {
+		t.Fatalf("expected 2 generator calls, got %d", len(capturedErrors))
+	}
+
+	foundFoo := false
+	foundBar := false
+	for _, e := range capturedErrors[1] {
+		if strings.Contains(e, "test_foo") {
+			foundFoo = true
+		}
+		if strings.Contains(e, "test_bar") {
+			foundBar = true
+		}
+	}
+	if !foundFoo || !foundBar {
+		t.Errorf("prevErrors[1] should contain test_foo and test_bar errors, got: %v", capturedErrors[1])
+	}
+
+	// Build fix prompt should contain the errors
+	if len(result.Attempts) >= 2 {
+		a2 := result.Attempts[1]
+		if !strings.Contains(a2.Prompt, "test_foo") {
+			t.Errorf("fix prompt should reference test_foo error, got: %s", a2.Prompt)
+		}
+		if !strings.Contains(a2.Prompt, "test_bar") {
+			t.Errorf("fix prompt should reference test_bar error, got: %s", a2.Prompt)
+		}
+	}
+
+	_ = result
+}
+
 func TestPytestVerifierPassing(t *testing.T) {
 	// Create temp test file and module file
 	testFile, err := os.CreateTemp("", "test_reflect_pass_*.py")
@@ -258,5 +333,47 @@ func TestTruncateStr(t *testing.T) {
 	// Exact boundary
 	if s := truncateStr("hello", 5); s != "hello" {
 		t.Errorf("expected 'hello', got %q", s)
+	}
+}
+
+func TestSyntaxVerifierValidPython(t *testing.T) {
+	verifier := NewSyntaxVerifier()
+
+	// Valid Python code
+	code := "```python\ndef add(a, b): return a + b\n```"
+	result := verifier(code)
+
+	if result.Score != 1.0 {
+		t.Errorf("expected score 1.0 for valid Python, got %f (output: %s)", result.Score, result.Output)
+	}
+	if result.Passed != 1 {
+		t.Errorf("expected 1 passed for valid Python, got %d", result.Passed)
+	}
+}
+
+func TestSyntaxVerifierInvalidPython(t *testing.T) {
+	verifier := NewSyntaxVerifier()
+
+	// Invalid Python syntax
+	code := "```python\ndef broken( a b c ):\n  return\n```"
+	result := verifier(code)
+
+	if result.Score != 0 {
+		t.Errorf("expected score 0 for invalid Python, got %f", result.Score)
+	}
+	if len(result.Errors) == 0 {
+		t.Error("expected at least 1 error for invalid Python")
+	}
+}
+
+func TestSyntaxVerifierNoCodeBlock(t *testing.T) {
+	verifier := NewSyntaxVerifier()
+
+	result := verifier("this is just plain text with no code blocks")
+	if result.Score != 0 {
+		t.Errorf("expected score 0 for no code block, got %f", result.Score)
+	}
+	if len(result.Errors) == 0 {
+		t.Error("expected errors for no code block")
 	}
 }

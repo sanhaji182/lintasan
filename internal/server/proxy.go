@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sanhaji182/lintasan-go/internal/auth"
 	"github.com/sanhaji182/lintasan-go/internal/cache"
 	"github.com/sanhaji182/lintasan-go/internal/circuit"
 	"github.com/sanhaji182/lintasan-go/internal/combo"
@@ -96,6 +97,8 @@ type ProxyHandler struct {
 	// observe-only). Written AFTER selection, never read by the routing path.
 	// Surfaced read-only via GET /api/capabilities/shadow.
 	shadowStats *provider.ShadowAggregator
+
+	oauthMgr *auth.OAuthManager // IDE OAuth session → upstream bearer overlay
 }
 
 func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
@@ -121,15 +124,11 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 	// Rate limiter: per-key requests/min, burst. Defaults 60/30 (unchanged).
 	// Override via env for benchmarking / tuning; 0 disables the limiter.
 	rlPerMin, rlBurst := 60, 30
-	if v := os.Getenv("LINTASAN_RATELIMIT_PERMIN"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			rlPerMin = n
-		}
+	if ph.cfg.RateLimitPerMin > 0 {
+		rlPerMin = ph.cfg.RateLimitPerMin
 	}
-	if v := os.Getenv("LINTASAN_RATELIMIT_BURST"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			rlBurst = n
-		}
+	if ph.cfg.RateLimitBurst > 0 {
+		rlBurst = ph.cfg.RateLimitBurst
 	}
 	ph.rlEnabled = rlPerMin > 0
 	if ph.rlEnabled {
@@ -216,16 +215,17 @@ func (p *ProxyHandler) loadQuotaLimits(database *db.DB) {
 }
 
 type Connection struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	BaseURL    string `json:"base_url"`
-	APIKey     string `json:"api_key"`
-	Format     string `json:"format"`
-	ChatPath   string `json:"chat_path"`
-	AuthHeader string `json:"auth_header"`
-	AuthPrefix string `json:"auth_prefix"`
-	IsActive   int    `json:"is_active"`
-	Priority   int    `json:"priority"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	BaseURL       string `json:"base_url"`
+	APIKey        string `json:"api_key"`
+	OAuthProvider string `json:"oauth_provider,omitempty"` // 9router OAuth id: xai, claude, github, ...
+	Format        string `json:"format"`
+	ChatPath      string `json:"chat_path"`
+	AuthHeader    string `json:"auth_header"`
+	AuthPrefix    string `json:"auth_prefix"`
+	IsActive      int    `json:"is_active"`
+	Priority      int    `json:"priority"`
 }
 
 func (p *ProxyHandler) getSetting(key, def string) string {
@@ -421,7 +421,11 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	// P7.4 Self-Review Loop — triggered by X-Lintasan-Reflect header
 	// Must be BEFORE any upstream call so the reflect loop owns the full request flow
 	if reflectHeader := r.Header.Get("X-Lintasan-Reflect"); reflectHeader != "" {
-		p.handleReflectLoop(r, model, messages, w)
+		maxTokens := 4096
+		if mt, ok := req["max_tokens"].(float64); ok && mt > 0 {
+			maxTokens = int(mt)
+		}
+		p.handleReflectLoop(r, model, messages, maxTokens, w)
 		return
 	}
 
@@ -1013,27 +1017,36 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		})
 	}
 
-	_ = lastStatusCode
-	http.Error(w, fmt.Sprintf(`{"error":{"message":"all routes failed","details":%q}}`, lastErr), http.StatusBadGateway)
+	// Use the last established status code from the fallback chain rather than
+	// always returning 502. If a specific route returned 429 (rate limit), 503
+	// (circuit breaker), or another meaningful code, propagate it. Fall back to
+	// 502 when lastStatusCode is 0 (no route was tried at all).
+	errCode := lastStatusCode
+	if errCode == 0 {
+		errCode = http.StatusBadGateway
+	}
+	http.Error(w, fmt.Sprintf(`{"error":{"message":"all routes failed","details":%q}}`, lastErr), errCode)
 }
 
 func (p *ProxyHandler) findConnectionByID(id string) (*Connection, error) {
 	row := p.db.Conn().QueryRow(`
-		SELECT id, name, base_url, api_key, format, chat_path, auth_header, auth_prefix, is_active, priority
+		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority
 		FROM connections
 		WHERE id = ? AND is_active = 1
 		LIMIT 1
 	`, id)
 
 	var conn Connection
-	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority)
+	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority)
 	if err != nil {
 		return nil, fmt.Errorf("connection not found: %s", id)
 	}
+	p.applyConnectionAuth(&conn)
 	return &conn, nil
 }
 
 func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte) (*http.Response, error) {
+	conn = p.connForUpstream(conn)
 	// --- Provider SDK seam (F1) ----------------------------------------------
 	// When the kill-switch flag is on AND this is not a commandcode connection,
 	// build the upstream request via the Provider SDK (Prepare-only). The HTTP
@@ -1451,7 +1464,7 @@ func (p *ProxyHandler) resolveTieredCombo() ([]*Connection, string, bool) {
 // lookup maps from provider ID back to the connection and its chosen model.
 func (p *ProxyHandler) buildAutoProviders() ([]combo.Provider, map[string]*Connection, map[string]string) {
 	rows, err := p.db.Conn().Query(`
-		SELECT c.id, c.name, c.base_url, c.api_key, c.format, c.chat_path,
+		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path,
 		       c.auth_header, c.auth_prefix, c.is_active, c.priority,
 		       (SELECT m.model_id FROM discovered_models m
 		         WHERE m.connection_id = c.id AND m.is_active = 1
@@ -1474,10 +1487,11 @@ func (p *ProxyHandler) buildAutoProviders() ([]combo.Provider, map[string]*Conne
 	for rows.Next() {
 		var c Connection
 		var modelID sql.NullString
-		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.Format, &c.ChatPath,
+		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.ChatPath,
 			&c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority, &modelID) != nil {
 			continue
 		}
+		p.applyConnectionAuth(&c)
 		if !modelID.Valid || modelID.String == "" {
 			continue // no usable model on this connection
 		}
@@ -1628,7 +1642,7 @@ func stringSlice(v any) []string {
 }
 
 func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*Connection {
-	query := `SELECT c.id, c.name, c.base_url, c.api_key, c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority FROM discovered_models m JOIN connections c ON m.connection_id=c.id WHERE m.model_id=? AND m.is_active=1 AND c.is_active=1`
+	query := `SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority FROM discovered_models m JOIN connections c ON m.connection_id=c.id WHERE m.model_id=? AND m.is_active=1 AND c.is_active=1`
 	args := []any{model}
 	if len(ids) > 0 {
 		ph := make([]string, len(ids))
@@ -1647,7 +1661,8 @@ func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*
 	var out []*Connection
 	for rows.Next() {
 		var c Connection
-		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.Format, &c.ChatPath, &c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority) == nil {
+		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.ChatPath, &c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority) == nil {
+			p.applyConnectionAuth(&c)
 			out = append(out, &c)
 		}
 	}
@@ -1656,7 +1671,7 @@ func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*
 
 func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error) {
 	row := p.db.Conn().QueryRow(`
-		SELECT c.id, c.name, c.base_url, c.api_key, c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority
+		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority
 		FROM discovered_models m
 		JOIN connections c ON m.connection_id = c.id
 		WHERE m.model_id = ? AND m.is_active = 1 AND c.is_active = 1
@@ -1665,16 +1680,17 @@ func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error)
 	`, model)
 
 	var conn Connection
-	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority)
+	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority)
 	if err != nil {
 		return nil, fmt.Errorf("model not found: %s", model)
 	}
+	p.applyConnectionAuth(&conn)
 	return &conn, nil
 }
 
 func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
 	row := p.db.Conn().QueryRow(`
-		SELECT id, name, base_url, api_key, format, chat_path, auth_header, auth_prefix, is_active, priority
+		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority
 		FROM connections
 		WHERE is_active = 1
 		ORDER BY priority DESC
@@ -1682,10 +1698,11 @@ func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
 	`)
 
 	var conn Connection
-	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority)
+	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority)
 	if err != nil {
 		return nil, fmt.Errorf("no active connections")
 	}
+	p.applyConnectionAuth(&conn)
 	return &conn, nil
 }
 
@@ -1886,7 +1903,7 @@ func truncate(s string, maxLen int) string {
 
 // handleReflectLoop runs the self-review auto-fix loop triggered by X-Lintasan-Reflect header.
 // Must be called BEFORE any upstream response is written — it owns the full request flow.
-func (p *ProxyHandler) handleReflectLoop(r *http.Request, model string, messages []any, w http.ResponseWriter) {
+func (p *ProxyHandler) handleReflectLoop(r *http.Request, model string, messages []any, maxTokens int, w http.ResponseWriter) {
 	reflectHeader := r.Header.Get("X-Lintasan-Reflect")
 	maxIter := 3
 	if n, err := strconv.Atoi(reflectHeader); err == nil && n >= 1 && n <= 5 {
@@ -1944,12 +1961,17 @@ func (p *ProxyHandler) handleReflectLoop(r *http.Request, model string, messages
 			return "", fmt.Errorf("no connection for model %s: %w", model, err)
 		}
 
+		perIterTokens := maxTokens / maxIter
+		if perIterTokens < 256 {
+			perIterTokens = 256
+		}
+
 		reqBody := map[string]any{
 			"model": model,
 			"messages": []map[string]any{
 				{"role": "user", "content": prompt},
 			},
-			"max_tokens": 16384.0,
+			"max_tokens": float64(perIterTokens),
 			"stream":     false,
 		}
 		bodyBytes, err := json.Marshal(reqBody)
@@ -1996,9 +2018,12 @@ func (p *ProxyHandler) handleReflectLoop(r *http.Request, model string, messages
 
 	// Create verifier
 	var verifier reflect.Verifier
-	if verifyMode == "pytest" {
+	switch verifyMode {
+	case "pytest":
 		verifier = reflect.NewPytestVerifier(testFile, codeModule)
-	} else {
+	case "syntax":
+		verifier = reflect.NewSyntaxVerifier()
+	default:
 		// Text verifier: just checks response is non-empty
 		verifier = func(output string) reflect.VerifyResult {
 			if output == "" {

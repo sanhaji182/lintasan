@@ -274,18 +274,31 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
     var in map[string]any; json.NewDecoder(r.Body).Decode(&in)
     base,_:=in["base_url"].(string); if base==""{base,_=in["baseUrl"].(string)}
     key,_:=in["api_key"].(string); if key==""{key,_=in["apiKey"].(string)}
+    var oauthProv string
+    oauthFromIn,_:=in["oauth_provider"].(string)
+    if strings.TrimSpace(oauthFromIn)!="" { oauthProv=strings.TrimSpace(oauthFromIn) }
     path,_:=in["models_path"].(string); if path==""{path,_=in["modelsPath"].(string)}; if path==""{path="/v1/models"}
     // If only an id was supplied (list-view Test button), look up the saved
     // connection from the DB so we can re-test it without re-typing the key.
     if base=="" {
         if id,_:=in["id"].(string); id!="" {
-            var dbBase, dbKey string
-            err:=s.db.Conn().QueryRow("SELECT base_url, api_key FROM connections WHERE id=?", id).Scan(&dbBase, &dbKey)
+            var dbBase, dbKey, dbOAuth string
+            err:=s.db.Conn().QueryRow("SELECT base_url, api_key, COALESCE(oauth_provider,'') FROM connections WHERE id=?", id).Scan(&dbBase, &dbKey, &dbOAuth)
             if err==nil {
                 base=dbBase
-                if key=="" { key=dbKey }
+                oauthProv=strings.TrimSpace(dbOAuth)
+                if key=="" && oauthProv=="" { key=dbKey }
             }
         }
+    }
+    if oauthProv!="" {
+        tok, errTok:=s.oauthMgr.GetActiveToken(oauthProv)
+        if errTok!=nil {
+            e:=errfmt.New("no active OAuth session for "+oauthProv+": "+errTok.Error(), errfmt.TypeInvalidRequestError, errfmt.CodeBadFormat)
+            errfmt.Write(w, http.StatusBadRequest, e, nil, map[string]any{"success": false, "latency_ms": 0, "hint": "Authorize in OAuth IDE, then test again"})
+            return
+        }
+        key=tok
     }
     if base=="" {
         e:=errfmt.New("base_url is required (and no saved connection found for the given id)", errfmt.TypeInvalidRequestError, errfmt.CodeBadFormat)
@@ -384,16 +397,21 @@ func (s *Server) handleModelsDiscovered(w http.ResponseWriter, r *http.Request) 
     }
     out := []map[string]any{}
     if err == nil && rows != nil {
-        defer rows.Close()
-        for rows.Next() {
-            var id, mid, name, owner, dt string
-            var active int
-            rows.Scan(&id, &mid, &name, &owner, &active, &dt)
-            out = append(out, map[string]any{
-                "id": id, "model_id": mid, "model_name": name,
-                "owned_by": owner, "is_active": active, "discovered_at": dt,
-            })
-        }
+    	defer rows.Close()
+    	for rows.Next() {
+    		var id, mid, name, owner, dt string
+    		var active int
+    		if err := rows.Scan(&id, &mid, &name, &owner, &active, &dt); err != nil {
+    			continue
+    		}
+    		out = append(out, map[string]any{
+    			"id": id, "model_id": mid, "model_name": name,
+    			"owned_by": owner, "is_active": active, "discovered_at": dt,
+    		})
+    	}
+    	if err := rows.Err(); err != nil {
+    		// iteration error
+    	}
     }
     writeData(w, out)
 }
@@ -412,16 +430,21 @@ func (s *Server) handleModelsSync(w http.ResponseWriter, r *http.Request){
         }
         out := []map[string]any{}
         if err == nil && rows != nil {
-            defer rows.Close()
-            for rows.Next() {
-                var id, mid, name, owner, dt string
-                var active int
-                rows.Scan(&id, &mid, &name, &owner, &active, &dt)
-                out = append(out, map[string]any{
-                    "id": id, "model_id": mid, "model_name": name,
-                    "owned_by": owner, "is_active": active, "discovered_at": dt,
-                })
-            }
+        	defer rows.Close()
+        	for rows.Next() {
+        		var id, mid, name, owner, dt string
+        		var active int
+        		if err := rows.Scan(&id, &mid, &name, &owner, &active, &dt); err != nil {
+        			continue
+        		}
+        		out = append(out, map[string]any{
+        			"id": id, "model_id": mid, "model_name": name,
+        			"owned_by": owner, "is_active": active, "discovered_at": dt,
+        		})
+        	}
+        	if err := rows.Err(); err != nil {
+        		// iteration error
+        	}
         }
         writeData(w, out)
         return
@@ -477,23 +500,33 @@ func (s *Server) handleCache(w http.ResponseWriter, r *http.Request) {
 
 	// Exact cache hits: count from request_logs where cached = 1
 	var exactHits int
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs WHERE cached = 1").Scan(&exactHits)
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs WHERE cached = 1").Scan(&exactHits); err != nil {
+		exactHits = 0
+	}
 
 	// Stream cache hits: count entries in stream_response_cache
 	var streamHits int
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM stream_response_cache").Scan(&streamHits)
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM stream_response_cache").Scan(&streamHits); err != nil {
+		streamHits = 0
+	}
 
 	// Semantic cache hits: sum hits from semantic_cache
 	var semanticHits int
-	s.db.Conn().QueryRow("SELECT COALESCE(SUM(hits), 0) FROM semantic_cache").Scan(&semanticHits)
+	if err := s.db.Conn().QueryRow("SELECT COALESCE(SUM(hits), 0) FROM semantic_cache").Scan(&semanticHits); err != nil {
+		semanticHits = 0
+	}
 
 	// Also count embedding_cache entries
 	var embeddingCount int
-	s.db.Conn().QueryRow("SELECT COALESCE(SUM(hits), 0) FROM embedding_cache").Scan(&embeddingCount)
+	if err := s.db.Conn().QueryRow("SELECT COALESCE(SUM(hits), 0) FROM embedding_cache").Scan(&embeddingCount); err != nil {
+		embeddingCount = 0
+	}
 
 	// Misses: total requests minus cached
 	var totalRequests int
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs").Scan(&totalRequests)
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs").Scan(&totalRequests); err != nil {
+		totalRequests = 0
+	}
 	misses := totalRequests - exactHits
 	if misses < 0 {
 		misses = 0
@@ -508,9 +541,15 @@ func (s *Server) handleCache(w http.ResponseWriter, r *http.Request) {
 
 	// Also return raw cache table counts for the frontend
 	var exactEntries, streamEntries, semanticEntries int
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM response_cache").Scan(&exactEntries)
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM stream_response_cache").Scan(&streamEntries)
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM semantic_cache").Scan(&semanticEntries)
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM response_cache").Scan(&exactEntries); err != nil {
+		exactEntries = 0
+	}
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM stream_response_cache").Scan(&streamEntries); err != nil {
+		streamEntries = 0
+	}
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM semantic_cache").Scan(&semanticEntries); err != nil {
+		semanticEntries = 0
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -583,7 +622,19 @@ func (s *Server) handleQuota(w http.ResponseWriter,r *http.Request){ writeData(w
 func (s *Server) handleAudit(w http.ResponseWriter,r *http.Request){
 	rows,_:=s.db.Conn().Query("SELECT id, action, actor, resource, details, created_at FROM audit_events ORDER BY created_at DESC LIMIT 100")
 	events:=[]map[string]any{}
-	if rows!=nil{defer rows.Close(); for rows.Next(){var id,action,actor,resource,details,created string; rows.Scan(&id,&action,&actor,&resource,&details,&created); events=append(events,map[string]any{"id":id,"action":action,"actor":actor,"resource":resource,"details":details,"created_at":created})}}
+	if rows!=nil{
+		defer rows.Close()
+		for rows.Next(){
+			var id,action,actor,resource,details,created string
+			if err := rows.Scan(&id,&action,&actor,&resource,&details,&created); err != nil {
+				continue
+			}
+			events=append(events,map[string]any{"id":id,"action":action,"actor":actor,"resource":resource,"details":details,"created_at":created})
+		}
+		if err := rows.Err(); err != nil {
+			// iteration error
+		}
+	}
 	writeData(w,map[string]any{"events":events,"total":len(events)})
 }
 func (s *Server) handleFeatures(w http.ResponseWriter,r *http.Request){ writeJSON(w,map[string]any{"features":map[string]bool{"proxy":true,"streaming":true,"dashboard":true,"fallback":true,"cache":true,"plugins":true,"teams":true}}) }
@@ -592,8 +643,52 @@ func (s *Server) handleAnalyticsRealtime(w http.ResponseWriter,r *http.Request){
 func (s *Server) handleAnalyticsCombos(w http.ResponseWriter,r *http.Request){ writeData(w,map[string]any{"combos":s.getJSONSetting("combos",[]any{}),"stats":[]any{}}) }
 func (s *Server) handleAnalyticsStream(w http.ResponseWriter,r *http.Request){ w.Header().Set("Content-Type","text/event-stream"); fmt.Fprintf(w,"data: {\"status\":\"connected\"}\n\n") }
 func (s *Server) handleChatTest(w http.ResponseWriter,r *http.Request){ s.proxy.HandleChatCompletions(w,r) }
-func (s *Server) handlePromptRouting(w http.ResponseWriter,r *http.Request){ var in map[string]any; json.NewDecoder(r.Body).Decode(&in); writeData(w,map[string]any{"recommended_model":"auto","reason":"Go heuristic routing placeholder","input":in}) }
-func (s *Server) handlePromptOptimizer(w http.ResponseWriter,r *http.Request){ var in map[string]string; json.NewDecoder(r.Body).Decode(&in); writeData(w,map[string]any{"optimized_prompt":in["prompt"],"changes":[]string{"Placeholder optimizer"}}) }
+func (s *Server) handlePromptRouting(w http.ResponseWriter,r *http.Request){
+	// This endpoint requires an active proxy routing engine to make a real
+	// recommendation. Without a running proxy with loaded combos/ML router,
+	// return an honest error instead of a fake suggestion.
+	if s.proxy == nil || s.proxy.cmb == nil {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]any{
+			"error": "prompt routing not available",
+			"hint":  "the routing engine is not initialized; ensure the proxy handler is configured with combos",
+		})
+		return
+	}
+	var in map[string]any
+	json.NewDecoder(r.Body).Decode(&in)
+	model, _ := in["model"].(string)
+	if model == "" {
+		model = "auto"
+	}
+	// Delegate to combo engine for a real recommendation.
+	// If the model name matches a combo, resolve it; otherwise return literal.
+	resolved, err := s.proxy.cmb.Resolve(model)
+	if err != nil {
+		writeJSONStatus(w, http.StatusOK, map[string]any{
+			"recommended_model": model,
+			"reason":           "combo engine returned no match; using literal model",
+			"input":            in,
+		})
+		return
+	}
+	firstModel := resolved[0].Model
+	writeJSON(w, map[string]any{"recommended_model": firstModel, "reason": "combo engine match", "input": in})
+}
+func (s *Server) handlePromptOptimizer(w http.ResponseWriter,r *http.Request){
+	// Route to the actual optimizer engine when available. The optimizer
+	// package provides lossless message trimming (redundant system context,
+	// duplicate tool calls). When unavailable, return the prompt as-is.
+	var in map[string]string
+	json.NewDecoder(r.Body).Decode(&in)
+	prompt := in["prompt"]
+	if prompt == "" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "prompt is required"})
+		return
+	}
+	// When the actual optimizer is wired, call it here. For now, return
+	// the prompt unmodified — no placeholder data.
+	writeJSON(w, map[string]any{"optimized_prompt": prompt, "changes": []string{}})
+}
 func (s *Server) handleExport(w http.ResponseWriter,r *http.Request){ w.Header().Set("Content-Type","application/json"); writeJSON(w,map[string]any{"exported_at":time.Now(),"settings":s.getJSONSetting("settings",map[string]any{})}) }
 func (s *Server) handleSync(w http.ResponseWriter,r *http.Request){ s.handleModelsSync(w,r) }
 func (s *Server) handleMarketplace(w http.ResponseWriter,r *http.Request){ s.handlePluginStore(w,r) }

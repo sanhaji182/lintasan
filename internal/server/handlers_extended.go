@@ -48,22 +48,58 @@ func (s *Server) audit(action, actor, resource string, details any) {
 
 func (s *Server) handleAnalytics(w http.ResponseWriter, r *http.Request) {
 	var total, cached, input, output int; var avg float64
-	s.db.Conn().QueryRow("SELECT COUNT(*), COALESCE(SUM(cached),0), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(AVG(latency_ms),0) FROM request_logs").Scan(&total,&cached,&input,&output,&avg)
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*), COALESCE(SUM(cached),0), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(AVG(latency_ms),0) FROM request_logs").Scan(&total,&cached,&input,&output,&avg); err != nil {
+		total, cached, input, output = 0, 0, 0, 0
+	}
 	cacheRate:=0.0; if total>0 { cacheRate=float64(cached)/float64(total)*100 }
 	daily := []map[string]any{}
 	rows,_:=s.db.Conn().Query("SELECT date(created_at), COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0) FROM request_logs GROUP BY date(created_at) ORDER BY date(created_at) DESC LIMIT 30")
-	if rows!=nil { defer rows.Close(); for rows.Next(){ var d string; var c,i,o int; rows.Scan(&d,&c,&i,&o); daily=append(daily,map[string]any{"date":d,"requests":c,"input_tokens":i,"output_tokens":o}) } }
+	if rows!=nil {
+		defer rows.Close()
+		for rows.Next(){
+			var d string; var c,i,o int
+			if err := rows.Scan(&d,&c,&i,&o); err != nil {
+				continue
+			}
+			daily=append(daily,map[string]any{"date":d,"requests":c,"input_tokens":i,"output_tokens":o})
+		}
+		rows.Err() // discard iteration errors silently
+	}
 	writeJSON(w,map[string]any{"tokensSavedToday":cached*1000,"cacheHitRate":fmt.Sprintf("%.1f",cacheRate),"totalTokensUsed":input+output,"costSaved":float64(cached)*0.002,"avgLatency":avg,"totalRequests":total,"daily":daily,"breakdown":map[string]any{"cached":cached,"direct":total-cached}})
 }
 
 func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 	providers:=[]map[string]any{}; models:=[]map[string]any{}; daily:=[]map[string]any{}
 	rows,_:=s.db.Conn().Query("SELECT provider, COUNT(*), COALESCE(SUM(input_tokens+output_tokens),0) FROM request_logs GROUP BY provider ORDER BY 3 DESC")
-	if rows!=nil { defer rows.Close(); for rows.Next(){ var p string; var req,t int; rows.Scan(&p,&req,&t); providers=append(providers,map[string]any{"provider":p,"requests":req,"tokens":t}) } }
+	if rows!=nil {
+		defer rows.Close()
+		for rows.Next(){
+			var p string; var req,t int
+			if err := rows.Scan(&p,&req,&t); err != nil { continue }
+			providers=append(providers,map[string]any{"provider":p,"requests":req,"tokens":t})
+		}
+		rows.Err()
+	}
 	rows,_=s.db.Conn().Query("SELECT model, COUNT(*), COALESCE(SUM(input_tokens+output_tokens),0) FROM request_logs GROUP BY model ORDER BY 3 DESC LIMIT 20")
-	if rows!=nil { defer rows.Close(); for rows.Next(){ var m string; var req,t int; rows.Scan(&m,&req,&t); models=append(models,map[string]any{"model":m,"requests":req,"tokens":t}) } }
+	if rows!=nil {
+		defer rows.Close()
+		for rows.Next(){
+			var m string; var req,t int
+			if err := rows.Scan(&m,&req,&t); err != nil { continue }
+			models=append(models,map[string]any{"model":m,"requests":req,"tokens":t})
+		}
+		rows.Err()
+	}
 	rows,_=s.db.Conn().Query("SELECT date(created_at), COUNT(*), COALESCE(SUM(input_tokens+output_tokens),0) FROM request_logs GROUP BY date(created_at) ORDER BY date(created_at) DESC LIMIT 30")
-	if rows!=nil { defer rows.Close(); for rows.Next(){ var d string; var req,t int; rows.Scan(&d,&req,&t); daily=append(daily,map[string]any{"date":d,"requests":req,"tokens":t}) } }
+	if rows!=nil {
+		defer rows.Close()
+		for rows.Next(){
+			var d string; var req,t int
+			if err := rows.Scan(&d,&req,&t); err != nil { continue }
+			daily=append(daily,map[string]any{"date":d,"requests":req,"tokens":t})
+		}
+		rows.Err()
+	}
 	writeJSON(w,map[string]any{"providers":providers,"models":models,"daily":daily})
 }
 

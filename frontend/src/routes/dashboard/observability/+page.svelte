@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import {
-    Activity, Search, Database, Cpu, Server, AlertTriangle,
+    Activity, Search, Database, Cpu, Server, TriangleAlert,
     CheckCircle2, Gauge, RefreshCw, Layers, Zap
   } from 'lucide-svelte';
 
@@ -250,7 +250,7 @@
     <!-- H3 early-warning banner -->
     {#if warnLevel === 'critical'}
       <div class="warn-banner critical">
-        <AlertTriangle size={20} />
+        <TriangleAlert size={20} />
         <div>
           <div class="wb-title">Semantic search scanning hot — consider an ANN index</div>
           <div class="wb-body">
@@ -263,7 +263,7 @@
       </div>
     {:else if warnLevel === 'warn'}
       <div class="warn-banner warn">
-        <AlertTriangle size={20} />
+        <TriangleAlert size={20} />
         <div>
           <div class="wb-title">Search scan load trending up</div>
           <div class="wb-body">
@@ -297,7 +297,7 @@
           { icon: CheckCircle2, label: 'Hit Rate', value: hitRate + '%', color: 'var(--color-success)' },
           { icon: Layers, label: 'Empty-Exit Rate', value: emptyRate + '%', color: 'var(--color-info)' },
           { icon: Database, label: 'Rows Scanned', value: search.rows_scanned.toLocaleString(), color: 'var(--color-purple)' },
-          { icon: AlertTriangle, label: 'Capped Scans', value: search.capped_scans.toLocaleString(), color: search.capped_scans > 0 ? 'var(--color-error)' : 'var(--color-fg-3)' },
+          { icon: TriangleAlert, label: 'Capped Scans', value: search.capped_scans.toLocaleString(), color: search.capped_scans > 0 ? 'var(--color-error)' : 'var(--color-fg-3)' },
           { icon: Gauge, label: 'Max Scan Rows', value: search.max_scan_rows === 0 ? '∞' : search.max_scan_rows.toLocaleString(), color: 'var(--color-warning)' }
         ] as m}
           <div class="card" style="padding: 16px; position: relative; overflow: hidden;">

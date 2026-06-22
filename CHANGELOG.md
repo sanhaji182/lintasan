@@ -10,6 +10,43 @@ semantic-ish versioning.
 > history as a reference point; `v0.24.0` is the first release of the new
 > numbering scheme (the `.24` keeps continuity with the prior work).
 
+## [0.25.0] — 2026-06-23
+
+### Added
+- **Experimental IDE OAuth (off by default).** A new `/api/oauth/ide/*` subsystem
+  that lets AI coding agents (Claude Code, Codex CLI, Copilot, Cursor, Cline,
+  Kilocode, Antigravity, xAI) authenticate via OAuth 2.0 PKCE or device flow —
+  no manual API key management. Gated behind `--oauth-ide-enable=false` and
+  admin-only dashboard controls.
+- **8-provider OAuth IDE catalog** (`internal/oauthide/`): Claude (PKCE), Codex
+  (PKCE), GitHub Copilot (device flow), Cursor (device flow), Cline (PKCE),
+  Kilocode (PKCE), Antigravity (PKCE), xAI (PKCE+device flow).
+- **9-router port:** the IDE OAuth layer reuses the 9router routing substrate,
+  inheriting its multi-provider connection management infrastructure.
+- **Dashboard OAuth IDE page** (`/dashboard/oauth-ide`): status card per IDE,
+  self-service toggle, credentials display, connection health check.
+- **QA documentation:** `docs/qa-test-plan.md` (336 lines) and
+  `docs/qa-test-report.md` (277 lines) covering the beta-readiness P0+P1 batch
+  and the OAuth IDE experimental feature.
+
+### Changed
+- **Repo renamed** from `lintasan-go` → `lintasan` across all docs, badges,
+  and remote URLs.
+- **README badges** updated: version → v0.25.0, test count → 900+
+- **AGENTS.md** reconciled to reflect the repo rename, removed stale binary
+  references.
+
+### Housekeeping
+- Removed stale binary artifacts (`lintasan-go.bak`, `lintasan-go2`) from repo
+  root.
+- `feat/oauth-ide-experimental` branch tracking the experimental work kept as
+  active feature branch.
+
+### Tests
+- 3 new test files: `internal/oauthide/catalog_test.go`,
+  `internal/oauthide/github_test.go`, `internal/server/oauth_ide_test.go`.
+- Suite: **43/43 packages PASS**, `go vet` clean, all 900+ tests pass.
+
 ## [0.24.2] — 2026-06-05
 
 ### Fixed
@@ -153,8 +190,9 @@ semantic-ish versioning.
 - Security & Reliability release: fail-closed auth, bootstrap/active state
   machine, first-run setup redesign.
 
-[0.24.0]: https://github.com/sanhaji182/lintasan-go/releases/tag/v0.24.0
-[2.4.0]: https://github.com/sanhaji182/lintasan-go/releases/tag/v2.4.0
+[0.25.0]: https://github.com/sanhaji182/lintasan/releases/tag/v0.25.0
+[0.24.0]: https://github.com/sanhaji182/lintasan/releases/tag/v0.24.0
+[2.4.0]: https://github.com/sanhaji182/lintasan/releases/tag/v2.4.0
 [2.3.7]: https://github.com/sanhaji182/lintasan-go/releases/tag/v2.3.7
 [2.3.6]: https://github.com/sanhaji182/lintasan-go/releases/tag/v2.3.6
 [2.3.5]: https://github.com/sanhaji182/lintasan-go/releases/tag/v2.3.5

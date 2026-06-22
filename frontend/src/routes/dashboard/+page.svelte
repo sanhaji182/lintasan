@@ -7,7 +7,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import {
     Activity, Zap, Clock, Coins, RefreshCw, ArrowUpRight,
-    AlertCircle, Link2, CheckCircle2
+    CircleAlert, Link2, CheckCircle2
   } from 'lucide-svelte/icons';
 
   interface DashboardStats {
@@ -108,13 +108,70 @@
 </svelte:head>
 
 {#if loading}
-  <div class="flex items-center justify-center" style="min-height: 400px;">
-    <Spinner />
+  <!-- Skeleton loading state -->
+  <div style="margin-bottom: 24px;">
+    <div class="flex items-center justify-between" style="margin-bottom: 24px;">
+      <div>
+        <div class="skeleton" style="width: 200px; height: 24px; margin-bottom: 8px;"></div>
+        <div class="skeleton" style="width: 280px; height: 14px;"></div>
+      </div>
+      <div class="skeleton" style="width: 90px; height: 36px; border-radius: var(--radius-sm);"></div>
+    </div>
+
+    <div
+      class="grid gap-5"
+      style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 24px;"
+    >
+      {#each Array(4) as _}
+        <div class="card" style="padding: 20px;">
+          <div class="skeleton" style="width: 44px; height: 44px; border-radius: 12px; margin-bottom: 16px;"></div>
+          <div class="skeleton" style="width: 60%; height: 28px; margin-bottom: 6px;"></div>
+          <div class="skeleton" style="width: 80%; height: 12px;"></div>
+        </div>
+      {/each}
+    </div>
+
+    <div class="grid gap-5" style="grid-template-columns: 1fr 340px;">
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div style="padding: 18px 20px; border-bottom: 1px solid var(--color-border);">
+          <div class="skeleton" style="width: 130px; height: 16px;"></div>
+        </div>
+        <div style="padding: 16px 20px;">
+          {#each Array(5) as _}
+            <div class="flex items-center gap-3" style="margin-bottom: 14px;">
+              <div class="skeleton" style="width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0;"></div>
+              <div style="flex: 1;">
+                <div class="skeleton" style="width: 70%; height: 12px; margin-bottom: 4px;"></div>
+                <div class="skeleton" style="width: 40%; height: 10px;"></div>
+              </div>
+              <div class="skeleton" style="width: 50px; height: 20px; border-radius: 999px;"></div>
+            </div>
+          {/each}
+        </div>
+      </div>
+      <div class="card" style="padding: 0; overflow: hidden;">
+        <div style="padding: 18px 20px; border-bottom: 1px solid var(--color-border);">
+          <div class="skeleton" style="width: 100px; height: 16px;"></div>
+        </div>
+        <div style="padding: 16px 20px;">
+          {#each Array(4) as _}
+            <div class="flex items-center gap-3" style="margin-bottom: 12px;">
+              <div class="skeleton" style="width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;"></div>
+              <div style="flex: 1;">
+                <div class="skeleton" style="width: 60%; height: 12px; margin-bottom: 4px;"></div>
+                <div class="skeleton" style="width: 40%; height: 10px;"></div>
+              </div>
+              <div class="skeleton" style="width: 55px; height: 20px; border-radius: 999px;"></div>
+            </div>
+          {/each}
+        </div>
+      </div>
+    </div>
   </div>
 {:else if error}
   <div class="card" style="text-align: center;">
     <div class="flex flex-col items-center gap-3">
-      <AlertCircle size={32} style="color: var(--color-error);" />
+      <CircleAlert size={32} style="color: var(--color-error);" />
       <div style="font-size: 14px; color: var(--color-fg-1);">{error}</div>
       <button class="btn-primary" onclick={handleRefresh}>
         <RefreshCw size={14} style="display: inline; vertical-align: middle; margin-right: 4px;" />
@@ -183,7 +240,7 @@
   </div>
 
   <!-- Bottom section: two columns -->
-  <div class="grid gap-5" style="grid-template-columns: 1fr 340px;">
+  <div class="grid gap-5 dashboard-grid-bottom">
     <!-- Recent requests table -->
     <div class="card" style="padding: 0; overflow: hidden;">
       <div
@@ -370,6 +427,10 @@
 
   .table-row:last-child .table-cell {
     border-bottom: none;
+  }
+
+  .dashboard-grid-bottom {
+    grid-template-columns: 1fr 340px;
   }
 
   @media (max-width: 1024px) {

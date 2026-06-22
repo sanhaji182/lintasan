@@ -8,11 +8,11 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/auth"
 )
 
-// oauthIdeDisabledJSON is returned when LINTASAN_OAUTH_IDE_ENABLED is false.
+// oauthIdeDisabledJSON is returned when the OAuth IDE lab is off (dashboard Settings or env).
 func oauthIdeDisabledJSON(w http.ResponseWriter) {
 	writeJSONStatus(w, http.StatusNotFound, map[string]any{
 		"error":   "oauth_ide_disabled",
-		"hint":    "Set LINTASAN_OAUTH_IDE_ENABLED=true to enable the experimental IDE OAuth lab (admin-only, personal use).",
+		"hint":    "Enable **OAuth IDE (experimental)** in Dashboard → Settings (admin). Env LINTASAN_OAUTH_IDE_ENABLED still applies if the setting was never saved.",
 		"enabled": false,
 	})
 }
@@ -26,7 +26,29 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (*auth.Use
 	return user, true
 }
 
+const oauthIdeSettingKey = "oauth_ide_enabled"
+
+func parseBoolSetting(v string) (bool, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// oauthIdeEnabled: dashboard setting oauth_ide_enabled wins when set; else LINTASAN_OAUTH_IDE_ENABLED env.
 func (s *Server) oauthIdeEnabled() bool {
+	if s.db != nil {
+		if v, err := s.db.GetSetting(oauthIdeSettingKey); err == nil && strings.TrimSpace(v) != "" {
+			if b, ok := parseBoolSetting(v); ok {
+				return b
+			}
+		}
+	}
 	return s.cfg != nil && s.cfg.OAuthIDEEnabled
 }
 

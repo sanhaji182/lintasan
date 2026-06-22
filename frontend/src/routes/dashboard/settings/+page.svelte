@@ -4,7 +4,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import {
     Settings as SettingsIcon, Save, Shield, Zap, Globe, Server,
-    Key, RotateCcw, Gauge, Wifi, Lock, Link
+    Key, RotateCcw, Gauge, Wifi, Lock, Link, KeyRound
   } from 'lucide-svelte';
   import { showToast } from '$lib/toast';
 
@@ -31,9 +31,14 @@
       for (const [key, value] of Object.entries(raw)) {
         if (typeof value === 'string') {
           try {
-            parsed[key] = JSON.parse(value);
+            const parsedVal = JSON.parse(value);
+            parsed[key] = parsedVal;
           } catch {
-            parsed[key] = value;
+            if (key === 'oauth_ide_enabled') {
+              parsed[key] = value === 'true' || value === '1';
+            } else {
+              parsed[key] = value;
+            }
           }
         } else {
           parsed[key] = value;
@@ -51,6 +56,7 @@
         cache_enabled: true,
         rate_limit_enabled: false,
         cors_enabled: true,
+        oauth_ide_enabled: false,
         ...parsed
       };
     } catch (e: any) {
@@ -215,6 +221,44 @@
             aria-label={`Toggle CORS headers: ${(settings.cors_enabled ?? true) ? 'enabled' : 'disabled'}`}
             title={`CORS headers ${(settings.cors_enabled ?? true) ? 'enabled' : 'disabled'}`}
             onclick={() => settings.cors_enabled = !(settings.cors_enabled ?? true)}
+          >
+            <div class="toggle-track">
+              <div class="toggle-thumb"></div>
+            </div>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Experimental -->
+    <div class="card" style="animation: fadeInUp 0.45s ease-out;">
+      <div class="flex items-center gap-2.5" style="margin-bottom: 24px;">
+        <div
+          class="flex items-center justify-center rounded-lg"
+          style="width: 32px; height: 32px; background: rgba(139, 92, 246, 0.12);"
+        >
+          <KeyRound size={16} style="color: #7c3aed;" />
+        </div>
+        <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0);">Experimental</div>
+      </div>
+
+      <div class="settings-group">
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="flex items-center gap-2">
+              <KeyRound size={14} style="color: #7c3aed;" />
+              <span style="font-size: 13px; font-weight: 500; color: var(--color-fg-0);">OAuth IDE (lab)</span>
+            </div>
+            <span style="font-size: 12px; color: var(--color-fg-3);">
+              IDE OAuth flows (Accounts / OAuth IDE). Admin-only; no server restart. Client IDs still via env.
+            </span>
+          </div>
+          <button
+            class="toggle-btn"
+            class:active={settings.oauth_ide_enabled ?? false}
+            aria-label={`OAuth IDE lab: ${(settings.oauth_ide_enabled ?? false) ? 'enabled' : 'disabled'}`}
+            title={`OAuth IDE ${(settings.oauth_ide_enabled ?? false) ? 'enabled' : 'disabled'}`}
+            onclick={() => settings.oauth_ide_enabled = !(settings.oauth_ide_enabled ?? false)}
           >
             <div class="toggle-track">
               <div class="toggle-thumb"></div>

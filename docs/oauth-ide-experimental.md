@@ -1,6 +1,6 @@
 # OAuth IDE — 9router parity (Go rewrite)
 
-Experimental lab (`LINTASAN_OAUTH_IDE_ENABLED=false` by default).
+Experimental lab (off by default).
 
 ## Catalog (8 providers)
 
@@ -21,6 +21,10 @@ Only `implementation=ready` (or cursor import) is actionable from the dashboard.
 
 ## Enable
 
+**Preferred:** Dashboard → **Settings** → **Experimental** → **OAuth IDE (lab)** → Save. Takes effect immediately (stored as `oauth_ide_enabled` in DB).
+
+**Fallback:** if you never saved that setting, env applies:
+
 ```bash
 export LINTASAN_OAUTH_IDE_ENABLED=true
 export LINTASAN_OAUTH_PUBLIC_BASE_URL=https://your-lintasan-host
@@ -33,11 +37,11 @@ export LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_ID=your-client-id.apps.googleuserco
 export LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_SECRET=your-client-secret
 ```
 
-**xAI (Grok):** public client id ported from 9router — redirect `.../api/oauth/callback/xai`.
+**xAI (Grok):** public client id ported from 9router — redirect must be **`http://127.0.0.1:56121/callback`** (loopback; not your public URL). Lintasan opens a listener on the server when you authorize.
 
 ## Next
 
-- Proxy wire — `GetActiveToken` in connection resolver
+- Proxy wire — set `oauth_provider` on a connection (dashboard PATCH) to one of the 8 catalog ids; proxy uses active `oauth_sessions` when OAuth IDE is enabled. GitHub uses `flow_meta.copilot.token`.
 
 ## ToS
 

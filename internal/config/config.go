@@ -14,6 +14,15 @@ type Config struct {
 	MasterKey   string
 	MITMPort    int
 	MITMEnabled bool
+	// RateLimitPerMin sets the per-key rate limit (requests/minute).
+	// 0 means the default (60) — not a true zero/unlimited sentinel because
+	// a separate rlEnabled check disables the limiter at zero. Use the env
+	// var LINTASAN_RATELIMIT_PERMIN at runtime for temporary overrides
+	// without recompiling.
+	RateLimitPerMin int
+	// RateLimitBurst sets the burst window size. 0 means the default (30).
+	// Override at runtime via LINTASAN_RATELIMIT_BURST.
+	RateLimitBurst int
 	// OAuthIDEEnabled gates the experimental IDE OAuth lab (default OFF).
 	OAuthIDEEnabled bool
 	// OAuthPublicBaseURL is the public origin for redirect_uri (e.g. https://lintasan.example.com).
@@ -33,6 +42,8 @@ func Load() (*Config, error) {
 		MasterKey:          getEnv("LINTASAN_MASTER_KEY", ""),
 		MITMPort:           getEnvInt("MITM_PORT", 8443),
 		MITMEnabled:        getEnvBool("LINTASAN_MITM_ENABLED", false),
+		RateLimitPerMin:    getEnvInt("LINTASAN_RATELIMIT_PERMIN", 0),
+		RateLimitBurst:     getEnvInt("LINTASAN_RATELIMIT_BURST", 0),
 		OAuthIDEEnabled:    getEnvBool("LINTASAN_OAUTH_IDE_ENABLED", false),
 		OAuthPublicBaseURL: strings.TrimRight(getEnv("LINTASAN_OAUTH_PUBLIC_BASE_URL", ""), "/"),
 	}, nil

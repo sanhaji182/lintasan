@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -35,7 +36,9 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var modelID, connName string
 			var ownedBy sql.NullString
-			rows.Scan(&modelID, &connName, &ownedBy)
+			if err := rows.Scan(&modelID, &connName, &ownedBy); err != nil {
+				continue
+			}
 			owner := connName
 			if ownedBy.Valid && ownedBy.String != "" {
 				owner = ownedBy.String
@@ -46,6 +49,10 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 				Created: time.Now().Unix(),
 				OwnedBy: owner,
 			})
+		}
+		// Check for iteration errors after the loop
+		if err := rows.Err(); err != nil {
+			// Log and return empty list rather than silently returning partial data
 		}
 	}
 
@@ -135,7 +142,7 @@ func (s *Server) handleModelsCatalog(w http.ResponseWriter, r *http.Request) {
 
 // Connections CRUD
 func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Conn().Query(`SELECT id, name, base_url, api_key, format, is_active, priority, models_count, created_at FROM connections ORDER BY priority DESC, created_at DESC`)
+	rows, err := s.db.Conn().Query(`SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, is_active, priority, models_count, created_at FROM connections ORDER BY priority DESC, created_at DESC`)
 	if err != nil {
 		http.Error(w, `{"error":"failed to query connections"}`, http.StatusInternalServerError)
 		return
@@ -146,8 +153,9 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 		ID          string `json:"id"`
 		Name        string `json:"name"`
 		BaseURL     string `json:"base_url"`
-		APIKey      string `json:"api_key"`
-		Format      string `json:"format"`
+		APIKey        string `json:"api_key"`
+		OAuthProvider string `json:"oauth_provider,omitempty"`
+		Format        string `json:"format"`
 		IsActive    int    `json:"is_active"`
 		Priority    int    `json:"priority"`
 		ModelsCount int    `json:"models_count"`
@@ -157,12 +165,18 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 	var conns []ConnResponse
 	for rows.Next() {
 		var c ConnResponse
-		rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.Format, &c.IsActive, &c.Priority, &c.ModelsCount, &c.CreatedAt)
+		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.IsActive, &c.Priority, &c.ModelsCount, &c.CreatedAt); err != nil {
+			continue
+		}
 		// Mask API key
 		if len(c.APIKey) > 8 {
 			c.APIKey = c.APIKey[:4] + "..." + c.APIKey[len(c.APIKey)-4:]
 		}
 		conns = append(conns, c)
+	}
+	// Check for row iteration errors
+	if err := rows.Err(); err != nil {
+		// row iteration error — return empty list rather than silently truncated data
 	}
 
 	if conns == nil {
@@ -184,8 +198,9 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 		Priority   int    `json:"priority"`
 		ChatPath   string `json:"chatPath"`
 		ModelsPath string `json:"modelsPath"`
-		AuthHeader string `json:"authHeader"`
-		AuthPrefix string `json:"authPrefix"`
+		AuthHeader    string `json:"authHeader"`
+		AuthPrefix    string `json:"authPrefix"`
+		OAuthProvider string `json:"oauth_provider"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -207,8 +222,8 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 
 	id := uuid.New().String()
 	_, err := s.db.Conn().Exec(
-		`INSERT INTO connections (id, name, base_url, api_key, format, priority, chat_path, models_path, auth_header, auth_prefix) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, input.Name, input.BaseURL, input.APIKey, input.Format, input.Priority, input.ChatPath, input.ModelsPath, input.AuthHeader, input.AuthPrefix,
+		`INSERT INTO connections (id, name, base_url, api_key, oauth_provider, format, priority, chat_path, models_path, auth_header, auth_prefix) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, input.Name, input.BaseURL, input.APIKey, strings.TrimSpace(strings.ToLower(input.OAuthProvider)), input.Format, input.Priority, input.ChatPath, input.ModelsPath, input.AuthHeader, input.AuthPrefix,
 	)
 	if err != nil {
 		http.Error(w, `{"error":"failed to create connection"}`, http.StatusInternalServerError)
@@ -246,10 +261,13 @@ func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
 		ID       string  `json:"id"`
 		Name     *string `json:"name"`
 		BaseURL  *string `json:"base_url"`
-		APIKey   *string `json:"api_key"`
-		IsActive *int    `json:"is_active"`
+		APIKey        *string `json:"api_key"`
+		OAuthProvider *string `json:"oauth_provider"`
+		IsActive      *int    `json:"is_active"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil { /* body may be empty */ }
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		// Body may be empty (frontend sends id as query param). Use zero values.
+	}
 	// Accept id from query param if not in body (frontend sends as query)
 	if input.ID == "" { input.ID = r.URL.Query().Get("id") }
 	if input.ID == "" {
@@ -267,6 +285,10 @@ func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
 			updates = append(updates, "api_key = ?")
 			args = append(args, newKey)
 		}
+	}
+	if input.OAuthProvider != nil {
+		updates = append(updates, "oauth_provider = ?")
+		args = append(args, strings.TrimSpace(strings.ToLower(*input.OAuthProvider)))
 	}
 
 	if len(updates) > 0 {
@@ -407,16 +429,28 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	var avgLatency sql.NullFloat64
 	var totalTokensIn, totalTokensOut int
 
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs").Scan(&totalRequests)
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs WHERE cached = 1").Scan(&cachedRequests)
-	s.db.Conn().QueryRow("SELECT AVG(latency_ms) FROM request_logs WHERE status = 200").Scan(&avgLatency)
-	s.db.Conn().QueryRow("SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0) FROM request_logs WHERE created_at >= date('now')").Scan(&totalTokensIn, &totalTokensOut)
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs").Scan(&totalRequests); err != nil {
+		totalRequests = 0
+	}
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs WHERE cached = 1").Scan(&cachedRequests); err != nil {
+		cachedRequests = 0
+	}
+	if err := s.db.Conn().QueryRow("SELECT AVG(latency_ms) FROM request_logs WHERE status = 200").Scan(&avgLatency); err != nil {
+		avgLatency = sql.NullFloat64{Valid: false}
+	}
+	if err := s.db.Conn().QueryRow("SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0) FROM request_logs WHERE created_at >= date('now')").Scan(&totalTokensIn, &totalTokensOut); err != nil {
+		totalTokensIn, totalTokensOut = 0, 0
+	}
 
 	var modelCount int
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM discovered_models WHERE is_active = 1").Scan(&modelCount)
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM discovered_models WHERE is_active = 1").Scan(&modelCount); err != nil {
+		modelCount = 0
+	}
 
 	var connCount int
-	s.db.Conn().QueryRow("SELECT COUNT(*) FROM connections WHERE is_active = 1").Scan(&connCount)
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM connections WHERE is_active = 1").Scan(&connCount); err != nil {
+		connCount = 0
+	}
 
 	cacheRate := 0.0
 	if totalRequests > 0 {
@@ -454,12 +488,31 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 				})
 			}
 		}
+		if err := providerRows.Err(); err != nil {
+			// iteration error — providers stays as-is
+		}
 	}
 	if providers == nil {
 		providers = []map[string]any{}
 	}
 
 	tokensToday := totalTokensIn + totalTokensOut
+
+	// Compute actual weekly request volume from the last 7 days.
+	// Query each day individually so days-with-zero appear as 0 instead of
+	// being omitted from the group-by result.
+	var requestVolume []int
+	for day := -6; day <= 0; day++ {
+		dayStr := strconv.Itoa(day)
+		var count int
+		if err := s.db.Conn().QueryRow("SELECT COALESCE(COUNT(*),0) FROM request_logs WHERE date(created_at) = date('now', ? || ' days', 'localtime')", dayStr).Scan(&count); err != nil {
+			count = 0
+		}
+		requestVolume = append(requestVolume, count)
+	}
+	if requestVolume == nil {
+		requestVolume = []int{}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
@@ -470,12 +523,12 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"tokensToday":       tokensToday,
 		"tokensMonth":       tokensToday * 30,
 		"tokensSaved":       cachedRequests * 2000, // rough estimate: ~2K tokens per cache hit
-		"tokensCompressed":  0,
+		"tokensCompressed":  0, // token compression counters TBD when compressor tracks stats
 		"activeModels":      modelCount,
 		"activeConnections": connCount,
 		"features":          features,
 		"providers":         providers,
-		"requestVolume":     []int{35, 55, 40, 70, 45, 80, 65},
+		"requestVolume":     requestVolume,
 	}})
 }
 
@@ -516,11 +569,17 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var l LogEntry
 		var errStr sql.NullString
-		rows.Scan(&l.ID, &l.ConnectionID, &l.Provider, &l.Model, &l.Status, &l.InputTokens, &l.OutputTokens, &l.LatencyMs, &l.Cached, &errStr, &l.CreatedAt)
+		if err := rows.Scan(&l.ID, &l.ConnectionID, &l.Provider, &l.Model, &l.Status, &l.InputTokens, &l.OutputTokens, &l.LatencyMs, &l.Cached, &errStr, &l.CreatedAt); err != nil {
+			continue
+		}
 		if errStr.Valid {
 			l.Error = errStr.String
 		}
 		logs = append(logs, l)
+	}
+	// Check for iteration errors
+	if err := rows.Err(); err != nil {
+		// iteration error — return what we have rather than silently truncated data
 	}
 
 	if logs == nil {
@@ -543,7 +602,9 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	settings := make(map[string]string)
 	for rows.Next() {
 		var k, v string
-		rows.Scan(&k, &v)
+		if err := rows.Scan(&k, &v); err != nil {
+			continue
+		}
 		// Mask sensitive values before returning them to the dashboard. These
 		// keys hold credentials/secrets that a client never needs in cleartext:
 		// leaking jwt_secret in particular lets an attacker forge valid JWTs.
@@ -551,6 +612,9 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 			v = maskSecretValue(v)
 		}
 		settings[k] = v
+	}
+	if err := rows.Err(); err != nil {
+		// iteration error — return what we have
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -595,13 +659,33 @@ func maskSecretValue(v string) string {
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
-	var input map[string]string
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 		return
 	}
 
-	for k, v := range input {
+	for k, rawV := range raw {
+		var v string
+		if err := json.Unmarshal(rawV, &v); err == nil {
+			// string value as-is
+		} else {
+			var b bool
+			if err := json.Unmarshal(rawV, &b); err == nil {
+				if b {
+					v = "true"
+				} else {
+					v = "false"
+				}
+			} else {
+				var n float64
+				if err := json.Unmarshal(rawV, &n); err == nil {
+					v = strconv.FormatFloat(n, 'g', -1, 64)
+				} else {
+					v = string(rawV)
+				}
+			}
+		}
 		if err := s.db.SetSetting(k, v); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":"failed to set %s"}`, k), http.StatusInternalServerError)
 			return

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/sanhaji182/lintasan-go/internal/auth"
+	"github.com/sanhaji182/lintasan-go/internal/oauthide"
 )
 
 // registerOAuthRoutes registers experimental IDE OAuth endpoints.
@@ -20,6 +21,9 @@ func (s *Server) registerOAuthRoutes() {
 	s.mux.HandleFunc("POST /api/oauth/device/poll", s.handleOAuthDevicePoll)
 	s.mux.HandleFunc("GET /api/oauth/sessions", s.handleOAuthSessions)
 	s.mux.HandleFunc("DELETE /api/oauth/sessions/{id}", s.handleOAuthRevokeSession)
+	s.mux.HandleFunc("GET /api/oauth/ide-presets", s.handleOAuthIdePresets)
+	s.mux.HandleFunc("POST /api/oauth/provision-connection", s.handleOAuthProvisionConnection)
+	s.mux.HandleFunc("POST /api/oauth/xai/complete", s.handleOAuthXaiComplete)
 	s.registerOAuthCursorRoutes()
 }
 
@@ -98,6 +102,13 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	if result.Flow == "browser_redirect" {
 		out["redirect_url"] = result.RedirectURL
 		out["message"] = fmt.Sprintf("Open redirect_url in a browser logged into your %s account (BYO subscription).", input.Provider)
+		if result.XaiLoopbackWarn != "" {
+			out["xai_loopback_warn"] = result.XaiLoopbackWarn
+		}
+		if input.Provider == "xai" {
+			out["xai_manual_complete"] = true
+			out["xai_redirect_uri"] = oauthide.XAILoopbackRedirect
+		}
 	} else {
 		out["device"] = result.Device
 		msg := "Enter user_code at provider site, then click Poll until active."
@@ -109,6 +120,39 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		out["message"] = msg
 	}
 	writeJSON(w, out)
+}
+
+// POST /api/oauth/xai/complete — finish xAI login with pasted callback URL (browser on another machine).
+func (s *Server) handleOAuthXaiComplete(w http.ResponseWriter, r *http.Request) {
+	if !s.oauthIdeEnabled() {
+		oauthIdeDisabledJSON(w)
+		return
+	}
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	var input struct {
+		CallbackURL string `json:"callback_url"`
+		CallbackURLAlt string `json:"callbackUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	raw := strings.TrimSpace(input.CallbackURL)
+	if raw == "" {
+		raw = strings.TrimSpace(input.CallbackURLAlt)
+	}
+	code, state, err := parseXaiCallbackInput(raw)
+	if err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := completeXAIOAuthCode(s, code, state); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"status": "active", "provider": "xai"})
 }
 
 // GET /api/oauth/callback/{provider} — public callback; validates state + exchanges code when configured.
@@ -144,6 +188,9 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	redirectURI := s.oauthPublicBaseURL() + "/api/oauth/callback/" + provider
+	if provider == "xai" {
+		redirectURI = oauthide.XAILoopbackRedirect
+	}
 	access, refresh, expIn, flowMeta, exchErr := exchangeOAuthCallback(provider, code, redirectURI, pending.PKCEVerifier, state)
 	if exchErr != nil {
 		s.audit("oauth.ide.callback_failed", provider, state, map[string]any{"error": exchErr.Error()})

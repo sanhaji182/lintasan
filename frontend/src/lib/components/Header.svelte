@@ -1,10 +1,15 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { Menu, UserCircle2, LogOut, LogIn, Sun, Moon } from 'lucide-svelte';
   import { theme } from '$lib/stores/theme';
+  import HelpTooltip from '$lib/components/HelpTooltip.svelte';
+  import { helpContent } from '$lib/helpContent';
 
   let { title = 'Overview', open = $bindable(false) }: { title?: string; open?: boolean } = $props();
+
+  const currentHelp = $derived(helpContent[page.url.pathname] || '');
 
   let isAuthenticated = $state(false);
   let username = $state('');
@@ -50,6 +55,9 @@
       <Menu size={20} />
     </button>
     <h1 class="header-title">{title}</h1>
+    {#if currentHelp}
+      <HelpTooltip content={currentHelp} />
+    {/if}
   </div>
 
   <div class="header-right">
@@ -60,11 +68,11 @@
     {#if isAuthenticated}
       <a href="/dashboard/users" class="user-pill" title="User Management">
         <UserCircle2 size={15} />
-        {username || 'Account'}
+        <span class="user-pill-label">{username || 'Account'}</span>
       </a>
-      <button class="logout-btn" onclick={handleLogout}>
+      <button class="logout-btn" onclick={handleLogout} title="Sign out">
         <LogOut size={15} />
-        Logout
+        <span class="logout-label">Logout</span>
       </button>
     {:else}
       <a href="/login" class="login-link">
@@ -94,6 +102,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    min-width: 0;
   }
 
   .menu-btn {
@@ -106,6 +115,7 @@
     border-radius: 10px;
     color: #64748b;
     cursor: pointer;
+    flex-shrink: 0;
   }
   .menu-btn:hover { background: #f1f5f9; color: #1e293b; }
 
@@ -114,12 +124,16 @@
     font-weight: 600;
     color: #1e293b;
     margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .header-right {
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-shrink: 0;
   }
 
   .theme-toggle {
@@ -132,6 +146,7 @@
     border-radius: 10px;
     color: #64748b;
     cursor: pointer;
+    flex-shrink: 0;
   }
   .theme-toggle:hover { background: #f8fafc; color: #1e293b; }
 
@@ -150,6 +165,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    transition: background 0.15s;
   }
   .user-pill:hover { background: #f8fafc; }
 
@@ -165,6 +181,7 @@
     font-weight: 500;
     color: #dc2626;
     cursor: pointer;
+    transition: background 0.15s;
   }
   .logout-btn:hover { background: #fef2f2; }
 
@@ -184,5 +201,14 @@
 
   @media (max-width: 768px) {
     .menu-btn { display: flex; }
+    .header { padding: 0 12px; }
+    .header-title { font-size: 14px; }
+    .user-pill-label { display: none; }
+    .user-pill {
+      padding: 7px 10px;
+      max-width: none;
+    }
+    .logout-label { display: none; }
+    .logout-btn { padding: 7px 10px; }
   }
 </style>

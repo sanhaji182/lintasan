@@ -6,7 +6,7 @@
   import {
     Puzzle, Store, Sparkles, Settings, Trash2, Power,
     PowerOff, Search, Download, Tag, ChevronRight,
-    AlertCircle, CheckCircle2, Box, Info, X, Loader2, Wand2, Eye
+    CircleAlert, CheckCircle2, Box, Info, X, Loader2, Wand2, Eye
   } from 'lucide-svelte/icons';
 
   interface Plugin {
@@ -507,7 +507,7 @@
                   font-size: 13px; font-weight: 500; margin-bottom: 20px;
                 "
               >
-                <AlertCircle size={16} />
+                <CircleAlert size={16} />
                 {generateError}
               </div>
             {/if}
@@ -566,7 +566,7 @@
         font-size: 13px; font-weight: 500;
       "
     >
-      <AlertCircle size={16} />
+      <CircleAlert size={16} />
       {error}
       <button
         style="margin-left: auto; cursor: pointer; color: var(--color-error); background: none; border: none;"

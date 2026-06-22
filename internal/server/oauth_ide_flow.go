@@ -22,6 +22,8 @@ func (s *Server) handleOAuthStatus(w http.ResponseWriter, r *http.Request) {
 	if enabled {
 		out["public_base"] = s.oauthPublicBaseURL()
 		out["hint"] = "ready: xai, claude, codex, antigravity, cline (browser); github, kilocode (device + poll); cursor (import)."
+		out["xai_redirect_uri"] = oauthide.XAILoopbackRedirect
+		out["xai_note"] = "xAI redirect is fixed loopback only. Authorize always opens xAI. If callback hits this server on :56121, login completes automatically; otherwise paste the callback URL in the dashboard."
 	}
 	writeJSON(w, out)
 }

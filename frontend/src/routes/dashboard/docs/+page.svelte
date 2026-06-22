@@ -152,8 +152,8 @@ make build        # frontend SvelteKit + Go binary
           id_content: `Setelah server berjalan di http://localhost:20180, buka dashboard di browser:
 
 **Default login:**
-- Username: \`admin\`
-- Password: \`admin123\`
+|- Username: \`admin\`
+|- Password: (generated randomly on first run — check the terminal output for \`generated admin password: ...\`)
 
 ⚠️ **Ganti password segera** setelah login pertama! Dashboard → Users → klik user → ganti password.
 
@@ -161,8 +161,8 @@ Dashboard punya **17+ halaman** untuk mengelola semuanya — dari connections, m
           en_content: `Once the server is running at http://localhost:20180, open the dashboard in your browser:
 
 **Default login:**
-- Username: \`admin\`
-- Password: \`admin123\`
+|- Username: \`admin\`
+|- Password: (generated randomly on first run — check the terminal output for \`generated admin password: ...\`)
 
 ⚠️ **Change the password immediately** after first login! Dashboard → Users → click user → change password.
 
@@ -433,9 +433,10 @@ Lintasan reads: URL, headers (-H), body (-d), and method (-X).`,
 - API keys are never exposed to clients
 - Rate limiting default: 60 requests/minute per key`,
           id_code: `# Dashboard auth (JWT)
+# Password is generated on first run — check terminal for "generated admin password: ..."
 curl -X POST http://localhost:20180/api/auth/login \\
   -H "Content-Type: application/json" \\
-  -d '{"username":"admin","password":"admin123"}'
+  -d '{"username":"admin","password":"<your-generated-password>"}'
 
 # Response: { "token": "eyJhbG...", "user": {...} }
 
@@ -445,9 +446,10 @@ curl http://localhost:20180/v1/chat/completions \\
   -H "Content-Type: application/json" \\
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hi"}]}'`,
           en_code: `# Dashboard auth (JWT)
+# Password is generated on first run — check terminal for "generated admin password: ..."
 curl -X POST http://localhost:20180/api/auth/login \\
   -H "Content-Type: application/json" \\
-  -d '{"username":"admin","password":"admin123"}'
+  -d '{"username":"admin","password":"<your-generated-password>"}'
 
 # Response: { "token": "eyJhbG...", "user": {...} }
 

@@ -33,7 +33,7 @@ func (s *Server) handleDashboardStats(w http.ResponseWriter, r *http.Request) {
 		"active_connections": activeConnections,
 		"cache_hit_rate":     cacheRate,
 		"avg_latency":        avgLatency.Float64,
-		"uptime":             time.Since(startTime).String(),
+		"uptime":             time.Since(s.startTime).String(),
 	})
 }
 

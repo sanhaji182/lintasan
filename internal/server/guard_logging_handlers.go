@@ -6,11 +6,7 @@ import (
 	"strconv"
 
 	"github.com/sanhaji182/lintasan-go/internal/guard"
-	"github.com/sanhaji182/lintasan-go/internal/logging"
 )
-
-// Global log store (shared across the server)
-var accessLogStore = logging.NewLogStore()
 
 func (s *Server) handleAccessLogs(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query().Get("q")
@@ -22,12 +18,12 @@ func (s *Server) handleAccessLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	results := accessLogStore.Search(query, limit)
+	results := s.accessLogStore.Search(query, limit)
 	writeJSON(w, map[string]any{"data": results})
 }
 
 func (s *Server) handleAccessLogStats(w http.ResponseWriter, r *http.Request) {
-	stats := accessLogStore.Stats()
+	stats := s.accessLogStore.Stats()
 	writeJSON(w, map[string]any{"data": stats})
 }
 

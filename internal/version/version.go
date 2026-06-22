@@ -11,4 +11,4 @@ package version
 
 // Version is the server version reported by /health, /metrics build_info, and
 // the MCP server_info tool. Overridable at link time (see package doc).
-var Version = "0.24.0"
+var Version = "0.25.0"

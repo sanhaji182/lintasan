@@ -3,19 +3,40 @@
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import {
-    ArrowRight, Eye, EyeOff, Loader2, Lock, LogIn, User
+    ArrowRight, Eye, EyeOff, Loader2, Lock, LogIn, User,
+    ShieldCheck, Terminal, ArrowUpRight, Info, KeyRound, WifiOff, AlertTriangle
   } from 'lucide-svelte';
 
   let username = $state('');
   let password = $state('');
   let error = $state('');
+  let errorType = $state<'auth' | 'network' | 'validation' | 'unknown'>('unknown');
   let loading = $state(false);
   let checkingSession = $state(true);
   let showPassword = $state(false);
   let mounted = $state(false);
 
+  // First-run setup state
+  let setupState = $state<'loading' | 'bootstrap' | 'active'>('loading');
+  let hasAdmin = $state(false);
+  let hasMasterKey = $state(false);
+
   onMount(async () => {
     mounted = true;
+
+    // Fetch setup status for first-run detection
+    try {
+      const st = await api.get<{
+        state: string; has_admin: boolean; has_master_key: boolean; setup_required: boolean;
+      }>('/api/setup/status');
+      setupState = st.setup_required ? 'bootstrap' : 'active';
+      hasAdmin = st.has_admin;
+      hasMasterKey = st.has_master_key;
+    } catch {
+      setupState = 'active';
+    }
+
+    // Session check
     const token = localStorage.getItem('lintasan_token');
     if (!token) { checkingSession = false; return; }
     try {
@@ -35,6 +56,7 @@
   async function handleLogin() {
     if (!username.trim() || !password.trim()) {
       error = 'Username and password are required';
+      errorType = 'validation';
       return;
     }
     loading = true;
@@ -54,7 +76,18 @@
         await goto('/dashboard');
       }
     } catch (e: any) {
-      error = e.message || 'Invalid credentials';
+      if (e.message?.toLowerCase().includes('network') ||
+          e.message?.toLowerCase().includes('fetch') ||
+          e.message?.toLowerCase().includes('failed to fetch')) {
+        error = 'Cannot reach server. Make sure Lintasan is running on port 20180.';
+        errorType = 'network';
+      } else if (e.status === 401 || e.status === 403) {
+        error = 'Wrong username or password. Please try again.';
+        errorType = 'auth';
+      } else {
+        error = e.message || 'Invalid credentials';
+        errorType = 'unknown';
+      }
       password = '';
     } finally { loading = false; }
   }
@@ -81,6 +114,27 @@
       </a>
       <h1>Welcome back</h1>
       <p>Sign in to manage your AI gateway.</p>
+
+      <!-- First-run card in left panel -->
+      {#if setupState === 'bootstrap'}
+        <div class="bootstrap-card">
+          <div class="bootstrap-head">
+            <KeyRound size={16} />
+            <span class="bootstrap-title">First-Run Setup</span>
+          </div>
+          <p class="bootstrap-text">
+            This is your <strong>first time</strong> running Lintasan. The admin password was
+            generated randomly and printed to the terminal console (stderr).
+          </p>
+          <div class="bootstrap-tip">
+            <Terminal size={14} />
+            <span>Look for: <code>generated admin password: …</code> in server output</span>
+          </div>
+          <p class="bootstrap-text" style="margin-top: 8px;">
+            After logging in, you'll be prompted to set a new password and configure a master key.
+          </p>
+        </div>
+      {/if}
     </div>
 
     <div class="form-card">
@@ -134,7 +188,18 @@
         </div>
 
         {#if error}
-          <div class="error-msg" role="alert">{error}</div>
+          <div class="error-msg" role="alert" class:error-auth={errorType === 'auth'} class:error-network={errorType === 'network'}>
+            <span class="error-icon">
+              {#if errorType === 'auth'}
+                <AlertTriangle size={14} />
+              {:else if errorType === 'network'}
+                <WifiOff size={14} />
+              {:else}
+                <AlertTriangle size={14} />
+              {/if}
+            </span>
+            <span>{error}</span>
+          </div>
         {/if}
 
         <button
@@ -152,6 +217,29 @@
           {/if}
         </button>
       </form>
+
+      <!-- Password recovery card -->
+      <div class="forgot-block">
+        <div class="forgot-inner">
+          <div class="forgot-icon"><Info size={14} /></div>
+          <div class="forgot-body">
+            <span class="forgot-title">Lupa password?</span>
+            <span class="forgot-hint">
+              Reset via terminal: <code>lintasan reset-password &lt;username&gt;</code>
+            </span>
+          </div>
+          <a
+            href="https://github.com/sanhaji182/lintasan#password-recovery"
+            class="forgot-link"
+            target="_blank"
+            rel="noopener noreferrer"
+            tabindex="0"
+            title="View password recovery guide"
+          >
+            <ArrowUpRight size={13} />
+          </a>
+        </div>
+      </div>
 
       <p class="form-footer">
         <Lock size={12} />
@@ -247,6 +335,54 @@
     font-weight: 500;
     margin-bottom: 20px;
   }
+
+  /* First-run card in brand area */
+  .bootstrap-card {
+    margin-top: 28px;
+    padding: 16px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 14px;
+  }
+  .bootstrap-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    color: #d97706;
+  }
+  .bootstrap-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #92400e;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .bootstrap-text {
+    margin: 0 0 6px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #78350f;
+  }
+  .bootstrap-tip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #fef3c7;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #92400e;
+    font-weight: 500;
+  }
+  .bootstrap-tip code {
+    font-size: 12px;
+    background: rgba(0,0,0,0.06);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
   form {
     display: flex;
     flex-direction: column;
@@ -303,6 +439,9 @@
   .toggle-vis:hover { background: #f1f5f9; color: #64748b; }
 
   .error-msg {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 10px 14px;
     background: #fef2f2;
     border: 1px solid #fecaca;
@@ -310,7 +449,14 @@
     font-size: 13px;
     color: #dc2626;
     font-weight: 500;
+    animation: shakeX 0.4s ease-out;
   }
+  .error-msg.error-network {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #2563eb;
+  }
+  .error-msg .error-icon { flex-shrink: 0; }
 
   .submit-btn {
     display: inline-flex;
@@ -331,6 +477,71 @@
   .submit-btn:hover:not(:disabled) { background: #4338ca; }
   .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+  /* Forgot password block */
+  .forgot-block {
+    margin-top: 20px;
+  }
+  .forgot-inner {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    transition: all 0.15s;
+  }
+  .forgot-inner:hover {
+    background: #eef2ff;
+    border-color: #c7d2fe;
+  }
+  .forgot-icon {
+    flex-shrink: 0;
+    width: 24px; height: 24px;
+    border-radius: 8px;
+    background: #eef2ff;
+    color: #4f46e5;
+    display: grid;
+    place-items: center;
+  }
+  .forgot-body { flex: 1; min-width: 0; }
+  .forgot-title {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+    margin-bottom: 2px;
+  }
+  .forgot-hint {
+    display: block;
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1.4;
+  }
+  .forgot-hint code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    background: #e2e8f0;
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+  .forgot-link {
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: #e2e8f0;
+    color: #64748b;
+    text-decoration: none;
+    transition: all 0.15s;
+    margin-top: 2px;
+  }
+  .forgot-link:hover {
+    background: #c7d2fe;
+    color: #4f46e5;
+  }
+
   .form-footer {
     margin-top: 20px;
     text-align: center;
@@ -343,6 +554,11 @@
   }
 
   @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes shakeX {
+    0%, 100% { transform: translateX(0); }
+    10%, 50%, 90% { transform: translateX(-3px); }
+    30%, 70% { transform: translateX(3px); }
+  }
 
   @media (max-width: 640px) {
     .login-layout {
