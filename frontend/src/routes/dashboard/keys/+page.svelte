@@ -3,11 +3,14 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { Key, Plus, Copy, Trash2, X, Check } from 'lucide-svelte/icons';
+  import { showToast } from '$lib/toast';
+  import { Key, Plus, Copy, Trash2, X, Check, AlertCircle } from 'lucide-svelte/icons';
 
   let keys = $state<any[]>([]);
   let loading = $state(true);
+  let error = $state('');
   let showForm = $state(false);
+  let creating = $state(false);
   let newKeyName = $state('');
   let copiedId = $state<string | null>(null);
 
@@ -20,19 +23,27 @@
     try {
       const res = await api.get<any>('/api/keys');
       keys = res.data || [];
-    } catch {}
+    } catch (e: any) {
+      error = e.message || 'Failed to load API keys';
+    }
     finally { loading = false; }
   });
 
   async function createKey() {
     if (!newKeyName.trim()) return;
+    creating = true;
     try {
       const res = await api.post<any>('/api/keys', { action: 'create', name: newKeyName });
       const updated = await api.get<any>('/api/keys');
       keys = updated.data || [];
       showForm = false;
       newKeyName = '';
-    } catch {}
+      showToast('API key created successfully', 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to create API key', 'error');
+    } finally {
+      creating = false;
+    }
   }
 
   async function copyKey(key: string) {
@@ -46,7 +57,10 @@
     try {
       await api.delete('/api/keys/' + id);
       keys = keys.filter(k => k.id !== id);
-    } catch {}
+      showToast('API key deleted', 'success');
+    } catch (e: any) {
+      showToast(e.message || 'Failed to delete API key', 'error');
+    }
   }
 </script>
 
@@ -77,12 +91,14 @@
   {#if showForm}
     <div class="card mb-5 flex items-center gap-3" style="animation: fadeInScale 0.3s ease-out;">
       <input class="input-field" bind:value={newKeyName} placeholder="Key name..." style="flex: 1;" onkeydown={(e) => e.key === 'Enter' && createKey()} />
-      <button class="btn-primary" onclick={createKey}>Create</button>
+      <button class="btn-primary" onclick={createKey} disabled={creating}>{creating ? 'Creating...' : 'Create'}</button>
     </div>
   {/if}
 
   {#if loading}
     <Spinner />
+  {:else if error}
+    <div class="card"><EmptyState icon={AlertCircle} title="Failed to load API keys" description={error} action={async () => { loading = true; error = ''; try { const res = await api.get<any>('/api/keys'); keys = res.data || []; } catch (e: any) { error = e.message || 'Failed to load API keys'; } loading = false; }} actionLabel="Retry" /></div>
   {:else if keys.length === 0}
     <div class="card"><EmptyState icon={Key} title="No API keys" description="Create your first API key." /></div>
   {:else}

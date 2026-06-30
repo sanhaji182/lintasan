@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  let formats = $state<any[]>([]);
+  import Spinner from '$lib/components/Spinner.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import { showToast } from '$lib/toast';
+  import { ArrowRightLeft, Play, FileInput, FileOutput, AlertCircle } from 'lucide-svelte/icons';
+
+  let formats = $state<string[]>([]);
   let sourceFormat = $state('openai');
   let targetFormat = $state('anthropic');
   let inputJson = $state(JSON.stringify({
@@ -11,16 +16,21 @@
   let outputJson = $state('');
   let loading = $state(true);
   let translating = $state(false);
+  let error = $state('');
 
-  onMount(async () => {
+  async function loadFormats() {
+    loading = true;
+    error = '';
     try {
       const data: any = await api.get('/api/translate/formats');
       formats = data.formats || [];
-    } catch (e) {
-      console.error('Failed to load formats:', e);
+    } catch (e: any) {
+      error = e.message || 'Failed to load formats';
     }
     loading = false;
-  });
+  }
+
+  onMount(loadFormats);
 
   async function translate() {
     translating = true;
@@ -34,6 +44,7 @@
       outputJson = JSON.stringify(data, null, 2);
     } catch (e: any) {
       outputJson = `Error: ${e.message}`;
+      showToast('Translation failed: ' + e.message, 'error');
     }
     translating = false;
   }
@@ -48,56 +59,74 @@
   }
 </script>
 
-<div class="p-6 bg-gray-900 min-h-screen text-white">
-  <h1 class="text-2xl font-bold mb-6">🔄 Format Translator</h1>
-  <p class="text-gray-400 mb-6">Convert between AI API formats (OpenAI, Anthropic, Gemini, Cohere, Mistral)</p>
+<div style="animation: fadeInUp 0.4s ease-out;">
+  <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 4px;">Format Translator</h2>
+  <p style="font-size: 13px; color: var(--color-fg-3); margin-bottom: 20px;">Convert between AI API formats (OpenAI, Anthropic, Gemini, Cohere, Mistral)</p>
 
   {#if loading}
-    <div class="text-center py-8">Loading formats...</div>
+    <div role="status" aria-label="Loading formats">
+      <Spinner />
+    </div>
+  {:else if error}
+    <EmptyState icon={AlertCircle} title="Failed to load formats" description={error} action={loadFormats} actionLabel="Retry" />
   {:else}
     <!-- Format Selection -->
-    <div class="flex items-center gap-4 mb-6">
-      <select bind:value={sourceFormat} class="p-2 bg-gray-800 rounded text-white">
-        {#each formats as fmt}
-          <option value={fmt}>{fmt}</option>
-        {/each}
-      </select>
+    <div class="card mb-5">
+      <div class="flex items-center gap-3 flex-wrap">
+        <select bind:value={sourceFormat} class="input-field" style="width: auto; min-width: 140px;">
+          {#each formats as fmt}
+            <option value={fmt}>{fmt}</option>
+          {/each}
+        </select>
 
-      <button onclick={swapFormats} class="p-2 bg-gray-700 rounded hover:bg-gray-600">
-        ⇄
-      </button>
+        <button onclick={swapFormats} class="btn-secondary" style="padding: 9px 12px;" aria-label="Swap formats">
+          <ArrowRightLeft size={16} />
+        </button>
 
-      <select bind:value={targetFormat} class="p-2 bg-gray-800 rounded text-white">
-        {#each formats as fmt}
-          <option value={fmt}>{fmt}</option>
-        {/each}
-      </select>
+        <select bind:value={targetFormat} class="input-field" style="width: auto; min-width: 140px;">
+          {#each formats as fmt}
+            <option value={fmt}>{fmt}</option>
+          {/each}
+        </select>
 
-      <button
-        onclick={translate}
-        class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500 transition"
-        disabled={translating}
-      >
-        {translating ? 'Translating...' : '🔄 Translate'}
-      </button>
+        <button
+          onclick={translate}
+          class="btn-primary flex items-center gap-2"
+          disabled={translating}
+        >
+          {#if translating}
+            <span style="animation: spin 0.8s linear infinite; display: inline-block;">⏳</span> Translating...
+          {:else}
+            <Play size={14} /> Translate
+          {/if}
+        </button>
+      </div>
     </div>
 
     <!-- Input/Output -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div>
-        <h2 class="text-lg font-semibold mb-2">📥 Input ({sourceFormat})</h2>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;">
+      <div class="card" style="padding: 16px;">
+        <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+          <FileInput size={16} style="color: var(--color-primary);" />
+          Input ({sourceFormat})
+        </div>
         <textarea
           bind:value={inputJson}
-          class="w-full h-96 p-4 bg-gray-800 rounded font-mono text-sm"
+          class="input-field"
+          style="height: 320px; resize: vertical; font-family: var(--font-mono); font-size: 13px; line-height: 1.5;"
           placeholder="Paste JSON here..."
         ></textarea>
       </div>
 
-      <div>
-        <h2 class="text-lg font-semibold mb-2">📤 Output ({targetFormat})</h2>
+      <div class="card" style="padding: 16px;">
+        <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+          <FileOutput size={16} style="color: var(--color-success);" />
+          Output ({targetFormat})
+        </div>
         <textarea
           bind:value={outputJson}
-          class="w-full h-96 p-4 bg-gray-800 rounded font-mono text-sm"
+          class="input-field"
+          style="height: 320px; resize: vertical; font-family: var(--font-mono); font-size: 13px; line-height: 1.5;"
           readonly
           placeholder="Translated output will appear here..."
         ></textarea>
@@ -105,21 +134,35 @@
     </div>
 
     <!-- Supported Conversions -->
-    <div class="mt-6 bg-gray-800 rounded-lg p-4">
-      <h2 class="text-lg font-semibold mb-4">📋 Supported Conversions</h2>
-      <div class="grid grid-cols-5 gap-2 text-center text-sm">
-        <div></div>
-        {#each formats as fmt}
-          <div class="font-semibold text-gray-300">{fmt}</div>
-        {/each}
-        {#each formats as from}
-          <div class="font-semibold text-gray-300 text-right">{from}</div>
-          {#each formats as to}
-            <div class="p-2 rounded {from === to ? 'bg-gray-600' : 'bg-green-900 text-green-300'}">
-              {from === to ? '—' : '✓'}
-            </div>
-          {/each}
-        {/each}
+    <div class="card">
+      <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 16px;">Supported Conversions</div>
+      <div style="overflow-x: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th style="min-width: 80px;">From \\ To</th>
+              {#each formats as fmt}
+                <th style="text-align: center;">{fmt}</th>
+              {/each}
+            </tr>
+          </thead>
+          <tbody>
+            {#each formats as from}
+              <tr>
+                <td style="font-weight: 600; color: var(--color-fg-1);">{from}</td>
+                {#each formats as to}
+                  <td style="text-align: center;">
+                    {#if from === to}
+                      <span style="color: var(--color-fg-3);">—</span>
+                    {:else}
+                      <span style="color: var(--color-success); font-weight: 600;">✓</span>
+                    {/if}
+                  </td>
+                {/each}
+              </tr>
+            {/each}
+          </tbody>
+        </table>
       </div>
     </div>
   {/if}

@@ -434,7 +434,7 @@
   }
 
   @media (max-width: 1024px) {
-    :global(.grid) {
+    .dashboard-grid-bottom {
       grid-template-columns: 1fr !important;
     }
   }

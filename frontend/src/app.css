@@ -25,6 +25,8 @@
   --color-bg-sidebar: #ffffff;
   --color-bg-sidebar-hover: #f8fafc;
 
+  --color-bg-hover: var(--color-bg-sidebar-hover);
+
   --color-fg-0: #0f172a;
   --color-fg-1: #334155;
   --color-fg-2: #64748b;
@@ -207,6 +209,11 @@
     animation: shimmer 1.4s infinite;
     border-radius: var(--radius-sm);
   }
+
+  .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .data-table th { text-align: left; padding: 12px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-fg-3); border-bottom: 1px solid var(--color-border); background: var(--color-bg-body); }
+  .data-table td { padding: 10px 14px; border-bottom: 1px solid var(--color-border-light); }
+  .data-table tr:hover td { background: var(--color-bg-sidebar-hover); }
 }
 
 @keyframes shimmer {

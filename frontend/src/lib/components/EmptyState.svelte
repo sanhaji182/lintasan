@@ -23,16 +23,17 @@
   class:empty-compact={variant === 'compact'}
   class:empty-card={variant === 'card'}
   style="animation: fadeInUp 0.4s ease-out;"
+  role="status"
 >
   {#if Icon}
     <div class="empty-icon-wrap">
-      <div class="empty-icon-bg">
+      <div class="empty-icon-bg" aria-hidden="true">
         <Icon size={variant === 'compact' ? 22 : 28} stroke-width={1.2} />
       </div>
     </div>
   {:else}
     <div class="empty-icon-wrap">
-      <div class="empty-icon-bg empty-icon-empty">
+      <div class="empty-icon-bg empty-icon-empty" aria-hidden="true">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
           <circle cx="12" cy="7" r="4"/>

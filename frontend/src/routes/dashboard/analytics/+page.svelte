@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { TrendingUp, Zap, Database, Clock, Activity, Server, Cpu } from 'lucide-svelte/icons';
+  import { TrendingUp, Zap, Database, Clock, Activity, Server, Cpu, AlertCircle } from 'lucide-svelte/icons';
 
   interface LogEntry {
     id: string;
@@ -27,10 +27,13 @@
   let stats = $state<Stats | null>(null);
   let logs = $state<LogEntry[]>([]);
   let loading = $state(true);
+  let error = $state('');
 
   const COLORS = ['#3c50e0', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316'];
 
-  onMount(async () => {
+  async function loadAnalytics() {
+    loading = true;
+    error = '';
     try {
       const [statsRes, logsRes] = await Promise.all([
         api.get<any>('/api/dashboard/stats').catch(() => null),
@@ -38,9 +41,13 @@
       ]);
       stats = statsRes?.data || statsRes || null;
       logs = logsRes?.data || [];
-    } catch {}
-    finally { loading = false; }
-  });
+    } catch (e: any) {
+      error = e.message || 'Failed to load analytics data';
+    }
+    loading = false;
+  }
+
+  onMount(loadAnalytics);
 
   let providerBreakdown = $derived.by(() => {
     const map = new Map<string, { requests: number; tokens: number; totalLatency: number }>();
@@ -99,6 +106,8 @@
 
   {#if loading}
     <Spinner />
+  {:else if error}
+    <div class="card"><EmptyState icon={AlertCircle} title="Failed to load analytics" description={error} action={loadAnalytics} actionLabel="Retry" /></div>
   {:else if logs.length === 0 && !stats}
     <div class="card"><EmptyState icon={TrendingUp} title="No analytics data" description="Analytics will appear once traffic flows through the gateway." /></div>
   {:else}

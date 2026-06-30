@@ -1,24 +1,40 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import Spinner from '$lib/components/Spinner.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import { Plug, Play, Link } from 'lucide-svelte/icons';
+  import { showToast } from '$lib/toast';
+
   let tools = $state<any[]>([]);
   let loading = $state(true);
+  let error = $state('');
   let testResult = $state('');
   let selectedTool = $state('');
   let testInput = $state('{}');
+  let running = $state(false);
 
-  onMount(async () => {
+  async function loadTools() {
+    loading = true;
+    error = '';
     try {
       const data: any = await api.get('/api/mcp/tools');
       tools = data.tools || [];
-    } catch (e) {
+    } catch (e: any) {
       console.error('Failed to load MCP tools:', e);
+      error = 'Failed to load MCP tools. Please try again.';
+      showToast('Failed to load MCP tools', 'error');
+    } finally {
+      loading = false;
     }
-    loading = false;
-  });
+  }
+
+  onMount(loadTools);
 
   async function testTool() {
     if (!selectedTool) return;
+    running = true;
+    testResult = '';
     try {
       const res = await api.raw('/mcp', {
         method: 'POST',
@@ -37,91 +53,137 @@
       testResult = JSON.stringify(data, null, 2);
     } catch (e: any) {
       testResult = `Error: ${e.message}`;
+      showToast(`Tool execution failed: ${e.message}`, 'error');
+    } finally {
+      running = false;
     }
   }
 </script>
 
-<div class="p-6 bg-gray-900 min-h-screen text-white">
-  <h1 class="text-2xl font-bold mb-6">🔌 MCP Server</h1>
-  <p class="text-gray-400 mb-6">Model Context Protocol — 14 tools exposed for AI agents</p>
+<div style="animation: fadeInUp 0.4s ease-out;">
+  <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 4px;">🔌 MCP Server</h2>
+  <p style="font-size: 13px; color: var(--color-fg-3); margin-bottom: 20px;">Model Context Protocol — {tools.length} tools exposed for AI agents</p>
 
   {#if loading}
-    <div class="text-center py-8">Loading tools...</div>
+    <div role="status" aria-label="Loading MCP tools">
+      <Spinner />
+    </div>
+  {:else if error}
+    <div class="card">
+      <EmptyState icon={Plug} title="Failed to load tools" description={error} action={loadTools} actionLabel="Retry" />
+    </div>
   {:else}
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div class="grid grid-cols-1 lg:grid-cols-2" style="gap: 20px;">
       <!-- Tools List -->
-      <div class="bg-gray-800 rounded-lg p-4">
-        <h2 class="text-lg font-semibold mb-4">📋 Registered Tools ({tools.length})</h2>
-        <div class="space-y-2 max-h-96 overflow-y-auto">
-          {#each tools as tool}
-            <button
-              class="w-full text-left p-3 rounded bg-gray-700 hover:bg-gray-600 transition {selectedTool === tool.name ? 'ring-2 ring-blue-500' : ''}"
-              onclick={() => selectedTool = tool.name}
-            >
-              <div class="font-mono text-sm text-blue-400">{tool.name}</div>
-              <div class="text-gray-400 text-xs mt-1">{tool.description}</div>
-            </button>
-          {/each}
-        </div>
+      <div class="card" style="padding: 16px;">
+        <h3 style="font-size: 15px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 12px;">📋 Registered Tools ({tools.length})</h3>
+        {#if tools.length === 0}
+          <EmptyState icon={Plug} title="No tools registered" description="No MCP tools are currently available." />
+        {:else}
+          <div style="max-height: 384px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
+            {#each tools as tool}
+              <button
+                style="
+                  width: 100%;
+                  text-align: left;
+                  padding: 10px 12px;
+                  border-radius: var(--radius-sm);
+                  background: {selectedTool === tool.name ? 'var(--color-primary-light, #eef2ff)' : 'var(--color-bg-body)'};
+                  border: 1px solid {selectedTool === tool.name ? 'var(--color-primary)' : 'var(--color-border)'};
+                  cursor: pointer;
+                  transition: var(--transition);
+                "
+                onclick={() => selectedTool = tool.name}
+              >
+                <div style="font-family: var(--font-mono); font-size: 13px; color: var(--color-primary); font-weight: 500;">{tool.name}</div>
+                <div style="font-size: 12px; color: var(--color-fg-3); margin-top: 4px;">{tool.description}</div>
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
 
       <!-- Test Panel -->
-      <div class="bg-gray-800 rounded-lg p-4">
-        <h2 class="text-lg font-semibold mb-4">🧪 Test Tool</h2>
-        <div class="mb-4">
-          <label for="mcp-selected-tool" class="block text-sm text-gray-400 mb-2">Selected Tool</label>
+      <div class="card" style="padding: 16px;">
+        <h3 style="font-size: 15px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 12px;">🧪 Test Tool</h3>
+        <div style="margin-bottom: 12px;">
+          <label for="mcp-selected-tool" style="display: block; font-size: 12px; font-weight: 500; color: var(--color-fg-3); margin-bottom: 6px;">Selected Tool</label>
           <input
             id="mcp-selected-tool"
             type="text"
             bind:value={selectedTool}
-            class="w-full p-2 bg-gray-700 rounded text-white font-mono"
+            class="input-field"
+            style="font-family: var(--font-mono); width: 100%;"
             readonly
+            placeholder="Click a tool from the list..."
           />
         </div>
-        <div class="mb-4">
-          <label for="mcp-tool-args" class="block text-sm text-gray-400 mb-2">Arguments (JSON)</label>
+        <div style="margin-bottom: 12px;">
+          <label for="mcp-tool-args" style="display: block; font-size: 12px; font-weight: 500; color: var(--color-fg-3); margin-bottom: 6px;">Arguments (JSON)</label>
           <textarea
             id="mcp-tool-args"
             bind:value={testInput}
-            class="w-full p-2 bg-gray-700 rounded text-white font-mono h-24"
+            class="input-field"
+            style="font-family: var(--font-mono); width: 100%; min-height: 96px; resize: vertical;"
           ></textarea>
         </div>
         <button
           onclick={testTool}
-          class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500 transition"
-          disabled={!selectedTool}
+          class="btn-primary flex items-center gap-2"
+          disabled={!selectedTool || running}
         >
-          ▶️ Run Tool
+          {#if running}
+            <Spinner />
+            Running...
+          {:else}
+            <Play size={14} />
+            Run Tool
+          {/if}
         </button>
 
         {#if testResult}
-          <div class="mt-4">
-            <p class="block text-sm text-gray-400 mb-2">Result</p>
-            <pre class="p-3 bg-gray-900 rounded text-sm overflow-auto max-h-64">{testResult}</pre>
+          <div style="margin-top: 16px;">
+            <p style="font-size: 12px; font-weight: 500; color: var(--color-fg-3); margin-bottom: 6px;">Result</p>
+            <pre style="
+              padding: 12px;
+              background: var(--color-bg-body);
+              border: 1px solid var(--color-border);
+              border-radius: var(--radius-sm);
+              font-family: var(--font-mono);
+              font-size: 12px;
+              color: var(--color-fg-1);
+              overflow: auto;
+              max-height: 256px;
+              white-space: pre-wrap;
+              word-break: break-word;
+            ">{testResult}</pre>
           </div>
         {/if}
       </div>
     </div>
 
-    <!-- SSE Info -->
-    <div class="mt-6 bg-gray-800 rounded-lg p-4">
-      <h2 class="text-lg font-semibold mb-2">🔗 Connection Info</h2>
-      <div class="grid grid-cols-2 gap-4 text-sm">
+    <!-- Connection Info -->
+    <div class="card" style="padding: 16px; margin-top: 20px;">
+      <h3 style="font-size: 15px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 12px;">
+        <Link size={16} style="display: inline; vertical-align: text-bottom; margin-right: 4px;" />
+        Connection Info
+      </h3>
+      <div class="grid grid-cols-2" style="gap: 12px; font-size: 13px;">
         <div>
-          <span class="text-gray-400">HTTP Endpoint:</span>
-          <code class="ml-2 text-green-400">POST /mcp</code>
+          <span style="color: var(--color-fg-3);">HTTP Endpoint:</span>
+          <code style="margin-left: 8px; font-family: var(--font-mono); color: var(--color-success); background: var(--color-success-light, #ecfdf5); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 12px;">POST /mcp</code>
         </div>
         <div>
-          <span class="text-gray-400">SSE Endpoint:</span>
-          <code class="ml-2 text-green-400">GET /mcp/sse</code>
+          <span style="color: var(--color-fg-3);">SSE Endpoint:</span>
+          <code style="margin-left: 8px; font-family: var(--font-mono); color: var(--color-success); background: var(--color-success-light, #ecfdf5); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 12px;">GET /mcp/sse</code>
         </div>
         <div>
-          <span class="text-gray-400">Protocol:</span>
-          <code class="ml-2 text-green-400">JSON-RPC 2.0</code>
+          <span style="color: var(--color-fg-3);">Protocol:</span>
+          <code style="margin-left: 8px; font-family: var(--font-mono); color: var(--color-success); background: var(--color-success-light, #ecfdf5); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 12px;">JSON-RPC 2.0</code>
         </div>
         <div>
-          <span class="text-gray-400">Version:</span>
-          <code class="ml-2 text-green-400">2024-11-05</code>
+          <span style="color: var(--color-fg-3);">Version:</span>
+          <code style="margin-left: 8px; font-family: var(--font-mono); color: var(--color-success); background: var(--color-success-light, #ecfdf5); padding: 2px 6px; border-radius: var(--radius-sm); font-size: 12px;">2024-11-05</code>
         </div>
       </div>
     </div>

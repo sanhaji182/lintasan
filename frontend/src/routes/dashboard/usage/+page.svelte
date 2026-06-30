@@ -3,16 +3,19 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { BarChart3, ChartColumn, DollarSign, Database, Server, RefreshCw } from 'lucide-svelte/icons';
+  import { BarChart3, ChartColumn, DollarSign, Database, Server, RefreshCw, AlertCircle } from 'lucide-svelte/icons';
 
   let data = $state<any>(null);
   let quotaData = $state<any[]>([]);
   let loading = $state(true);
+  let error = $state('');
   let canvasEl: HTMLCanvasElement = $state()!;
 
   const COLORS = ['#3c50e0', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
 
-  onMount(async () => {
+  async function loadUsage() {
+    loading = true;
+    error = '';
     try {
       const [usageRes, quotaRes] = await Promise.all([
         api.get<any>('/api/usage'),
@@ -20,9 +23,13 @@
       ]);
       data = usageRes?.data || usageRes;
       quotaData = quotaRes?.data || [];
-    } catch {}
-    finally { loading = false; }
-  });
+    } catch (e: any) {
+      error = e.message || 'Failed to load usage data';
+    }
+    loading = false;
+  }
+
+  onMount(loadUsage);
 
   $effect(() => {
     if (data?.daily && canvasEl) drawChart();
@@ -87,6 +94,8 @@
 
   {#if loading}
     <Spinner />
+  {:else if error}
+    <div class="card"><EmptyState icon={AlertCircle} title="Failed to load usage" description={error} action={loadUsage} actionLabel="Retry" /></div>
   {:else if !data}
     <div class="card"><EmptyState icon={ChartColumn} title="No usage data" /></div>
   {:else}

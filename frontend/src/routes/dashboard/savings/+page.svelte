@@ -3,11 +3,12 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { DollarSign, TrendingDown, Zap, Database, Leaf, RefreshCw } from 'lucide-svelte/icons';
+  import { DollarSign, TrendingDown, Zap, Database, Leaf, RefreshCw, AlertCircle } from 'lucide-svelte/icons';
 
   let summary = $state<any>(null);
   let history = $state<any[]>([]);
   let loading = $state(true);
+  let error = $state('');
 
   const breakdownColors: Record<string, string> = {
     compression: 'var(--color-primary)',
@@ -30,7 +31,9 @@
     free_tier: 'Free Tier'
   };
 
-  onMount(async () => {
+  async function loadSavings() {
+    loading = true;
+    error = '';
     try {
       const [summaryData, historyData] = await Promise.all([
         api.get('/api/savings/summary'),
@@ -38,11 +41,13 @@
       ]);
       summary = summaryData;
       history = (historyData as any).history || [];
-    } catch (e) {
-      console.error('Failed to load savings:', e);
+    } catch (e: any) {
+      error = e.message || 'Failed to load savings data';
     }
     loading = false;
-  });
+  }
+
+  onMount(loadSavings);
 
   function formatCurrency(val: any) {
     return '$' + (val || 0).toFixed(2);
@@ -59,6 +64,8 @@
 
   {#if loading}
     <Spinner />
+  {:else if error}
+    <div class="card"><EmptyState icon={AlertCircle} title="Failed to load savings" description={error} action={loadSavings} actionLabel="Retry" /></div>
   {:else if !summary}
     <div class="card"><EmptyState icon={DollarSign} title="No savings data" description="Savings will appear once traffic flows through the gateway." /></div>
   {:else}
