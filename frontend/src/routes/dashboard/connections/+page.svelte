@@ -14,6 +14,10 @@
   let error = $state('');
   let showForm = $state(false);
   let testing = $state<string | null>(null);
+
+  // Balance/credit state
+  let balances = $state<Record<string, any>>({});
+  let balancesLoading = $state(false);
   let syncing = $state<string | null>(null);
   let presetSearch = $state('');
 
@@ -494,6 +498,7 @@
 
   onMount(async () => {
     await Promise.all([fetchPresets(), fetchConnections(), fetchCategories(), fetchOAuthLab(), fetchPools()]);
+    fetchBalances(); // fire and forget — don't block page load
   });
 
   async function fetchConnections() {
@@ -503,6 +508,19 @@
       connections = res.data || [];
     } catch (e: any) { error = e.message; }
     finally { loading = false; }
+  }
+
+  async function fetchBalances() {
+    balancesLoading = true;
+    try {
+      const res = await api.get<any>('/api/connections/balances');
+      const map: Record<string, any> = {};
+      for (const item of (res.data || [])) {
+        map[item.id] = item.balance;
+      }
+      balances = map;
+    } catch { balances = {}; }
+    finally { balancesLoading = false; }
   }
 
   async function fetchPools() {
@@ -1669,6 +1687,15 @@
                   {#if conn.pool_id}
                     <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
                   {/if}
+                  {#if balances[conn.id]?.balance}
+                    <span class="badge conn-balance-badge" title="Credit: {balances[conn.id].balance}{balances[conn.id].rate_info ? ' · ' + balances[conn.id].rate_info : ''}">
+                      💰 {balances[conn.id].balance}
+                    </span>
+                  {:else if balances[conn.id]?.rate_info}
+                    <span class="badge conn-rate-badge" title={balances[conn.id].rate_info}>
+                      ⚡ {balances[conn.id].rate_info}
+                    </span>
+                  {/if}
                   <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
                 </div>
               </div>
@@ -1746,6 +1773,15 @@
                         <div class="conn-card-meta-row">
                           {#if conn.pool_id}
                             <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
+                          {/if}
+                          {#if balances[conn.id]?.balance}
+                            <span class="badge conn-balance-badge" title="Credit: {balances[conn.id].balance}">
+                              💰 {balances[conn.id].balance}
+                            </span>
+                          {:else if balances[conn.id]?.rate_info}
+                            <span class="badge conn-rate-badge" title={balances[conn.id].rate_info}>
+                              ⚡ {balances[conn.id].rate_info}
+                            </span>
                           {/if}
                           <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
                         </div>
@@ -2353,6 +2389,27 @@
     color: var(--color-primary);
     font-family: var(--font-mono);
     flex-shrink: 0;
+  }
+  .conn-balance-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    background: rgba(16,185,129,0.1);
+    color: var(--color-success);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+    cursor: help;
+  }
+  .conn-rate-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    background: rgba(245,158,11,0.1);
+    color: #d97706;
+    flex-shrink: 0;
+    cursor: help;
+    max-width: 180px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .conn-card-models {
     font-size: 11px;
