@@ -226,6 +226,11 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 	case r := <-ch:
 		info := BalanceInfo{ProviderType: "commandcode", PlanType: "subscription"}
 
+		// Debug: if credit is nil, note it
+		if r.credit == nil {
+			info.Error = "credits endpoint returned nil"
+		}
+
 		// Parse subscription
 		if r.sub != nil {
 			var sub struct {
@@ -256,18 +261,18 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 				WindowLimits struct {
 					Limited bool `json:"limited"`
 					FiveHour struct {
-						Used      int  `json:"used"`
-						Cap       int  `json:"cap"`
+						Used      float64  `json:"used"`
+						Cap       float64  `json:"cap"`
 						Exceeded  bool `json:"exceeded"`
 					} `json:"fiveHour"`
 					Weekly struct {
-						Used      int  `json:"used"`
-						Cap       int  `json:"cap"`
+						Used      float64  `json:"used"`
+						Cap       float64  `json:"cap"`
 						Exceeded  bool `json:"exceeded"`
 					} `json:"weekly"`
 				} `json:"windowLimits"`
 			}
-			if json.Unmarshal(r.credit, &cred) == nil {
+			if err := json.Unmarshal(r.credit, &cred); err == nil {
 				total := cred.Credits.MonthlyCredits + cred.Credits.PurchasedCredits + cred.Credits.FreeCredits
 				info.Balance = fmt.Sprintf("$%.2f", total)
 				info.Currency = "USD"
@@ -275,13 +280,15 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 				// Add rate limit info
 				wl := cred.WindowLimits
 				if wl.Limited {
-					info.RateInfo = fmt.Sprintf("5h: %d/%d · week: %d/%d",
-						wl.FiveHour.Used, wl.FiveHour.Cap,
-						wl.Weekly.Used, wl.Weekly.Cap)
+					info.RateInfo += fmt.Sprintf(" · 5h: %d/%d · week: %d/%d",
+						int(wl.FiveHour.Used), int(wl.FiveHour.Cap),
+						int(wl.Weekly.Used), int(wl.Weekly.Cap))
 					if wl.FiveHour.Exceeded || wl.Weekly.Exceeded {
 						info.RateInfo += " ⚠️ limited"
 					}
 				}
+			} else {
+				info.Error = "credits parse error: " + err.Error()
 			}
 		}
 
