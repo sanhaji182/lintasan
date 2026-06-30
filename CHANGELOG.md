@@ -10,6 +10,29 @@ semantic-ish versioning.
 > history as a reference point; `v0.24.0` is the first release of the new
 > numbering scheme (the `.24` keeps continuity with the prior work).
 
+## [0.26.0] — 2026-06-30
+
+### Added
+- **Connection Pool Management with Multi-Account Load Balancing.** Group
+  multiple API keys under a `pool_id` to distribute requests across accounts,
+  avoiding per-key rate limits. Pool health stats (success rate, availability,
+  rate-limited count) are visible in the dashboard Connections page.
+- **`GET /api/connections/pools`** — new endpoint returning pool health stats
+  augmented with runtime data from in-memory load balancers.
+- **Pool-aware proxy routing:** `pickMultiAccountAPIKey()` rotates API keys per
+  request; `dedupCandidatesByPool()` ensures only one connection per pool is
+  considered during route resolution; `recordMultiAccountResult()` tracks
+  success/failure per account for health scoring.
+- **DB migration:** `pool_id` column + index on connections table.
+
+### Changed
+- **Connections page UX:** collapsible sections for OAuth IDE and Provider
+  Presets (click to expand/collapse), 4-column summary grid (Total/Active/
+  Formats/Pools), pool health cards with color-coded availability indicators.
+
+### Tests
+- All 44 packages PASS (937+ tests).
+
 ## [0.25.0] — 2026-06-23
 
 ### Added
