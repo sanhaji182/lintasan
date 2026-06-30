@@ -10,6 +10,30 @@ semantic-ish versioning.
 > history as a reference point; `v0.24.0` is the first release of the new
 > numbering scheme (the `.24` keeps continuity with the prior work).
 
+## [0.26.2] — 2026-06-30
+
+### Fixed
+- **MCP page migrated to design system** — replaced all hardcoded Tailwind
+  dark-theme classes (`bg-gray-900`, `text-white`, etc.) with CSS variables.
+  Now uses `<Spinner>`, `<EmptyState>`, `.card`, `.btn-primary`, `.input-field`.
+- **Translator page migrated to design system** — same treatment, plus
+  `<ArrowRightLeft>` icon for swap button, `.data-table` for conversion matrix.
+- **Discover page: fixed undefined `--color-bg-hover`** — now uses
+  `--color-bg-sidebar-hover`. Replaced hardcoded hex colors in auth badges
+  with CSS variables.
+- **Dashboard overview: scoped `:global(.grid)` media query** — now targets
+  `.dashboard-grid-bottom` only, preventing unintended global style leakage.
+- **Error handling standardized across 7 pages** — savings, usage, analytics,
+  keys, discover, MCP, translator now show user-visible errors with retry
+  actions instead of silent `catch {}` or `console.error` only.
+- **Keys page: toast notifications** for create/delete success/error.
+
+### Changed
+- **`app.css`: added `--color-bg-hover`** variable (alias for sidebar-hover)
+  and `.data-table` reusable table classes.
+- **Spinner + EmptyState: accessibility** — added `role="status"`,
+  `aria-label="Loading"`, and `sr-only` text span.
+
 ## [0.26.1] — 2026-06-30
 
 ### Changed
