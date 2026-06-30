@@ -793,35 +793,39 @@
       </div>
       </div>
 
-  <!-- Search/Filter Bar -->
-  <div class="card mb-5" style="padding: 12px 16px;">
-    <div class="relative" style="max-width: 400px;">
-      <Search size={14} style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--color-fg-3); pointer-events: none;" />
-      <input
-        class="input-field"
-        placeholder="Filter by name, format, or pool..."
-        bind:value={searchQuery}
-        style="padding-left: 32px; font-size: 12px; padding-top: 7px; padding-bottom: 7px; width: 100%;"
-      />
+  <!-- Toolbar: Title + Search + Actions -->
+  <div class="conn-toolbar">
+    <div class="conn-toolbar-left">
+      <h2 class="conn-toolbar-title">Connections</h2>
+      {#if searchQuery.trim()}
+        <span class="conn-toolbar-count">{filteredConnections.length}/{connections.length}</span>
+      {/if}
     </div>
-    {#if searchQuery.trim()}
-      <div style="font-size: 11px; color: var(--color-fg-3); margin-top: 6px;">
-        {filteredConnections.length} of {connections.length} connection{connections.length !== 1 ? 's' : ''} match
+    <div class="conn-toolbar-center">
+      <div class="conn-search-wrap">
+        <Search size={14} class="conn-search-icon" />
+        <input
+          class="input-field conn-search-input"
+          placeholder="Search connections..."
+          bind:value={searchQuery}
+        />
+        {#if searchQuery}
+          <button class="conn-search-clear" onclick={() => searchQuery = ''} aria-label="Clear search">
+            <X size={12} />
+          </button>
+        {/if}
       </div>
-    {/if}
-  </div>
-
-  <!-- Actions -->
-  <div class="flex items-center justify-between mb-5">
-    <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0);">Connections</h2>
-    <div class="flex items-center gap-2">
-      <button class="btn-secondary flex items-center gap-2" onclick={() => { showCurlImport = !showCurlImport; curlResult = null; }} title="Import from curl command">
-        <Copy size={16} />
-        {showCurlImport ? 'Cancel' : 'Import Curl'}
+    </div>
+    <div class="conn-toolbar-right">
+      <button class="btn-secondary conn-toolbar-btn" onclick={() => { loading = true; fetchConnections(); fetchPools(); }} title="Refresh connections" aria-label="Refresh">
+        <RefreshCw size={15} />
       </button>
-      <button class="btn-primary flex items-center gap-2" onclick={() => showForm = !showForm}>
-        {#if showForm}<X size={16} />{:else}<Plus size={16} />{/if}
-        {showForm ? 'Cancel' : 'Add Connection'}
+      <button class="btn-secondary conn-toolbar-btn" onclick={() => { showCurlImport = !showCurlImport; curlResult = null; }} title="Import from curl">
+        <Copy size={15} />
+      </button>
+      <button class="btn-primary conn-toolbar-btn" onclick={() => showForm = !showForm}>
+        {#if showForm}<X size={15} />{:else}<Plus size={15} />{/if}
+        <span class="conn-toolbar-btn-label">{showForm ? 'Cancel' : 'Add'}</span>
       </button>
     </div>
   </div>
@@ -1516,107 +1520,87 @@
       </div>
     </div>
   {:else}
-    <!-- Connections Table -->
-    <div class="card" style="padding: 0; overflow: hidden;">
-      {#if sortedConnections.length === 0}
+    <!-- Connection Cards -->
+    {#if sortedConnections.length === 0}
+      <div class="card">
         <EmptyState title="No matching connections" description="Try adjusting your search filter." />
-      {:else}
-        <div style="overflow-x: auto;">
-          <table class="data-table connections-table">
-            <thead>
-              <tr>
-                <th style="width: 40px;">Status</th>
-                <th class="sortable-th" onclick={() => toggleSort('name')} style="min-width: 180px; cursor: pointer;">
-                  Name {#if sortKey === 'name'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
-                </th>
-                <th class="sortable-th" onclick={() => toggleSort('format')} style="min-width: 100px; cursor: pointer;">
-                  Format {#if sortKey === 'format'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
-                </th>
-                <th class="sortable-th col-hide-mobile" onclick={() => toggleSort('priority')} style="width: 70px; cursor: pointer;">
-                  Priority {#if sortKey === 'priority'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
-                </th>
-                <th class="sortable-th col-hide-mobile" onclick={() => toggleSort('pool')} style="min-width: 110px; cursor: pointer;">
-                  Pool {#if sortKey === 'pool'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
-                </th>
-                <th class="sortable-th" onclick={() => toggleSort('models')} style="width: 70px; cursor: pointer;">
-                  Models {#if sortKey === 'models'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
-                </th>
-                <th style="width: 140px; text-align: right;">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each sortedConnections as conn (conn.id)}
-                <tr>
-                  <td>
-                    <span
-                      style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: {conn.is_active ? 'var(--color-success)' : 'var(--color-fg-3)'};"
-                      title={conn.is_active ? 'Active' : 'Inactive'}
-                    ></span>
-                  </td>
-                  <td style="max-width: 220px;">
-                    <div style="font-weight: 600; color: var(--color-fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title={conn.name}>{conn.name}</div>
-                    {#if conn.api_key}
-                      <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;" title={conn.api_key}>{conn.api_key}</div>
-                    {:else if conn.oauth_provider}
-                      <div style="font-size: 11px; color: #a78bfa; margin-top: 2px;">OAuth:{conn.oauth_provider}</div>
-                    {/if}
-                  </td>
-                  <td>
-                    <span class="badge" style="background: var(--color-purple-light); color: var(--color-purple);">{conn.format}</span>
-                  </td>
-                  <td class="col-hide-mobile" style="font-family: var(--font-mono); font-size: 13px; color: var(--color-fg-1);">{conn.priority}</td>
-                  <td class="col-hide-mobile">
-                    {#if conn.pool_id}
-                      <span class="badge" style="background: var(--color-primary-light); color: var(--color-primary); font-family: var(--font-mono);">{conn.pool_id}</span>
-                    {:else}
-                      <span style="color: var(--color-fg-3);">—</span>
-                    {/if}
-                  </td>
-                  <td style="font-family: var(--font-mono); font-size: 13px; color: var(--color-fg-1);">{conn.models_count || 0}</td>
-                  <td style="text-align: right;">
-                    <div class="flex items-center justify-end gap-1">
-                      <button class="btn-secondary" style="padding: 4px 6px; font-size: 11px;" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
-                        <TestTube2 size={13} />
+      </div>
+    {:else}
+      <div class="conn-grid">
+        {#each sortedConnections as conn (conn.id)}
+          <div class="card conn-card" class:conn-inactive={!conn.is_active}>
+            <!-- Card header: status + name + format -->
+            <div class="conn-card-header">
+              <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
+              <span class="conn-card-name" title={conn.name}>{conn.name}</span>
+              <span class="badge conn-format-badge">{conn.format}</span>
+              <span class="conn-card-priority" title="Priority">P{conn.priority}</span>
+            </div>
+
+            <!-- Card meta: key + url + pool -->
+            <div class="conn-card-meta">
+              {#if conn.api_key}
+                <span class="conn-card-key" title={conn.api_key}>{conn.api_key}</span>
+              {:else if conn.oauth_provider}
+                <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
+              {/if}
+              <div class="conn-card-meta-row">
+                <span class="conn-card-url" title={conn.base_url}>{conn.base_url}</span>
+                {#if conn.pool_id}
+                  <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
+                {/if}
+                <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
+              </div>
+            </div>
+
+            <!-- Card actions: primary inline, secondary in dropdown -->
+            <div class="conn-card-actions">
+              <button class="btn-secondary conn-action-btn" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
+                {#if testing === conn.id}
+                  <span class="conn-spinner"></span>
+                {:else}
+                  <TestTube2 size={13} />
+                {/if}
+                <span>Test</span>
+              </button>
+              <button class="btn-secondary conn-action-btn" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
+                {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
+                <span>{conn.is_active ? 'On' : 'Off'}</span>
+              </button>
+              <button class="btn-secondary conn-action-btn" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync models">
+                <RefreshCw size={13} class={syncing === conn.id ? 'animate-spin' : ''} />
+                <span>Sync</span>
+              </button>
+              <button class="btn-secondary conn-action-btn" onclick={() => openModelsViewer(conn)} title="View models">
+                <Cpu size={13} />
+                <span>Models</span>
+              </button>
+              <div class="kebab-menu-container" style="position: relative;">
+                <button class="btn-secondary conn-action-btn conn-kebab-btn" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More actions">
+                  ⋯
+                </button>
+                {#if openMenuConnId === conn.id}
+                  <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
+                    {#if !conn.pool_id}
+                      <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}>
+                        <Layers size={14} /> Edit Pool
                       </button>
-                      <button class="btn-secondary" style="padding: 4px 6px; font-size: 11px;" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
-                        {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
-                      </button>
-                      <div class="kebab-menu-container" style="position: relative;">
-                        <button class="btn-secondary" style="padding: 4px 6px; font-size: 13px; letter-spacing: 1px;" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }}>
-                          ⋯
-                        </button>
-                        {#if openMenuConnId === conn.id}
-                          <div style="position: absolute; right: 0; top: calc(100% + 4px); background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); min-width: 170px; z-index: 100; padding: 4px; animation: fadeInScale 0.15s ease-out;">
-                            <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}>
-                              <Cpu size={14} /> Models
-                            </button>
-                            <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; syncModels(conn.id); }}>
-                              <RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /> Sync
-                            </button>
-                            {#if !conn.pool_id}
-                              <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}>
-                                <Layers size={14} /> Edit Pool
-                              </button>
-                            {/if}
-                            <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}>
-                              <Copy size={14} /> Copy API Key
-                            </button>
-                            <div style="height: 1px; background: var(--color-border); margin: 4px 0;"></div>
-                            <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-error, #ef4444); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}>
-                              <Trash2 size={14} /> Delete
-                            </button>
-                          </div>
-                        {/if}
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </div>
+                    {/if}
+                    <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}>
+                      <Copy size={14} /> Copy API Key
+                    </button>
+                    <div class="conn-dropdown-divider"></div>
+                    <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}>
+                      <Trash2 size={14} /> Delete
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
 
     <!-- Pool inline editing (shown when editingPool is set) -->
     {#if editingPool}
@@ -1625,12 +1609,12 @@
         <span style="font-size: 12px; color: var(--color-fg-2);">Set pool for connection:</span>
         <input
           type="text"
-          bind:value={connections.find(c => c.id === editingPool)?._poolEdit}
+          bind:value={poolEditText}
           placeholder="pool name"
           style="font-size: 12px; padding: 4px 8px; width: 120px; border: 1px solid var(--color-border); border-radius: 6px; font-family: var(--font-mono); background: var(--color-bg-body); color: var(--color-fg-0);"
           onkeydown={(e: KeyboardEvent) => {
             const conn = connections.find(c => c.id === editingPool);
-            if (e.key === 'Enter' && conn) setPoolId(conn.id, conn._poolEdit?.trim());
+            if (e.key === 'Enter' && conn) setPoolId(conn.id, poolEditText?.trim());
             if (e.key === 'Escape') editingPool = null;
           }}
         />
@@ -1639,7 +1623,7 @@
             style="font-size: 11px; padding: 4px 6px; border: 1px solid var(--color-border); border-radius: 6px; font-family: var(--font-mono); background: var(--color-bg-body); color: var(--color-fg-0); cursor: pointer;"
             onchange={(e: Event) => {
               const conn = connections.find(c => c.id === editingPool);
-              if (conn) conn._poolEdit = (e.target as HTMLSelectElement).value;
+              if (conn) poolEditText = (e.target as HTMLSelectElement).value;
             }}
           >
             <option value="">pick existing…</option>
@@ -1653,7 +1637,7 @@
           style="padding: 4px 10px; font-size: 11px;"
           onclick={() => {
             const conn = connections.find(c => c.id === editingPool);
-            if (conn) setPoolId(conn.id, conn._poolEdit?.trim());
+            if (conn) setPoolId(conn.id, poolEditText?.trim());
           }}
         >
           <Check size={12} /> Save
@@ -1885,51 +1869,313 @@
     60%  { transform: scale(0.97); box-shadow: 0 0 0 6px rgba(59,130,246,0); }
     100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(59,130,246,0); }
   }
-  /* Connections table styles */
-  .connections-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 13px;
+  /* Connections toolbar */
+  .conn-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    flex-wrap: wrap;
   }
-  .connections-table th {
-    text-align: left;
-    padding: 12px 14px;
+  .conn-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .conn-toolbar-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--color-fg-0);
+    margin: 0;
+    white-space: nowrap;
+  }
+  .conn-toolbar-count {
     font-size: 11px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--color-fg-3);
-    border-bottom: 1px solid var(--color-border);
-    background: var(--color-bg-body);
-    white-space: nowrap;
-    user-select: none;
-  }
-  .connections-table th.sortable-th:hover {
-    color: var(--color-fg-0);
-    background: var(--color-bg-sidebar-hover);
-  }
-  .connections-table th .sort-arrow {
-    font-size: 10px;
     color: var(--color-primary);
-    margin-left: 2px;
+    background: var(--color-primary-light);
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-family: var(--font-mono);
   }
-  .connections-table td {
-    padding: 10px 14px;
-    border-bottom: 1px solid var(--color-border-light);
-    vertical-align: middle;
+  .conn-toolbar-center {
+    flex: 1;
+    min-width: 180px;
+    max-width: 360px;
   }
-  .connections-table tr:hover td {
+  .conn-search-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+  }
+  .conn-search-wrap :global(.conn-search-icon) {
+    position: absolute;
+    left: 10px;
+    color: var(--color-fg-3);
+    pointer-events: none;
+  }
+  .conn-search-input {
+    padding-left: 32px !important;
+    padding-right: 28px !important;
+    font-size: 13px !important;
+    width: 100%;
+  }
+  .conn-search-clear {
+    all: unset;
+    position: absolute;
+    right: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    cursor: pointer;
+    color: var(--color-fg-3);
+    transition: background 0.1s;
+  }
+  .conn-search-clear:hover {
     background: var(--color-bg-sidebar-hover);
+    color: var(--color-fg-0);
   }
-  .connections-table td .badge {
-    font-size: 11px;
-    padding: 2px 8px;
+  .conn-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .conn-toolbar-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+  .conn-toolbar-btn-label {
+    display: inline;
   }
 
-  /* Responsive: hide Priority and Pool columns on narrow screens */
-  @media (max-width: 768px) {
-    .col-hide-mobile {
-      display: none !important;
+  /* Connection cards grid */
+  .conn-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .conn-card {
+    padding: 16px !important;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .conn-card:hover {
+    border-color: var(--color-primary);
+    box-shadow: 0 2px 12px rgba(59,130,246,0.08);
+  }
+  .conn-inactive {
+    opacity: 0.65;
+  }
+  .conn-inactive:hover {
+    opacity: 1;
+  }
+
+  /* Card header */
+  .conn-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .conn-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--color-fg-3);
+    flex-shrink: 0;
+    transition: background 0.2s;
+  }
+  .conn-status-dot.active {
+    background: var(--color-success);
+    box-shadow: 0 0 6px rgba(16,185,129,0.4);
+  }
+  .conn-card-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-fg-0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+  }
+  .conn-format-badge {
+    font-size: 10px;
+    padding: 2px 7px;
+    background: var(--color-purple-light);
+    color: var(--color-purple);
+    flex-shrink: 0;
+  }
+  .conn-card-priority {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-fg-3);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+  }
+
+  /* Card meta */
+  .conn-card-meta {
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .conn-card-key {
+    font-size: 11px;
+    color: var(--color-fg-3);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .conn-card-oauth {
+    font-size: 11px;
+    color: var(--color-purple);
+  }
+  .conn-card-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .conn-card-url {
+    font-size: 11px;
+    color: var(--color-fg-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 260px;
+  }
+  .conn-pool-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+  }
+  .conn-card-models {
+    font-size: 11px;
+    color: var(--color-fg-3);
+    margin-left: auto;
+    flex-shrink: 0;
+  }
+
+  /* Card actions row */
+  .conn-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border-light);
+  }
+  .conn-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 10px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .conn-kebab-btn {
+    font-size: 14px;
+    letter-spacing: 1px;
+    padding: 5px 8px;
+  }
+  .conn-spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  /* Dropdown */
+  .conn-dropdown {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    min-width: 160px;
+    z-index: 100;
+    padding: 4px;
+    animation: fadeInScale 0.15s ease-out;
+  }
+  .conn-dropdown-item {
+    all: unset;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    width: 100%;
+    box-sizing: border-box;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--color-fg-1);
+    border-radius: 4px;
+    transition: background 0.1s;
+  }
+  .conn-dropdown-item:hover {
+    background: var(--color-bg-sidebar-hover);
+  }
+  .conn-dropdown-danger {
+    color: var(--color-error);
+  }
+  .conn-dropdown-danger:hover {
+    background: rgba(239,68,68,0.08);
+  }
+  .conn-dropdown-divider {
+    height: 1px;
+    background: var(--color-border);
+    margin: 4px 0;
+  }
+
+  /* Responsive */
+  @media (max-width: 640px) {
+    .conn-toolbar {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      padding: 12px 14px;
+    }
+    .conn-toolbar-left {
+      justify-content: space-between;
+    }
+    .conn-toolbar-center {
+      max-width: none;
+    }
+    .conn-toolbar-right {
+      justify-content: flex-end;
+    }
+    .conn-toolbar-btn-label {
+      display: none;
+    }
+    .conn-card-actions {
+      flex-wrap: wrap;
+    }
+    .conn-action-btn span:not(.conn-spinner) {
+      display: none;
+    }
+    .conn-card-url {
+      max-width: 160px;
     }
   }
 </style>
