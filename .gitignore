@@ -42,3 +42,14 @@ internal/web/dist/*
 /compress-bench
 cmd/compress-bench/compress-bench
 rebake-evidence.json
+
+# Coverage reports
+coverage*.out
+
+# Dev/test utility commands (not part of release binary)
+cmd/jwttest/
+cmd/resetpass/
+cmd/testpools/
+
+# Release binary output
+dist-bin/
