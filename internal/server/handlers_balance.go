@@ -169,6 +169,8 @@ func fetchProviderBalance(baseURL, apiKey, format string) BalanceInfo {
 
 	// Route to provider-specific balance checker
 	switch {
+	case strings.Contains(host, "commandcode"):
+		return fetchCommandCodeBalance(apiKey)
 	case strings.Contains(host, "deepseek"):
 		return fetchDeepseekBalance(apiKey)
 	case strings.Contains(host, "openai"):
@@ -182,6 +184,132 @@ func fetchProviderBalance(baseURL, apiKey, format string) BalanceInfo {
 	default:
 		// Generic OpenAI-compatible: try to extract rate limits from models endpoint
 		return fetchGenericBalance(apiKey, baseURL, format)
+	}
+}
+
+func fetchCommandCodeBalance(apiKey string) BalanceInfo {
+	client := &http.Client{Timeout: 7 * time.Second}
+
+	type ccResult struct {
+		usage  []byte
+		credit []byte
+		sub    []byte
+		err    error
+	}
+
+	base := "https://api.commandcode.ai"
+	fetch := func(path string) []byte {
+		req, _ := http.NewRequest("GET", base+path, nil)
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != 200 {
+			return nil
+		}
+		return b
+	}
+
+	// Fetch all three in parallel
+	ch := make(chan ccResult, 1)
+	go func() {
+		u := fetch("/alpha/usage/summary")
+		c := fetch("/alpha/billing/credits")
+		s := fetch("/alpha/billing/subscriptions")
+		ch <- ccResult{usage: u, credit: c, sub: s}
+	}()
+
+	select {
+	case r := <-ch:
+		info := BalanceInfo{ProviderType: "commandcode", PlanType: "subscription"}
+
+		// Parse subscription
+		if r.sub != nil {
+			var sub struct {
+				Data struct {
+					PlanID            string `json:"planId"`
+					Status            string `json:"status"`
+					CurrentPeriodEnd  string `json:"currentPeriodEnd"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(r.sub, &sub) == nil {
+				info.PlanType = sub.Data.PlanID
+				if sub.Data.CurrentPeriodEnd != "" {
+					if t, err := time.Parse(time.RFC3339, sub.Data.CurrentPeriodEnd); err == nil {
+						info.RateInfo = "Resets " + t.Format("Jan 2")
+					}
+				}
+			}
+		}
+
+		// Parse credits
+		if r.credit != nil {
+			var cred struct {
+				Credits struct {
+					MonthlyCredits    float64 `json:"monthlyCredits"`
+					PurchasedCredits  float64 `json:"purchasedCredits"`
+					FreeCredits       float64 `json:"freeCredits"`
+				} `json:"credits"`
+				WindowLimits struct {
+					Limited bool `json:"limited"`
+					FiveHour struct {
+						Used      int  `json:"used"`
+						Cap       int  `json:"cap"`
+						Exceeded  bool `json:"exceeded"`
+					} `json:"fiveHour"`
+					Weekly struct {
+						Used      int  `json:"used"`
+						Cap       int  `json:"cap"`
+						Exceeded  bool `json:"exceeded"`
+					} `json:"weekly"`
+				} `json:"windowLimits"`
+			}
+			if json.Unmarshal(r.credit, &cred) == nil {
+				total := cred.Credits.MonthlyCredits + cred.Credits.PurchasedCredits + cred.Credits.FreeCredits
+				info.Balance = fmt.Sprintf("$%.2f", total)
+				info.Currency = "USD"
+
+				// Add rate limit info
+				wl := cred.WindowLimits
+				if wl.Limited {
+					info.RateInfo = fmt.Sprintf("5h: %d/%d · week: %d/%d",
+						wl.FiveHour.Used, wl.FiveHour.Cap,
+						wl.Weekly.Used, wl.Weekly.Cap)
+					if wl.FiveHour.Exceeded || wl.Weekly.Exceeded {
+						info.RateInfo += " ⚠️ limited"
+					}
+				}
+			}
+		}
+
+		// Parse usage
+		if r.usage != nil {
+			var usage struct {
+				TotalCredits float64 `json:"totalCredits"`
+				TotalCount   int     `json:"totalCount"`
+				TotalTokens  int64   `json:"totalTokens"`
+				SuccessRate  float64 `json:"successRate"`
+			}
+			if json.Unmarshal(r.usage, &usage) == nil {
+				info.TotalUsed = fmt.Sprintf("$%.4f", usage.TotalCredits)
+				if usage.TotalCount > 0 {
+					tokensStr := fmt.Sprintf("%d", usage.TotalTokens)
+					if usage.TotalTokens > 1e6 {
+						tokensStr = fmt.Sprintf("%.1fM", float64(usage.TotalTokens)/1e6)
+					}
+					info.RateInfo += fmt.Sprintf(" · %d req · %s tok · %.0f%% ok",
+						usage.TotalCount, tokensStr, usage.SuccessRate)
+				}
+			}
+		}
+
+		return info
+
+	case <-time.After(7 * time.Second):
+		return BalanceInfo{ProviderType: "commandcode", Error: "timeout"}
 	}
 }
 
