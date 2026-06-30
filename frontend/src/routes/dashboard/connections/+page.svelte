@@ -593,7 +593,13 @@
     viewingModelsOf = conn;
     modelsList = [];
     modelsSearch = '';
-    await loadModelsForConnection(conn.id);
+    // If connection is part of a group, load models from ALL connections in the group
+    const group = groupedConnections.find(g => g.connections.some(c => c.id === conn.id));
+    if (group && group.connections.length > 1) {
+      await loadModelsForGroup(group.connections.map(c => c.id));
+    } else {
+      await loadModelsForConnection(conn.id);
+    }
   }
 
   function closeModelsViewer() {
@@ -601,6 +607,39 @@
     modelsList = [];
     modelsSearch = '';
     modelSyncing = false;
+  }
+
+  async function loadModelsForGroup(connIds: string[]) {
+    modelsLoading = true;
+    try {
+      // Load models from all connections in parallel, merge and deduplicate
+      const results = await Promise.allSettled(
+        connIds.map(id => api.get<any>(`/api/models/discovered?connection_id=${encodeURIComponent(id)}`))
+      );
+      const seen = new Map<string, any>();
+      for (const r of results) {
+        if (r.status === 'fulfilled') {
+          const models = r.value?.data || [];
+          for (const m of models) {
+            if (!seen.has(m.model_id)) {
+              seen.set(m.model_id, m);
+            } else {
+              // Keep the one that's active, or the newer one
+              const existing = seen.get(m.model_id);
+              if (m.is_active === 1 && existing.is_active !== 1) {
+                seen.set(m.model_id, m);
+              }
+            }
+          }
+        }
+      }
+      modelsList = [...seen.values()];
+    } catch (e: any) {
+      modelsList = [];
+      showToast('Failed to load models: ' + (e.message || 'unknown'), 'error');
+    } finally {
+      modelsLoading = false;
+    }
   }
 
   async function loadModelsForConnection(connId: string) {
@@ -625,12 +664,35 @@
   async function syncModelsInViewer(connId: string) {
     modelSyncing = true;
     try {
-      const res = await api.post<any>('/api/models/sync/' + connId, {});
-      const synced = res.synced ?? res.data?.models_count ?? null;
-      // Refresh both: viewer list + connection card count
-      await Promise.all([loadModelsForConnection(connId), fetchConnections()]);
-      if (synced !== null) {
-        showToast(`Synced ${synced} model(s)`, 'success');
+      // Find all connections in the same group
+      const group = groupedConnections.find(g => g.connections.some(c => c.id === connId));
+      const connIds = (group && group.connections.length > 1)
+        ? group.connections.filter(c => c.is_active).map(c => c.id)
+        : [connId];
+
+      // Sync all connections in the group (parallel)
+      const results = await Promise.allSettled(
+        connIds.map(id => api.post<any>('/api/models/sync/' + id, {}))
+      );
+      const totalSynced = results.reduce((sum, r) => {
+        if (r.status === 'fulfilled') {
+          return sum + (r.value?.synced ?? r.value?.data?.models_count ?? 0);
+        }
+        return sum;
+      }, 0);
+
+      // Refresh: viewer list (from group) + connection card counts
+      if (group && group.connections.length > 1) {
+        await Promise.all([loadModelsForGroup(group.connections.map(c => c.id)), fetchConnections()]);
+      } else {
+        await Promise.all([loadModelsForConnection(connId), fetchConnections()]);
+      }
+
+      const syncedCount = results.filter(r => r.status === 'fulfilled').length;
+      if (connIds.length > 1) {
+        showToast(`Synced ${totalSynced || 'models'} across ${syncedCount}/${connIds.length} accounts`, 'success');
+      } else if (totalSynced > 0) {
+        showToast(`Synced ${totalSynced} model(s)`, 'success');
       } else {
         showToast('Sync complete', 'success');
       }
