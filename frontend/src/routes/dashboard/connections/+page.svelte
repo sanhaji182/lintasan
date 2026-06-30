@@ -59,6 +59,9 @@
   let searchQuery = $state('');
   let openMenuConnId = $state<string | null>(null);
 
+  // Pool editing state
+  let poolEditText = $state('');
+
   const filteredConnections = $derived.by(() => {
     if (!searchQuery.trim()) return connections;
     const q = searchQuery.toLowerCase();
@@ -67,6 +70,30 @@
       c.format?.toLowerCase().includes(q) ||
       c.pool_id?.toLowerCase().includes(q)
     );
+  });
+  // Sort state for connections table
+  type SortKey = 'name' | 'format' | 'priority' | 'pool' | 'models';
+  let sortKey = $state<SortKey>('priority');
+  let sortAsc = $state(false); // default: highest priority first
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) { sortAsc = !sortAsc; } else { sortKey = key; sortAsc = true; }
+  }
+
+  const sortedConnections = $derived.by(() => {
+    const list = [...filteredConnections];
+    list.sort((a, b) => {
+      let cmp = 0;
+      switch (sortKey) {
+        case 'name': cmp = (a.name || '').localeCompare(b.name || ''); break;
+        case 'format': cmp = (a.format || '').localeCompare(b.format || ''); break;
+        case 'priority': cmp = (a.priority || 0) - (b.priority || 0); break;
+        case 'pool': cmp = (a.pool_id || '').localeCompare(b.pool_id || 'zzz'); break;
+        case 'models': cmp = (a.models_count || 0) - (b.models_count || 0); break;
+      }
+      return sortAsc ? cmp : -cmp;
+    });
+    return list;
   });
 
   // Close dropdown menu on outside click
@@ -1489,302 +1516,152 @@
       </div>
     </div>
   {:else}
-    <!-- Group connections by pool -->
-    {#snippet connectionCard(conn: any)}
-      <div class="card relative connection-card" style="padding: 20px;">
-        <div class="absolute" style="top: 16px; right: 16px; width: 8px; height: 8px; border-radius: 50%; background: {conn.is_active ? 'var(--color-success)' : 'var(--color-error)'}; box-shadow: 0 0 {conn.is_active ? '8px rgba(16,185,129,0.5)' : '8px rgba(239,68,68,0.5)'};"></div>
-
-        <div class="flex items-center gap-3 mb-3">
-          <div class="flex items-center justify-center rounded-lg" style="width: 36px; height: 36px; background: var(--color-primary-light); border-radius: 10px;">
-            <Link2 size={18} style="color: var(--color-primary);" />
-          </div>
-          <div>
-            <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0);">{conn.name}</div>
-            <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono);">{conn.base_url}</div>
-          </div>
-        </div>
-
-        <div class="flex flex-wrap gap-2 mb-3">
-          <span class="badge" style="background: var(--color-purple-light); color: var(--color-purple);">{conn.format}</span>
-          {#if conn.oauth_provider}
-            <span class="badge" style="background: rgba(139,92,246,0.15); color: #a78bfa;">OAuth:{conn.oauth_provider}</span>
-          {/if}
-          <span class="badge" style="background: var(--color-info-light); color: var(--color-info);">P{conn.priority}</span>
-          <span class="badge" style="background: var(--color-border-light); color: var(--color-fg-2);">{conn.models_count || 0} models</span>
-
-          <!-- Pool badge with inline edit + reassign dropdown -->
-          {#if editingPool === conn.id}
-            <div style="display: flex; gap: 4px; align-items: center; position: relative;">
-              <input
-                type="text"
-                bind:value={conn._poolEdit}
-                placeholder="pool name"
-                style="font-size: 10px; padding: 2px 6px; width: 90px; border: 1px solid var(--color-primary); border-radius: 4px; font-family: var(--font-mono); background: var(--color-bg-card); color: var(--color-fg-0);"
-                onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') setPoolId(conn.id, conn._poolEdit.trim()); if (e.key === 'Escape') editingPool = null; }}
-              />
-              <!-- Quick reassign: dropdown pick existing pool -->
-              {#if pools.length > 0}
-                <select
-                  style="font-size: 10px; padding: 2px 4px; border: 1px solid var(--color-border); border-radius: 4px; font-family: var(--font-mono); background: var(--color-bg-card); color: var(--color-fg-0); cursor: pointer;"
-                  onchange={(e: Event) => { conn._poolEdit = (e.target as HTMLSelectElement).value; }}
-                  title="Quick pick an existing pool"
-                >
-                  <option value="">pick pool…</option>
-                  {#each pools as p}
-                    <option value={p.pool_id}>{p.pool_id} ({p.num_accounts})</option>
-                  {/each}
-                </select>
-              {/if}
-              <button onclick={() => setPoolId(conn.id, conn._poolEdit.trim())} style="all: unset; cursor: pointer; color: var(--color-success);" title="Save"><Check size={14} /></button>
-              <button onclick={() => editingPool = null} style="all: unset; cursor: pointer; color: var(--color-fg-3);" title="Cancel"><X size={14} /></button>
-            </div>
-          {:else if conn.pool_id}
-            <div style="display: flex; gap: 4px; align-items: center;">
-              <span class="badge" style="background: rgba(99,102,241,0.12); color: #818cf8; cursor: pointer; display: flex; align-items: center; gap: 4px; border: 1px dashed transparent; transition: all 0.15s;"
-                onclick={() => { conn._poolEdit = conn.pool_id; editingPool = conn.id; }}
-                onmouseenter={(e) => e.currentTarget.style.borderColor = 'var(--color-primary)'}
-                onmouseleave={(e) => e.currentTarget.style.borderColor = 'transparent'}
-                title="Click to change pool (pool: {conn.pool_id})">
-                <Layers size={11} />{conn.pool_id}
-                <span style="font-size: 9px; opacity: 0.5; cursor: pointer;" title="Edit pool">✎</span>
-              </span>
-              <!-- Quick reassign: one-click move -->
-              {#if pools.length > 1}
-                <select
-                  style="font-size: 9px; padding: 1px 2px; border: 1px solid var(--color-border); border-radius: 3px; width: 20px; height: 18px; background: var(--color-bg-card); color: var(--color-fg-3); cursor: pointer; opacity: 0.5;"
-                  onchange={(e: Event) => {
-                    const target = (e.target as HTMLSelectElement).value;
-                    if (target) setPoolId(conn.id, target);
-                    (e.target as HTMLSelectElement).value = '';
-                  }}
-                  title="Quick assign to another pool"
-                >
-                  <option value="" style="color: var(--color-fg-3);">⇄</option>
-                  {#each pools.filter(p => p.pool_id !== conn.pool_id) as p}
-                    <option value={p.pool_id}>{p.pool_id}</option>
-                  {/each}
-                </select>
-              {/if}
-            </div>
-          {:else}
-            <span class="badge" style="background: var(--color-border-light); color: var(--color-fg-3); cursor: pointer; opacity: 0.6; display: flex; align-items: center; gap: 3px; transition: all 0.15s;"
-              onclick={() => { conn._poolEdit = ''; editingPool = conn.id; }}
-              onmouseenter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.border = '1px dashed var(--color-primary)'; }}
-              onmouseleave={(e) => { e.currentTarget.style.opacity = '0.6'; e.currentTarget.style.border = '1px solid transparent'; }}
-              title="Click to add to pool">
-              + pool
-            </span>
-          {/if}
-        </div>
-
-        {#if conn.api_key}
-          <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono); margin-bottom: 12px; padding: 4px 8px; background: var(--color-bg-body); border-radius: 4px;">{conn.api_key}</div>
-        {:else if conn.oauth_provider}
-          <div style="font-size: 11px; color: var(--color-fg-3); margin-bottom: 12px;">Token from OAuth IDE session</div>
-        {/if}
-
-        <div class="flex items-center gap-2">
-          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
-            {#if conn.is_active}<ToggleRight size={16} style="color: var(--color-success);" />{:else}<ToggleLeft size={16} />{/if}
-          </button>
-          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => testConn(conn.id)} disabled={testing === conn.id}>
-            <TestTube2 size={14} /> {testing === conn.id ? '...' : 'Test'}
-          </button>
-          <!-- Kebab menu -->
-          <div class="kebab-menu-container" style="position: relative;">
-            <button class="btn-secondary flex items-center justify-center" style="padding: 6px 8px; font-size: 14px; letter-spacing: 1px;" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }}>
-              ⋯
-            </button>
-            {#if openMenuConnId === conn.id}
-              <div style="position: absolute; right: 0; top: calc(100% + 4px); background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); min-width: 160px; z-index: 100; padding: 4px; animation: fadeInScale 0.15s ease-out;">
-                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}>
-                  <Eye size={14} /> Models
-                </button>
-                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; syncModels(conn.id); }}>
-                  <RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /> Sync
-                </button>
-                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; conn._poolEdit = conn.pool_id || ''; editingPool = conn.id; }}>
-                  <Layers size={14} /> Pool
-                </button>
-                <div style="height: 1px; background: var(--color-border); margin: 4px 0;"></div>
-                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-error, #ef4444); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}>
-                  <Trash2 size={14} /> Delete
-                </button>
-              </div>
-            {/if}
-          </div>
-        </div>
-      </div>
-    {/snippet}
-
-    {#snippet poolConnectionRow(conn: any)}
-      <div class="connection-row" style="display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; background: var(--color-bg-body); transition: all 0.12s; position: relative;">
-        <div style="width: 8px; height: 8px; border-radius: 50%; background: {conn.is_active ? 'var(--color-success)' : 'var(--color-error)'}; box-shadow: 0 0 8px {conn.is_active ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)'}; flex-shrink: 0;" title={conn.is_active ? 'Active' : 'Inactive'}></div>
-        <div style="flex: 1; min-width: 0;">
-          <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em;">{conn.name}</div>
-          {#if conn.api_key}
-            <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px;" title={conn.api_key}>{conn.api_key}</div>
-          {:else if conn.oauth_provider}
-            <div style="font-size: 11px; color: #a78bfa; margin-top: 1px;">OAuth:{conn.oauth_provider}</div>
-          {/if}
-        </div>
-        <div style="display: flex; gap: 6px; align-items: center; flex-shrink: 0;">
-          <span class="badge" style="font-size: 11px; padding: 2px 7px; background: var(--color-info-light); color: var(--color-info);">P{conn.priority}</span>
-          <span class="badge" style="font-size: 11px; padding: 2px 7px; background: var(--color-border-light); color: var(--color-fg-2);">{conn.models_count || 0} models</span>
-        </div>
-        <!-- Pool badge — always visible, quick-edit on click -->
-        <div style="display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
-          {#if editingPool === conn.id}
-            <div style="display: flex; gap: 4px; align-items: center; background: var(--color-bg-card); border: 1px solid var(--color-primary); border-radius: 6px; padding: 3px 6px;">
-              <input type="text" bind:value={conn._poolEdit} placeholder="pool" style="font-size: 11px; padding: 2px 4px; width: 70px; border: none; outline: none; background: transparent; color: var(--color-fg-0); font-family: var(--font-mono);" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') setPoolId(conn.id, conn._poolEdit.trim()); if (e.key === 'Escape') editingPool = null; }} />
-              {#if pools.length > 0}
-                <select style="font-size: 10px; padding: 2px 2px; border: none; outline: none; border-left: 1px solid var(--color-border); background: transparent; color: var(--color-fg-2); cursor: pointer; font-family: var(--font-mono);" onchange={(e: Event) => { conn._poolEdit = (e.target as HTMLSelectElement).value; }} title="Existing pools">
-                  <option value="">pick…</option>
-                  {#each pools as p}
-                    <option value={p.pool_id}>{p.pool_id}</option>
-                  {/each}
-                </select>
-              {/if}
-              <button onclick={() => setPoolId(conn.id, conn._poolEdit.trim())} style="all: unset; cursor: pointer; color: var(--color-success); padding: 0 2px;" title="Save"><Check size={14} /></button>
-              <button onclick={() => editingPool = null} style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 0 2px;" title="Cancel"><X size={14} /></button>
-            </div>
-          {:else if conn.pool_id}
-            <button
-              style="all: unset; display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 600; color: #818cf8; background: rgba(99,102,241,0.08); font-family: var(--font-mono); transition: all 0.12s;"
-              onclick={() => { conn._poolEdit = conn.pool_id; editingPool = conn.id; }}
-              onmouseenter={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.15)'; e.currentTarget.style.color = '#6366f1'; }}
-              onmouseleave={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.08)'; e.currentTarget.style.color = '#818cf8'; }}
-              title="Click to change pool">
-              <Layers size={12} />
-              {conn.pool_id}
-            </button>
-            {#if pools.length > 1}
-              <select
-                style="font-size: 9px; padding: 1px 2px; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-bg-card); color: var(--color-fg-3); cursor: pointer; opacity: 0.4;"
-                onchange={(e: Event) => { const t = (e.target as HTMLSelectElement).value; if (t) setPoolId(conn.id, t); (e.target as HTMLSelectElement).value = ''; }}
-                title="Quick reassign">
-                <option value="">⇄</option>
-                {#each pools.filter(p => p.pool_id !== conn.pool_id) as p}
-                  <option value={p.pool_id}>{p.pool_id}</option>
-                {/each}
-              </select>
-            {/if}
-          {:else}
-            <button
-              style="all: unset; display: flex; align-items: center; gap: 3px; padding: 3px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500; color: var(--color-fg-3); border: 1px dashed var(--color-border); transition: all 0.12s;"
-              onclick={() => { conn._poolEdit = ''; editingPool = conn.id; }}
-              onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--color-primary)'; e.currentTarget.style.color = 'var(--color-primary)'; e.currentTarget.style.background = 'rgba(99,102,241,0.04)'; }}
-              onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-fg-3)'; e.currentTarget.style.background = 'transparent'; }}
-              title="Add to a pool">
-              + pool
-            </button>
-          {/if}
-        </div>
-        <div style="display: flex; gap: 2px; align-items: center; flex-shrink: 0; opacity: 0.5; transition: opacity 0.12s;" class="row-actions">
-          <button class="btn-icon-mini" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
-            {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
-          </button>
-          <button class="btn-icon-mini" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test"><TestTube2 size={14} /></button>
-          <!-- Kebab menu for pool rows -->
-          <div class="kebab-menu-container" style="position: relative;">
-            <button class="btn-icon-mini" style="font-size: 14px; letter-spacing: 1px;" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} title="More actions">
-              ⋯
-            </button>
-            {#if openMenuConnId === conn.id}
-              <div style="position: absolute; right: 0; top: calc(100% + 4px); background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); min-width: 160px; z-index: 100; padding: 4px; animation: fadeInScale 0.15s ease-out;">
-                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}>
-                  <Eye size={14} /> Models
-                </button>
-                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; syncModels(conn.id); }}>
-                  <RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /> Sync
-                </button>
-                <div style="height: 1px; background: var(--color-border); margin: 4px 0;"></div>
-                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-error, #ef4444); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}>
-                  <Trash2 size={14} /> Delete
-                </button>
-              </div>
-            {/if}
-          </div>
-        </div>
-      </div>
-    {/snippet}
-
-    <!-- Group by pool -->
-    {#each pools as pool}
-      {@const poolConns = filteredConnections.filter(c => c.pool_id === pool.pool_id)}
-      {#if poolConns.length > 0}
-        <div id="pool-{pool.pool_id}" style="margin-bottom: 20px; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg-card); box-shadow: 0 2px 8px rgba(99,102,241,0.06); scroll-margin-top: 20px;">
-          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--color-border);">
-            <div style="width: 28px; height: 28px; border-radius: 8px; background: var(--color-primary-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-              <Layers size={14} style="color: var(--color-primary);" />
-            </div>
-            <div style="flex: 1; min-width: 0;">
-              <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-0); font-family: var(--font-mono);">{pool.pool_id}</div>
-              <div style="font-size: 11px; color: var(--color-fg-3);">
-                {poolConns[0]?.base_url}
-                <span style="margin: 0 6px; opacity: 0.4;">·</span>
-                <span class="badge" style="font-size: 9px; background: var(--color-purple-light); color: var(--color-purple); padding: 1px 5px;">{poolConns[0]?.format}</span>
-                <span style="margin: 0 6px; opacity: 0.4;">·</span>
-                {poolConns.length} key{poolConns.length !== 1 ? 's' : ''} · round-robin
-                {#if pool.success_rate > 0}
-                  <span style="margin: 0 6px; opacity: 0.4;">·</span>
-                  <span style="color: {pool.success_rate >= 0.95 ? 'var(--color-success)' : pool.success_rate >= 0.7 ? 'var(--color-warning)' : 'var(--color-error)'};">{(pool.success_rate * 100).toFixed(0)}%</span>
-                {/if}
-              </div>
-            </div>
-            <!-- Compact health bar -->
-            <div style="display: flex; gap: 3px; align-items: flex-end; height: 20px; flex-shrink: 0;">
-              {#each poolConns as c}
-                <div
-                  style="width: 4px; height: {c.is_active ? '100%' : '30%'}; border-radius: 2px; background: var(--color-success); opacity: 0.5; transition: height 0.3s;"
-                  title="{c.name} · {c.is_active ? 'active' : 'inactive'}"
-                ></div>
-              {/each}
-            </div>
-            <!-- Quick add another key to this pool -->
-            <button
-              class="btn-secondary flex items-center gap-1"
-              style="padding: 5px 10px; font-size: 11px; border-radius: 6px; flex-shrink: 0;"
-              onclick={() => { form = { ...form, pool_id: pool.pool_id, name: pool.pool_id + '-', base_url: poolConns[0]?.base_url || '', format: poolConns[0]?.format || 'openai' }; showForm = true; testResult = null; setTimeout(() => { document.getElementById('add-connection-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 50); }}
-              title="Add another API key to {pool.pool_id}"
-            >
-              <Plus size={12} />
-              Add key
-            </button>
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            {#each poolConns as conn}
-              {@render poolConnectionRow(conn)}
-            {/each}
-          </div>
-        </div>
-      {/if}
-    {/each}
-
-    <!-- Ungrouped connections (no pool) -->
-    {@const unpooled = filteredConnections.filter(c => !c.pool_id)}
-    {#if unpooled.length > 0}
-      {#if pools.length > 0}
-        <div style="margin-bottom: 20px;">
-          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
-            <Layers size={14} style="color: var(--color-fg-3);" />
-            <span style="font-size: 13px; font-weight: 600; color: var(--color-fg-2);">Ungrouped</span>
-            <span style="font-size: 11px; color: var(--color-fg-3);">{unpooled.length} connection{unpooled.length !== 1 ? 's' : ''}</span>
-            <span class="badge" style="font-size: 10px; background: var(--color-bg-body); color: var(--color-fg-3); cursor: help;" title="These connections aren't part of any pool. Click the '+pool' badge on a connection to add it to a pool for load balancing and failover.">ⓘ what's this?</span>
-          </div>
-          <div style="display: flex; flex-direction: column; gap: 4px;">
-            {#each unpooled as conn}
-              {@render poolConnectionRow(conn)}
-            {/each}
-          </div>
-        </div>
+    <!-- Connections Table -->
+    <div class="card" style="padding: 0; overflow: hidden;">
+      {#if sortedConnections.length === 0}
+        <EmptyState title="No matching connections" description="Try adjusting your search filter." />
       {:else}
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3" style="gap: 16px;">
-          {#each unpooled as conn}
-            {@render connectionCard(conn)}
-          {/each}
+        <div style="overflow-x: auto;">
+          <table class="data-table connections-table">
+            <thead>
+              <tr>
+                <th style="width: 40px;">Status</th>
+                <th class="sortable-th" onclick={() => toggleSort('name')} style="min-width: 180px; cursor: pointer;">
+                  Name {#if sortKey === 'name'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
+                </th>
+                <th class="sortable-th" onclick={() => toggleSort('format')} style="min-width: 100px; cursor: pointer;">
+                  Format {#if sortKey === 'format'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
+                </th>
+                <th class="sortable-th col-hide-mobile" onclick={() => toggleSort('priority')} style="width: 70px; cursor: pointer;">
+                  Priority {#if sortKey === 'priority'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
+                </th>
+                <th class="sortable-th col-hide-mobile" onclick={() => toggleSort('pool')} style="min-width: 110px; cursor: pointer;">
+                  Pool {#if sortKey === 'pool'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
+                </th>
+                <th class="sortable-th" onclick={() => toggleSort('models')} style="width: 70px; cursor: pointer;">
+                  Models {#if sortKey === 'models'}<span class="sort-arrow">{sortAsc ? '↑' : '↓'}</span>{/if}
+                </th>
+                <th style="width: 140px; text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each sortedConnections as conn (conn.id)}
+                <tr>
+                  <td>
+                    <span
+                      style="display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: {conn.is_active ? 'var(--color-success)' : 'var(--color-fg-3)'};"
+                      title={conn.is_active ? 'Active' : 'Inactive'}
+                    ></span>
+                  </td>
+                  <td style="max-width: 220px;">
+                    <div style="font-weight: 600; color: var(--color-fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title={conn.name}>{conn.name}</div>
+                    {#if conn.api_key}
+                      <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;" title={conn.api_key}>{conn.api_key}</div>
+                    {:else if conn.oauth_provider}
+                      <div style="font-size: 11px; color: #a78bfa; margin-top: 2px;">OAuth:{conn.oauth_provider}</div>
+                    {/if}
+                  </td>
+                  <td>
+                    <span class="badge" style="background: var(--color-purple-light); color: var(--color-purple);">{conn.format}</span>
+                  </td>
+                  <td class="col-hide-mobile" style="font-family: var(--font-mono); font-size: 13px; color: var(--color-fg-1);">{conn.priority}</td>
+                  <td class="col-hide-mobile">
+                    {#if conn.pool_id}
+                      <span class="badge" style="background: var(--color-primary-light); color: var(--color-primary); font-family: var(--font-mono);">{conn.pool_id}</span>
+                    {:else}
+                      <span style="color: var(--color-fg-3);">—</span>
+                    {/if}
+                  </td>
+                  <td style="font-family: var(--font-mono); font-size: 13px; color: var(--color-fg-1);">{conn.models_count || 0}</td>
+                  <td style="text-align: right;">
+                    <div class="flex items-center justify-end gap-1">
+                      <button class="btn-secondary" style="padding: 4px 6px; font-size: 11px;" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
+                        <TestTube2 size={13} />
+                      </button>
+                      <button class="btn-secondary" style="padding: 4px 6px; font-size: 11px;" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
+                        {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
+                      </button>
+                      <div class="kebab-menu-container" style="position: relative;">
+                        <button class="btn-secondary" style="padding: 4px 6px; font-size: 13px; letter-spacing: 1px;" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }}>
+                          ⋯
+                        </button>
+                        {#if openMenuConnId === conn.id}
+                          <div style="position: absolute; right: 0; top: calc(100% + 4px); background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); min-width: 170px; z-index: 100; padding: 4px; animation: fadeInScale 0.15s ease-out;">
+                            <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}>
+                              <Cpu size={14} /> Models
+                            </button>
+                            <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; syncModels(conn.id); }}>
+                              <RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /> Sync
+                            </button>
+                            {#if !conn.pool_id}
+                              <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}>
+                                <Layers size={14} /> Edit Pool
+                              </button>
+                            {/if}
+                            <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}>
+                              <Copy size={14} /> Copy API Key
+                            </button>
+                            <div style="height: 1px; background: var(--color-border); margin: 4px 0;"></div>
+                            <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-error, #ef4444); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}>
+                              <Trash2 size={14} /> Delete
+                            </button>
+                          </div>
+                        {/if}
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
         </div>
       {/if}
+    </div>
+
+    <!-- Pool inline editing (shown when editingPool is set) -->
+    {#if editingPool}
+      <div style="margin-top: 12px; padding: 12px 16px; border: 1px solid var(--color-primary); border-radius: 10px; background: var(--color-bg-card); display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <Layers size={14} style="color: var(--color-primary); flex-shrink: 0;" />
+        <span style="font-size: 12px; color: var(--color-fg-2);">Set pool for connection:</span>
+        <input
+          type="text"
+          bind:value={connections.find(c => c.id === editingPool)?._poolEdit}
+          placeholder="pool name"
+          style="font-size: 12px; padding: 4px 8px; width: 120px; border: 1px solid var(--color-border); border-radius: 6px; font-family: var(--font-mono); background: var(--color-bg-body); color: var(--color-fg-0);"
+          onkeydown={(e: KeyboardEvent) => {
+            const conn = connections.find(c => c.id === editingPool);
+            if (e.key === 'Enter' && conn) setPoolId(conn.id, conn._poolEdit?.trim());
+            if (e.key === 'Escape') editingPool = null;
+          }}
+        />
+        {#if pools.length > 0}
+          <select
+            style="font-size: 11px; padding: 4px 6px; border: 1px solid var(--color-border); border-radius: 6px; font-family: var(--font-mono); background: var(--color-bg-body); color: var(--color-fg-0); cursor: pointer;"
+            onchange={(e: Event) => {
+              const conn = connections.find(c => c.id === editingPool);
+              if (conn) conn._poolEdit = (e.target as HTMLSelectElement).value;
+            }}
+          >
+            <option value="">pick existing…</option>
+            {#each pools as p}
+              <option value={p.pool_id}>{p.pool_id}</option>
+            {/each}
+          </select>
+        {/if}
+        <button
+          class="btn-primary"
+          style="padding: 4px 10px; font-size: 11px;"
+          onclick={() => {
+            const conn = connections.find(c => c.id === editingPool);
+            if (conn) setPoolId(conn.id, conn._poolEdit?.trim());
+          }}
+        >
+          <Check size={12} /> Save
+        </button>
+        <button class="btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick={() => editingPool = null}>
+          Cancel
+        </button>
+      </div>
     {/if}
   {/if}
 
@@ -1964,13 +1841,6 @@
 </div>
 
 <style>
-  .connection-card {
-    transition: var(--transition);
-  }
-  .connection-card:hover {
-    box-shadow: var(--shadow-md);
-  }
-
   .oauth-lab-card {
     padding: 16px 20px;
     border-color: rgba(139, 92, 246, 0.28);
@@ -2015,45 +1885,51 @@
     60%  { transform: scale(0.97); box-shadow: 0 0 0 6px rgba(59,130,246,0); }
     100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(59,130,246,0); }
   }
-  /* Pool card entrance animation */
-  @keyframes poolCardPop {
-    0%   { transform: scale(0.95); opacity: 0; }
-    60%  { transform: scale(1.02); opacity: 1; }
-    100% { transform: scale(1);    opacity: 1; }
+  /* Connections table styles */
+  .connections-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
   }
-  /* Compact row inside pool group */
-  .connection-row {
-    transition: background 0.12s, box-shadow 0.12s;
-  }
-  .connection-row:hover {
-    background: var(--color-bg-card) !important;
-    box-shadow: 0 1px 4px rgba(99,102,241,0.08);
-  }
-  .connection-row .row-actions {
-    opacity: 0.3;
-    transition: opacity 0.12s;
-  }
-  .connection-row:hover .row-actions {
-    opacity: 1;
-  }
-  .btn-icon-mini {
-    all: unset;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 26px;
-    border-radius: 5px;
+  .connections-table th {
+    text-align: left;
+    padding: 12px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
     color: var(--color-fg-3);
-    transition: all 0.12s;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg-body);
+    white-space: nowrap;
+    user-select: none;
   }
-  .btn-icon-mini:hover:not(:disabled) {
-    background: var(--color-border-light);
+  .connections-table th.sortable-th:hover {
     color: var(--color-fg-0);
+    background: var(--color-bg-sidebar-hover);
   }
-  .btn-icon-mini:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
+  .connections-table th .sort-arrow {
+    font-size: 10px;
+    color: var(--color-primary);
+    margin-left: 2px;
+  }
+  .connections-table td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--color-border-light);
+    vertical-align: middle;
+  }
+  .connections-table tr:hover td {
+    background: var(--color-bg-sidebar-hover);
+  }
+  .connections-table td .badge {
+    font-size: 11px;
+    padding: 2px 8px;
+  }
+
+  /* Responsive: hide Priority and Pool columns on narrow screens */
+  @media (max-width: 768px) {
+    .col-hide-mobile {
+      display: none !important;
+    }
   }
 </style>
