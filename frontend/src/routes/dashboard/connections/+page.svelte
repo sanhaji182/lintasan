@@ -55,6 +55,33 @@
   let oauthExpanded = $state(false);
   let presetsExpanded = $state(false);
 
+  // Connection search/filter state
+  let searchQuery = $state('');
+  let openMenuConnId = $state<string | null>(null);
+
+  const filteredConnections = $derived.by(() => {
+    if (!searchQuery.trim()) return connections;
+    const q = searchQuery.toLowerCase();
+    return connections.filter(c =>
+      c.name?.toLowerCase().includes(q) ||
+      c.format?.toLowerCase().includes(q) ||
+      c.pool_id?.toLowerCase().includes(q)
+    );
+  });
+
+  // Close dropdown menu on outside click
+  $effect(() => {
+    if (!openMenuConnId) return;
+    function handleClick(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.kebab-menu-container')) {
+        openMenuConnId = null;
+      }
+    }
+    document.addEventListener('click', handleClick, true);
+    return () => document.removeEventListener('click', handleClick, true);
+  });
+
   // Pool management state
   let pools = $state<{
     pool_id: string; num_accounts: number;
@@ -736,7 +763,25 @@
           <div style="font-size: 20px; font-weight: 700; color: var(--color-fg-0); font-family: var(--font-mono);">{stat.value}</div>
         </div>
       {/each}
+      </div>
+      </div>
+
+  <!-- Search/Filter Bar -->
+  <div class="card mb-5" style="padding: 12px 16px;">
+    <div class="relative" style="max-width: 400px;">
+      <Search size={14} style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--color-fg-3); pointer-events: none;" />
+      <input
+        class="input-field"
+        placeholder="Filter by name, format, or pool..."
+        bind:value={searchQuery}
+        style="padding-left: 32px; font-size: 12px; padding-top: 7px; padding-bottom: 7px; width: 100%;"
+      />
     </div>
+    {#if searchQuery.trim()}
+      <div style="font-size: 11px; color: var(--color-fg-3); margin-top: 6px;">
+        {filteredConnections.length} of {connections.length} connection{connections.length !== 1 ? 's' : ''} match
+      </div>
+    {/if}
   </div>
 
   <!-- Actions -->
@@ -1399,7 +1444,7 @@
                   <div style="flex: 1; height: 100%; background: var(--color-border); border-radius: 2px;"></div>
                 {/if}
               </div>
-              <span style="font-size: 10px; font-weight: 600; color: var(--color-fg-1); font-family: var(--font-mono); white-space: nowrap;">{(pool.success_rate * 100).toFixed(0)}%</span>
+              <span style="font-size: 10px; font-weight: 600; color: {pool.total_requests === 0 ? 'var(--color-fg-3)' : 'var(--color-fg-1)'}; font-family: var(--font-mono); white-space: nowrap;">{pool.total_requests === 0 ? '—%' : (pool.success_rate * 100).toFixed(0) + '%'}</span>
             </div>
             <div style="display: flex; gap: 10px; margin-top: 6px; font-size: 10px; color: var(--color-fg-3);">
               <span title="Requests served">✓ {pool.success_count}</span>
@@ -1545,15 +1590,29 @@
           <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => testConn(conn.id)} disabled={testing === conn.id}>
             <TestTube2 size={14} /> {testing === conn.id ? '...' : 'Test'}
           </button>
-          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => openModelsViewer(conn)} title="View discovered models">
-            <Eye size={14} /> Models
-          </button>
-          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync models from upstream">
-            <RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /> Sync
-          </button>
-          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px; color: var(--color-error);" onclick={() => deleteConn(conn.id)}>
-            <Trash2 size={14} />
-          </button>
+          <!-- Kebab menu -->
+          <div class="kebab-menu-container" style="position: relative;">
+            <button class="btn-secondary flex items-center justify-center" style="padding: 6px 8px; font-size: 14px; letter-spacing: 1px;" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }}>
+              ⋯
+            </button>
+            {#if openMenuConnId === conn.id}
+              <div style="position: absolute; right: 0; top: calc(100% + 4px); background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); min-width: 160px; z-index: 100; padding: 4px; animation: fadeInScale 0.15s ease-out;">
+                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}>
+                  <Eye size={14} /> Models
+                </button>
+                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; syncModels(conn.id); }}>
+                  <RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /> Sync
+                </button>
+                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; conn._poolEdit = conn.pool_id || ''; editingPool = conn.id; }}>
+                  <Layers size={14} /> Pool
+                </button>
+                <div style="height: 1px; background: var(--color-border); margin: 4px 0;"></div>
+                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-error, #ef4444); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}>
+                  <Trash2 size={14} /> Delete
+                </button>
+              </div>
+            {/if}
+          </div>
         </div>
       </div>
     {/snippet}
@@ -1626,16 +1685,33 @@
             {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
           </button>
           <button class="btn-icon-mini" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test"><TestTube2 size={14} /></button>
-          <button class="btn-icon-mini" onclick={() => openModelsViewer(conn)} title="Models"><Eye size={14} /></button>
-          <button class="btn-icon-mini" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync"><RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /></button>
-          <button class="btn-icon-mini" style="color: var(--color-error);" onclick={() => deleteConn(conn.id)} title="Delete"><Trash2 size={14} /></button>
+          <!-- Kebab menu for pool rows -->
+          <div class="kebab-menu-container" style="position: relative;">
+            <button class="btn-icon-mini" style="font-size: 14px; letter-spacing: 1px;" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} title="More actions">
+              ⋯
+            </button>
+            {#if openMenuConnId === conn.id}
+              <div style="position: absolute; right: 0; top: calc(100% + 4px); background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.15); min-width: 160px; z-index: 100; padding: 4px; animation: fadeInScale 0.15s ease-out;">
+                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}>
+                  <Eye size={14} /> Models
+                </button>
+                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-fg-1); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'var(--color-bg-sidebar-hover)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; syncModels(conn.id); }}>
+                  <RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /> Sync
+                </button>
+                <div style="height: 1px; background: var(--color-border); margin: 4px 0;"></div>
+                <button style="all: unset; display: flex; align-items: center; gap: 8px; padding: 8px 10px; width: 100%; box-sizing: border-box; cursor: pointer; font-size: 12px; color: var(--color-error, #ef4444); border-radius: 4px; transition: background 0.1s;" onmouseenter={(e) => e.currentTarget.style.background = 'rgba(239,68,68,0.08)'} onmouseleave={(e) => e.currentTarget.style.background = 'transparent'} onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}>
+                  <Trash2 size={14} /> Delete
+                </button>
+              </div>
+            {/if}
+          </div>
         </div>
       </div>
     {/snippet}
 
     <!-- Group by pool -->
     {#each pools as pool}
-      {@const poolConns = connections.filter(c => c.pool_id === pool.pool_id)}
+      {@const poolConns = filteredConnections.filter(c => c.pool_id === pool.pool_id)}
       {#if poolConns.length > 0}
         <div id="pool-{pool.pool_id}" style="margin-bottom: 20px; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg-card); box-shadow: 0 2px 8px rgba(99,102,241,0.06); scroll-margin-top: 20px;">
           <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--color-border);">
@@ -1686,7 +1762,7 @@
     {/each}
 
     <!-- Ungrouped connections (no pool) -->
-    {@const unpooled = connections.filter(c => !c.pool_id)}
+    {@const unpooled = filteredConnections.filter(c => !c.pool_id)}
     {#if unpooled.length > 0}
       {#if pools.length > 0}
         <div style="margin-bottom: 20px;">
