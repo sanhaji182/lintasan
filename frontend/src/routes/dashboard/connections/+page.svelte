@@ -131,16 +131,17 @@
   }
 
   const groupedConnections = $derived.by(() => {
-    const groups = new Map<string, { key: string; label: string; connections: any[]; active: number; totalModels: number }>();
+    const groups = new Map<string, { key: string; label: string; connections: any[]; active: number; totalModels: number; baseURL: string; formats: Set<string> }>();
     for (const conn of sortedConnections) {
       const key = conn.pool_id || extractProvider(conn.base_url || '');
       if (!groups.has(key)) {
-        groups.set(key, { key, label: '', connections: [], active: 0, totalModels: 0 });
+        groups.set(key, { key, label: '', connections: [], active: 0, totalModels: 0, baseURL: conn.base_url || '', formats: new Set() });
       }
       const g = groups.get(key)!;
       g.connections.push(conn);
       if (conn.is_active) g.active++;
-      g.totalModels += conn.models_count || 0;
+      g.totalModels = Math.max(g.totalModels, conn.models_count || 0); // unique count: max across accounts (shared models)
+      if (conn.format) g.formats.add(conn.format);
     }
     // Set labels after grouping
     for (const g of groups.values()) {
@@ -1765,12 +1766,16 @@
                 <div class="conn-group-header-left">
                   <span class="conn-group-chevron" class:rotated={!isCollapsed}><ChevronRight size={16} /></span>
                   <span class="conn-group-label">{group.label}</span>
+                  {#each [...group.formats] as fmt}
+                    <span class="badge conn-format-badge">{fmt}</span>
+                  {/each}
                   <span class="conn-group-count">{group.connections.length} accounts</span>
                 </div>
                 <div class="conn-group-header-right">
+                  <span class="conn-group-url" title={group.baseURL}>{group.baseURL}</span>
                   <span class="conn-group-stat">
                     <span class="conn-group-stat-dot active"></span>
-                    {group.active}/{group.connections.length} active
+                    {group.active}/{group.connections.length}
                   </span>
                   {#if group.totalModels > 0}
                     <span class="conn-group-stat">
@@ -2307,6 +2312,15 @@
     gap: 4px;
     font-size: 11px;
     color: var(--color-fg-2);
+  }
+  .conn-group-url {
+    font-size: 10px;
+    color: var(--color-fg-3);
+    font-family: var(--font-mono);
+    max-width: 200px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .conn-group-stat-dot {
     width: 6px;
