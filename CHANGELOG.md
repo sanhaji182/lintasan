@@ -10,6 +10,15 @@ semantic-ish versioning.
 > history as a reference point; `v0.24.0` is the first release of the new
 > numbering scheme (the `.24` keeps continuity with the prior work).
 
+## [0.27.0] — 2026-06-30
+
+### Changed
+- **Connections page: complete table redesign.** Replaced card-based layout with
+  a professional data table featuring sortable columns (Status, Name, Format,
+  Priority, Pool, Models, Actions), status dots, format/pool badges, and a ⋯
+  kebab menu for secondary actions. Responsive — Priority and Pool columns
+  hidden on mobile. File reduced from 2059 to 1935 lines.
+
 ## [0.26.3] — 2026-06-30
 
 ### Fixed
