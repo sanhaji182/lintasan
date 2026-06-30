@@ -10,16 +10,37 @@ import (
 	"time"
 )
 
+// RateWindow represents a usage window (5h, weekly, daily, etc.)
+type RateWindow struct {
+	Name      string  `json:"name"`       // e.g., "5-hour", "weekly", "daily"
+	Used      float64 `json:"used"`       // Requests used in window
+	Cap       float64 `json:"cap"`        // Max requests in window
+	Exceeded  bool    `json:"exceeded"`   // Whether window limit was hit
+}
+
+// UsageStats represents request-level usage statistics.
+type UsageStats struct {
+	TotalRequests int     `json:"total_requests"`
+	TotalTokens   int64   `json:"total_tokens"`
+	TotalCredits  float64 `json:"total_credits"` // Dollar amount used
+	SuccessRate   float64 `json:"success_rate"`  // 0-100
+}
+
 // BalanceInfo represents the credit/usage information from a provider.
 type BalanceInfo struct {
-	Balance      string  `json:"balance"`       // Current balance (e.g., "$95.20" or "9520 credits")
-	TotalUsed    string  `json:"total_used"`    // Total amount used
-	Currency     string  `json:"currency"`      // USD, credits, etc.
-	PlanType     string  `json:"plan_type"`     // prepaid, subscription, free, etc.
-	RateInfo     string  `json:"rate_info"`     // Rate limit info if available
-	ProviderType string  `json:"provider_type"` // deepseek, openai, commandcode, etc.
-	UpdatedAt    string  `json:"updated_at"`    // When this info was fetched
-	Error        string  `json:"error,omitempty"` // Error message if fetch failed
+	Balance      string       `json:"balance"`       // Current balance (e.g., "$95.20" or "9520 credits")
+	TotalUsed    string       `json:"total_used"`    // Total amount used
+	Currency     string       `json:"currency"`      // USD, credits, etc.
+	PlanType     string       `json:"plan_type"`     // prepaid, subscription, free, etc.
+	RateInfo     string       `json:"rate_info"`     // Legacy: flat rate info string (for non-CC providers)
+	ProviderType string       `json:"provider_type"` // deepseek, openai, commandcode, etc.
+	UpdatedAt    string       `json:"updated_at"`    // When this info was fetched
+	Error        string       `json:"error,omitempty"` // Error message if fetch failed
+
+	// Structured fields (populated for CommandCode, empty for others)
+	RateWindows  []RateWindow `json:"rate_windows,omitempty"`
+	Usage        *UsageStats  `json:"usage,omitempty"`
+	BillingReset string       `json:"billing_reset,omitempty"` // e.g., "Jul 28"
 }
 
 // balanceCache caches balance info per connection ID to avoid spamming providers.
@@ -226,49 +247,45 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 	case r := <-ch:
 		info := BalanceInfo{ProviderType: "commandcode", PlanType: "subscription"}
 
-		// Debug: if credit is nil, note it
-		if r.credit == nil {
-			info.Error = "credits endpoint returned nil"
-		}
-
-		// Parse subscription
+		// Parse subscription → billing reset
 		if r.sub != nil {
 			var sub struct {
 				Data struct {
-					PlanID            string `json:"planId"`
-					Status            string `json:"status"`
-					CurrentPeriodEnd  string `json:"currentPeriodEnd"`
+					PlanID           string `json:"planId"`
+					Status           string `json:"status"`
+					CurrentPeriodEnd string `json:"currentPeriodEnd"`
 				} `json:"data"`
 			}
 			if json.Unmarshal(r.sub, &sub) == nil {
 				info.PlanType = sub.Data.PlanID
 				if sub.Data.CurrentPeriodEnd != "" {
 					if t, err := time.Parse(time.RFC3339, sub.Data.CurrentPeriodEnd); err == nil {
-						info.RateInfo = "Resets " + t.Format("Jan 2")
+						info.BillingReset = t.Format("Jan 2")
+						info.RateInfo = "Resets " + info.BillingReset
 					}
 				}
 			}
 		}
 
-		// Parse credits
+		// Parse credits → balance + rate windows
 		if r.credit != nil {
 			var cred struct {
 				Credits struct {
-					MonthlyCredits    float64 `json:"monthlyCredits"`
-					PurchasedCredits  float64 `json:"purchasedCredits"`
-					FreeCredits       float64 `json:"freeCredits"`
+					MonthlyCredits   float64 `json:"monthlyCredits"`
+					PurchasedCredits float64 `json:"purchasedCredits"`
+					FreeCredits      float64 `json:"freeCredits"`
 				} `json:"credits"`
 				WindowLimits struct {
-					Limited bool `json:"limited"`
+					Limited  bool `json:"limited"`
 					FiveHour struct {
-						Used      float64  `json:"used"`
-						Cap       float64  `json:"cap"`
-						Exceeded  bool `json:"exceeded"`
+						Used     float64 `json:"used"`
+						Cap      float64 `json:"cap"`
+						Exceeded bool    `json:"exceeded"`
 					} `json:"fiveHour"`
 					Weekly struct {
-						Used      float64  `json:"used"`
-						Cap       float64  `json:"cap"`
-						Exceeded  bool `json:"exceeded"`
+						Used     float64 `json:"used"`
+						Cap      float64 `json:"cap"`
+						Exceeded bool    `json:"exceeded"`
 					} `json:"weekly"`
 				} `json:"windowLimits"`
 			}
@@ -277,9 +294,14 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 				info.Balance = fmt.Sprintf("$%.2f", total)
 				info.Currency = "USD"
 
-				// Add rate limit info
+				// Structured rate windows
 				wl := cred.WindowLimits
 				if wl.Limited {
+					info.RateWindows = []RateWindow{
+						{Name: "5-hour", Used: wl.FiveHour.Used, Cap: wl.FiveHour.Cap, Exceeded: wl.FiveHour.Exceeded},
+						{Name: "weekly", Used: wl.Weekly.Used, Cap: wl.Weekly.Cap, Exceeded: wl.Weekly.Exceeded},
+					}
+					// Legacy flat string (kept for backward compat)
 					info.RateInfo += fmt.Sprintf(" · 5h: %d/%d · week: %d/%d",
 						int(wl.FiveHour.Used), int(wl.FiveHour.Cap),
 						int(wl.Weekly.Used), int(wl.Weekly.Cap))
@@ -292,7 +314,7 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 			}
 		}
 
-		// Parse usage
+		// Parse usage → structured stats
 		if r.usage != nil {
 			var usage struct {
 				TotalCredits float64 `json:"totalCredits"`
@@ -302,6 +324,12 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 			}
 			if json.Unmarshal(r.usage, &usage) == nil {
 				info.TotalUsed = fmt.Sprintf("$%.4f", usage.TotalCredits)
+				info.Usage = &UsageStats{
+					TotalRequests: usage.TotalCount,
+					TotalTokens:   usage.TotalTokens,
+					TotalCredits:  usage.TotalCredits,
+					SuccessRate:   usage.SuccessRate,
+				}
 				if usage.TotalCount > 0 {
 					tokensStr := fmt.Sprintf("%d", usage.TotalTokens)
 					if usage.TotalTokens > 1e6 {

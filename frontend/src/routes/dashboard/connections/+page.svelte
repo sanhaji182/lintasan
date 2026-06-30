@@ -1687,17 +1687,44 @@
                   {#if conn.pool_id}
                     <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
                   {/if}
-                  {#if balances[conn.id]?.balance}
+                  {#if balances[conn.id]?.balance && !balances[conn.id]?.rate_windows?.length}
                     <span class="badge conn-balance-badge" title="Credit: {balances[conn.id].balance}{balances[conn.id].rate_info ? ' · ' + balances[conn.id].rate_info : ''}">
                       💰 {balances[conn.id].balance}
                     </span>
-                  {:else if balances[conn.id]?.rate_info}
+                  {:else if balances[conn.id]?.rate_info && !balances[conn.id]?.rate_windows?.length}
                     <span class="badge conn-rate-badge" title={balances[conn.id].rate_info}>
                       ⚡ {balances[conn.id].rate_info}
                     </span>
                   {/if}
                   <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
                 </div>
+                {#if balances[conn.id]?.rate_windows?.length}
+                  <div class="conn-balance-detail">
+                    <div class="conn-balance-detail-header">
+                      <span class="conn-balance-credit">💰 {balances[conn.id].balance}</span>
+                      <span class="conn-balance-plan">{balances[conn.id].plan_type}</span>
+                      {#if balances[conn.id].billing_reset}
+                        <span class="conn-balance-reset">📅 Resets {balances[conn.id].billing_reset}</span>
+                      {/if}
+                    </div>
+                    <div class="conn-balance-windows">
+                      {#each balances[conn.id].rate_windows as win}
+                        <div class="conn-balance-window" class:exceeded={win.exceeded}>
+                          <span class="conn-balance-window-label">{win.name === '5-hour' ? '🕐 5h' : '📅 Week'}</span>
+                          <div class="conn-balance-window-bar">
+                            <div class="conn-balance-window-fill" style="width: {win.cap > 0 ? Math.min(100, (win.used / win.cap) * 100) : 0}%"></div>
+                          </div>
+                          <span class="conn-balance-window-text">{Math.round(win.used)}/{Math.round(win.cap)}</span>
+                        </div>
+                      {/each}
+                    </div>
+                    {#if balances[conn.id].usage}
+                      <div class="conn-balance-usage">
+                        {balances[conn.id].usage.total_requests} req · {balances[conn.id].usage.total_tokens > 1000000 ? (balances[conn.id].usage.total_tokens / 1000000).toFixed(1) + 'M' : balances[conn.id].usage.total_tokens} tok · {balances[conn.id].usage.success_rate.toFixed(0)}% ok
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
               </div>
               <div class="conn-card-actions">
                 <button class="btn-secondary conn-action-btn" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
@@ -1774,17 +1801,44 @@
                           {#if conn.pool_id}
                             <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
                           {/if}
-                          {#if balances[conn.id]?.balance}
+                          {#if balances[conn.id]?.balance && !balances[conn.id]?.rate_windows?.length}
                             <span class="badge conn-balance-badge" title="Credit: {balances[conn.id].balance}">
                               💰 {balances[conn.id].balance}
                             </span>
-                          {:else if balances[conn.id]?.rate_info}
+                          {:else if balances[conn.id]?.rate_info && !balances[conn.id]?.rate_windows?.length}
                             <span class="badge conn-rate-badge" title={balances[conn.id].rate_info}>
                               ⚡ {balances[conn.id].rate_info}
                             </span>
                           {/if}
                           <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
                         </div>
+                        {#if balances[conn.id]?.rate_windows?.length}
+                          <div class="conn-balance-detail">
+                            <div class="conn-balance-detail-header">
+                              <span class="conn-balance-credit">💰 {balances[conn.id].balance}</span>
+                              <span class="conn-balance-plan">{balances[conn.id].plan_type}</span>
+                              {#if balances[conn.id].billing_reset}
+                                <span class="conn-balance-reset">📅 Resets {balances[conn.id].billing_reset}</span>
+                              {/if}
+                            </div>
+                            <div class="conn-balance-windows">
+                              {#each balances[conn.id].rate_windows as win}
+                                <div class="conn-balance-window" class:exceeded={win.exceeded}>
+                                  <span class="conn-balance-window-label">{win.name === '5-hour' ? '🕐 5h' : '📅 Week'}</span>
+                                  <div class="conn-balance-window-bar">
+                                    <div class="conn-balance-window-fill" style="width: {win.cap > 0 ? Math.min(100, (win.used / win.cap) * 100) : 0}%"></div>
+                                  </div>
+                                  <span class="conn-balance-window-text">{Math.round(win.used)}/{Math.round(win.cap)}</span>
+                                </div>
+                              {/each}
+                            </div>
+                            {#if balances[conn.id].usage}
+                              <div class="conn-balance-usage">
+                                {balances[conn.id].usage.total_requests} req · {balances[conn.id].usage.total_tokens > 1000000 ? (balances[conn.id].usage.total_tokens / 1000000).toFixed(1) + 'M' : balances[conn.id].usage.total_tokens} tok · {balances[conn.id].usage.success_rate.toFixed(0)}% ok
+                              </div>
+                            {/if}
+                          </div>
+                        {/if}
                       </div>
                       <div class="conn-card-actions">
                         <button class="btn-secondary conn-action-btn" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test">
@@ -2410,6 +2464,93 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* ── Balance detail strip (CommandCode structured data) ── */
+  .conn-balance-detail {
+    margin-top: 8px;
+    padding: 8px 10px;
+    background: var(--color-bg-1);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .conn-balance-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .conn-balance-credit {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--color-success);
+    font-family: var(--font-mono);
+  }
+  .conn-balance-plan {
+    font-size: 10px;
+    padding: 1px 6px;
+    background: var(--color-bg-2);
+    color: var(--color-fg-2);
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .conn-balance-reset {
+    font-size: 11px;
+    color: var(--color-fg-3);
+    margin-left: auto;
+  }
+  .conn-balance-windows {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .conn-balance-window {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+  }
+  .conn-balance-window.exceeded {
+    opacity: 0.7;
+  }
+  .conn-balance-window-label {
+    font-size: 11px;
+    color: var(--color-fg-2);
+    white-space: nowrap;
+    min-width: 48px;
+  }
+  .conn-balance-window-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--color-bg-2);
+    border-radius: 2px;
+    overflow: hidden;
+    min-width: 40px;
+  }
+  .conn-balance-window-fill {
+    height: 100%;
+    background: var(--color-success);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+  .conn-balance-window.exceeded .conn-balance-window-fill {
+    background: var(--color-error, #ef4444);
+  }
+  .conn-balance-window-text {
+    font-size: 10px;
+    color: var(--color-fg-3);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    min-width: 28px;
+    text-align: right;
+  }
+  .conn-balance-usage {
+    font-size: 10px;
+    color: var(--color-fg-3);
+    font-family: var(--font-mono);
+    margin-top: 2px;
   }
   .conn-card-models {
     font-size: 11px;
