@@ -10,6 +10,19 @@ semantic-ish versioning.
 > history as a reference point; `v0.24.0` is the first release of the new
 > numbering scheme (the `.24` keeps continuity with the prior work).
 
+## [0.26.1] — 2026-06-30
+
+### Changed
+- **Savings page redesign:** migrated from hardcoded dark-theme Tailwind to
+  design system CSS variables — 4-column summary grid, breakdown cards with
+  icons, proper table styling matching the rest of the dashboard.
+
+### Tests
+- 5 new connection pool CRUD tests (create, multi-pool, patch, delete, empty state).
+
+### Housekeeping
+- `.gitignore`: added coverage reports, dev utility commands, and dist-bin.
+
 ## [0.26.0] — 2026-06-30
 
 ### Added
