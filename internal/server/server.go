@@ -250,6 +250,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /api/connections", s.handlePatchConnection)
 	s.mux.HandleFunc("DELETE /api/connections", s.handleDeleteConnection)
 	s.mux.HandleFunc("DELETE /api/connections/{id}", s.handleDeleteConnection)
+	s.mux.HandleFunc("GET /api/connections/pools", s.handleGetConnectionPools)
 	s.mux.HandleFunc("POST /api/connections/import-curl", s.handleCurlImport)
 
 	// Provider Preset Management (CRUD)

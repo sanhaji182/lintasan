@@ -99,6 +99,10 @@ type ProxyHandler struct {
 	shadowStats *provider.ShadowAggregator
 
 	oauthMgr *auth.OAuthManager // IDE OAuth session → upstream bearer overlay
+
+	// Multi-account pools: pool_id → MultiAccountLB
+	mabMu           sync.RWMutex
+	multiAccountLBs map[string]*lb.MultiAccountLB
 }
 
 func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
@@ -175,6 +179,7 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 	ph.loadQuotaLimits(database)
 	ph.initProviderSDK(database)
 	ph.hydrateExperimentalProviders()
+	ph.initMultiAccountPools()
 	go ph.prewarmConnectionPool()
 
 	return ph
@@ -220,6 +225,7 @@ type Connection struct {
 	BaseURL       string `json:"base_url"`
 	APIKey        string `json:"api_key"`
 	OAuthProvider string `json:"oauth_provider,omitempty"` // 9router OAuth id: xai, claude, github, ...
+	PoolID        string `json:"pool_id,omitempty"`        // multi-account pool group
 	Format        string `json:"format"`
 	ChatPath      string `json:"chat_path"`
 	AuthHeader    string `json:"auth_header"`
@@ -790,9 +796,19 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		// Retry wrapper around upstream call
 		var resp *http.Response
+		var poolAccountID string
 		retryErr := retry.Do(r.Context(), retry.DefaultConfig(), func() (bool, error) {
 			var err error
-			resp, err = p.doUpstream(r, conn, body)
+			// Multi-account pool: pick account and inject into a copy
+			retryConn := conn
+			if conn.PoolID != "" {
+				var pickedKey string
+				pickedKey, poolAccountID = p.pickMultiAccountAPIKey(conn.PoolID, retryConn.APIKey)
+				cpy := *retryConn
+				cpy.APIKey = pickedKey
+				retryConn = &cpy
+			}
+			resp, err = p.doUpstream(r, retryConn, body)
 			if err != nil {
 				return true, err // retry on connection errors
 			}
@@ -806,6 +822,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		if retryErr != nil {
 			lastErr = retryErr.Error()
 			breaker.Failure()
+			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
 			p.logRequest(resolvedModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				if should, reason := fallback.ShouldTriggerFallback(502, false, false); should {
@@ -823,6 +840,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
 			breaker.Failure()
+			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
 			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				if should, reason := fallback.ShouldTriggerFallback(resp.StatusCode, false, false); should {
@@ -837,6 +855,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
 			breaker.Failure()
+			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, true)
 			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				p.fb.RecordEvent(resolvedModel, "", fallback.Reason429, resp.StatusCode)
@@ -846,6 +865,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		// Success! Record to breaker
 		breaker.Success()
+		p.recordMultiAccountResult(conn.PoolID, poolAccountID, true, false)
 
 		// Record latency for load balancer
 		latencyMs := float64(time.Since(start).Milliseconds())
@@ -1030,14 +1050,14 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 func (p *ProxyHandler) findConnectionByID(id string) (*Connection, error) {
 	row := p.db.Conn().QueryRow(`
-		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority
+		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority, COALESCE(pool_id,'')
 		FROM connections
 		WHERE id = ? AND is_active = 1
 		LIMIT 1
 	`, id)
 
 	var conn Connection
-	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority)
+	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID)
 	if err != nil {
 		return nil, fmt.Errorf("connection not found: %s", id)
 	}
@@ -1354,7 +1374,30 @@ func (p *ProxyHandler) resolveRoute(model string) ([]*Connection, string, string
 	// giving up — fallback across MODELS, not just across connections of the
 	// same model. Deduplicated by connection ID.
 	candidates = p.appendModelFallbacks(candidates, model)
+	// Deduplicate by pool: keep only one connection per pool_id
+	candidates = p.dedupCandidatesByPool(candidates)
 	return candidates, model, "", nil
+}
+
+// dedupCandidatesByPool returns a deduplicated slice where at most one
+// connection per non-empty pool_id is kept (any extra connections from
+// the same pool are dropped). Connections with empty pool_id are kept.
+func (p *ProxyHandler) dedupCandidatesByPool(candidates []*Connection) []*Connection {
+	seenPools := make(map[string]bool)
+	out := make([]*Connection, 0, len(candidates))
+	for _, c := range candidates {
+		if c == nil {
+			continue
+		}
+		if c.PoolID != "" {
+			if seenPools[c.PoolID] {
+				continue // already have a connection from this pool
+			}
+			seenPools[c.PoolID] = true
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // appendModelFallbacks expands a candidate list with connections serving the
@@ -1671,7 +1714,7 @@ func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*
 
 func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error) {
 	row := p.db.Conn().QueryRow(`
-		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority
+		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority, COALESCE(c.pool_id,'')
 		FROM discovered_models m
 		JOIN connections c ON m.connection_id = c.id
 		WHERE m.model_id = ? AND m.is_active = 1 AND c.is_active = 1
@@ -1680,7 +1723,7 @@ func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error)
 	`, model)
 
 	var conn Connection
-	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority)
+	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID)
 	if err != nil {
 		return nil, fmt.Errorf("model not found: %s", model)
 	}
@@ -1690,7 +1733,7 @@ func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error)
 
 func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
 	row := p.db.Conn().QueryRow(`
-		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority
+		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority, COALESCE(pool_id,'')
 		FROM connections
 		WHERE is_active = 1
 		ORDER BY priority DESC
@@ -1698,7 +1741,7 @@ func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
 	`)
 
 	var conn Connection
-	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority)
+	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID)
 	if err != nil {
 		return nil, fmt.Errorf("no active connections")
 	}

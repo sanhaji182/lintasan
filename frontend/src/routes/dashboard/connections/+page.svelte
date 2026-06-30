@@ -7,7 +7,7 @@
   import { showToast } from '$lib/toast';
   import { OAUTH_IDE_PRESETS, type OAuthIdePreset } from '$lib/oauthIdePresets';
   import { brandForProvider, logoPaths } from '$lib/oauthIdeBrands';
-  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert } from 'lucide-svelte';
+  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers } from 'lucide-svelte';
 
   let connections = $state<any[]>([]);
   let loading = $state(true);
@@ -52,8 +52,22 @@
   let oauthIdeEnabled = $state(false);
   let oauthSessions = $state<{ provider: string; status: string }[]>([]);
   let wiringOAuth = $state('');
+  let oauthExpanded = $state(false);
+  let presetsExpanded = $state(false);
 
-  let form = $state({ name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' as string });
+  // Pool management state
+  let pools = $state<{
+    pool_id: string; num_accounts: number;
+    success_count: number; fail_count: number;
+    total_requests: number; success_rate: number;
+    rate_limited: number; available_count: number;
+  }[]>([]);
+  let poolsLoading = $state(true);
+  let editingPool = $state<string | null>(null); // connection id being pool-edited
+  let reassigningPool = $state<string | null>(null); // connection id being reassigned
+  let poolReassignTarget = $state(''); // target pool_id for reassign
+
+  let form = $state({ name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' as string, pool_id: '' as string });
 
   // Test-before-save state for the new-connection form
   let testingForm = $state(false);
@@ -73,7 +87,8 @@
   const summary = $derived({
     total: connections.length,
     active: connections.filter(c => c.is_active).length,
-    formats: [...new Set(connections.map(c => c.format))].length
+    formats: [...new Set(connections.map(c => c.format))].length,
+    pools: pools.length
   });
 
   // Categories as a key→{label,icon,color} map (derived from API state)
@@ -128,7 +143,8 @@
       api_key: '',
       format: p.format,
       priority: 5,
-      oauth_provider: p.oauth_provider
+      oauth_provider: p.oauth_provider,
+      pool_id: ''
     };
     testResult = null;
     showForm = true;
@@ -179,7 +195,8 @@
       api_key: '',
       format: preset.format,
       priority: 1,
-      oauth_provider: ''
+      oauth_provider: '',
+      pool_id: ''
     };
     testResult = null; // reset prior test result when picking a new preset
     showForm = true;
@@ -367,7 +384,7 @@
   }
 
   onMount(async () => {
-    await Promise.all([fetchPresets(), fetchConnections(), fetchCategories(), fetchOAuthLab()]);
+    await Promise.all([fetchPresets(), fetchConnections(), fetchCategories(), fetchOAuthLab(), fetchPools()]);
   });
 
   async function fetchConnections() {
@@ -377,6 +394,33 @@
       connections = res.data || [];
     } catch (e: any) { error = e.message; }
     finally { loading = false; }
+  }
+
+  async function fetchPools() {
+    poolsLoading = true;
+    try {
+      const res = await api.get<any>('/api/connections/pools');
+      pools = (res.data || []).map((p: any) => ({
+        pool_id: p.pool_id, num_accounts: p.num_accounts,
+        success_count: p.success_count || 0, fail_count: p.fail_count || 0,
+        total_requests: p.total_requests || 0, success_rate: p.success_rate || 0,
+        rate_limited: p.rate_limited || 0, available_count: p.available_count || 0
+      }));
+    } catch {
+      pools = [];
+    }
+    poolsLoading = false;
+  }
+
+  async function setPoolId(connId: string, poolId: string) {
+    try {
+      await api.patch('/api/connections', { id: connId, pool_id: poolId });
+      connections = connections.map(c => c.id === connId ? { ...c, pool_id: poolId } : c);
+      editingPool = null;
+      await fetchPools();
+    } catch (e: any) {
+      showToast('Failed to update pool: ' + e.message, 'error');
+    }
   }
 
   async function toggleActive(conn: any) {
@@ -636,14 +680,14 @@
       await api.post<any>('/api/connections', form);
       await fetchConnections();
       showForm = false;
-      form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' };
+      form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '', pool_id: '' };
       testResult = null;
     } catch (e: any) { error = e.message; }
   }
 
   function cancelForm() {
     showForm = false;
-    form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' };
+    form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '', pool_id: '' };
     testResult = null;
     testingForm = false;
     testBounce = false;
@@ -680,11 +724,12 @@
 <div style="animation: fadeInUp 0.4s ease-out;">
   <!-- Summary strip -->
   <div class="card mb-5" style="padding: 0; overflow: hidden;">
-    <div class="grid grid-cols-3" style="gap: 1px; background: var(--color-border);">
+    <div class="grid grid-cols-4" style="gap: 1px; background: var(--color-border);">
       {#each [
         { label: 'TOTAL', value: summary.total },
         { label: 'ACTIVE', value: summary.active },
-        { label: 'FORMATS', value: summary.formats }
+        { label: 'FORMATS', value: summary.formats },
+        { label: 'POOLS', value: summary.pools }
       ] as stat}
         <div class="text-center" style="padding: 16px 20px; background: var(--color-bg-card);">
           <div style="font-size: 11px; font-weight: 500; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">{stat.label}</div>
@@ -749,6 +794,26 @@
             <option value="anthropic">Anthropic</option>
             <option value="gemini">Gemini</option>
           </select>
+        </div>
+        <div>
+          <label for="connection-pool-id" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">
+            Pool ID <span style="font-size: 10px; color: var(--color-fg-3); font-weight: 400;">(optional — group multiple API keys for load balancing)</span>
+          </label>
+          <div style="display: flex; align-items: center; gap: 6px; background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; padding: 2px 2px 2px 10px;">
+            <Layers size={14} style="color: var(--color-fg-3); flex-shrink: 0;" />
+            <input id="connection-pool-id" class="input-field" bind:value={form.pool_id} placeholder="e.g. openai-prod" style="border: none; padding: 6px 4px; background: transparent; flex: 1; min-width: 0;" />
+            {#if pools.length > 0}
+              <select
+                style="font-size: 11px; padding: 6px 8px; border: none; border-left: 1px solid var(--color-border); border-radius: 0; background: transparent; color: var(--color-fg-2); cursor: pointer; font-family: var(--font-mono); width: auto; flex-shrink: 0;"
+                onchange={(e: Event) => { form.pool_id = (e.target as HTMLSelectElement).value; }}
+              >
+                <option value="">pick existing…</option>
+                {#each pools as p}
+                  <option value={p.pool_id}>{p.pool_id}</option>
+                {/each}
+              </select>
+            {/if}
+          </div>
         </div>
       </div>
       <!-- Test result banner — rich OpenAI-standard error display -->
@@ -890,7 +955,11 @@
 
   <!-- OAuth IDE lab presets (proxy wiring) -->
   <div class="card mb-5 oauth-lab-card">
-    <div class="flex items-center justify-between gap-3 mb-3 flex-wrap">
+    <button
+      class="flex items-center justify-between gap-3 flex-wrap w-full"
+      style="all: unset; cursor: pointer; padding: 0; width: 100%;"
+      onclick={() => oauthExpanded = !oauthExpanded}
+    >
       <div class="flex items-center gap-2">
         <ShieldAlert size={16} style="color: #a78bfa;" />
         <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin: 0;">OAuth IDE (lab)</h3>
@@ -900,85 +969,98 @@
           <span class="badge" style="background: var(--color-bg-3); color: var(--color-fg-3);">server off</span>
         {/if}
       </div>
-      <a href="/dashboard/oauth-ide" style="font-size: 12px; color: var(--color-primary);">Open OAuth IDE →</a>
-    </div>
-    <p style="font-size: 11px; color: var(--color-fg-3); margin: 0 0 12px;">
-      No API key — token from OAuth session. <strong>Add</strong> opens the form; <strong>Wire</strong> upserts the Accounts connection (needs active session).
-    </p>
-    <div class="oauth-preset-grid">
-      {#each OAUTH_IDE_PRESETS as op}
-        {@const brand = brandForProvider(op.oauth_provider)}
-        {@const hasSession = oauthSessionActive(op.oauth_provider)}
-        <div
-          class="oauth-preset-tile"
-          style="border-color: {brand.border}; background: linear-gradient(145deg, {brand.bg}, var(--color-bg-card));"
-        ><div class="flex items-center gap-2 mb-1">
-          <div style="width:22px;height:22px;border-radius:5px;background:{brand.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-            <svg viewBox="0 0 24 24" width="14" height="14">
-              {#each logoPaths(brand) as path}
-                <path d={path.d} fill={path.fill} />
-              {/each}
-            </svg>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <a href="/dashboard/oauth-ide" onclick={(e) => e.stopPropagation()} style="font-size: 12px; color: var(--color-primary);">Open OAuth IDE →</a>
+        <span style="transform: rotate({oauthExpanded ? '180deg' : '0deg'}); transition: transform 0.2s; font-size: 12px; color: var(--color-fg-3);">▾</span>
+      </div>
+    </button>
+    {#if oauthExpanded}
+      <p style="font-size: 11px; color: var(--color-fg-3); margin: 12px 0 12px;">
+        No API key — token from OAuth session. <strong>Add</strong> opens the form; <strong>Wire</strong> upserts the Accounts connection (needs active session).
+      </p>
+      <div class="oauth-preset-grid">
+        {#each OAUTH_IDE_PRESETS as op}
+          {@const brand = brandForProvider(op.oauth_provider)}
+          {@const hasSession = oauthSessionActive(op.oauth_provider)}
+          <div
+            class="oauth-preset-tile"
+            style="border-color: {brand.border}; background: linear-gradient(145deg, {brand.bg}, var(--color-bg-card));"
+          ><div class="flex items-center gap-2 mb-1">
+            <div style="width:22px;height:22px;border-radius:5px;background:{brand.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <svg viewBox="0 0 24 24" width="14" height="14">
+                {#each logoPaths(brand) as path}
+                  <path d={path.d} fill={path.fill} />
+                {/each}
+              </svg>
+            </div>
+            <div style="font-size: 12px; font-weight: 650; color: var(--color-fg-0);">{op.label}</div>
           </div>
-          <div style="font-size: 12px; font-weight: 650; color: var(--color-fg-0);">{op.label}</div>
-        </div>
-          <div style="font-size: 10px; color: {brand.color}; margin-top: 2px;">{brand.company}</div>
-          {#if hasSession}
-            <span style="font-size: 9px; color: #22c55e; font-weight: 600; margin-top: 6px; display: block;">● session</span>
-          {/if}
-          <div class="oauth-tile-actions">
-            <button type="button" class="btn-secondary" style="padding: 5px 8px; font-size: 10px;" onclick={() => pickOAuthIdePreset(op)}>
-              Add
-            </button>
-            <button
-              type="button"
-              class="btn-primary"
-              style="padding: 5px 8px; font-size: 10px;"
-              disabled={!oauthIdeEnabled || !hasSession || wiringOAuth === op.oauth_provider}
-              title={!hasSession ? 'Authorize in OAuth IDE first' : 'Upsert connection'}
-              onclick={() => quickWireOAuth(op.oauth_provider)}
-            >
-              {wiringOAuth === op.oauth_provider ? '…' : 'Wire'}
-            </button>
+            <div style="font-size: 10px; color: {brand.color}; margin-top: 2px;">{brand.company}</div>
+            {#if hasSession}
+              <span style="font-size: 9px; color: #22c55e; font-weight: 600; margin-top: 6px; display: block;">● session</span>
+            {/if}
+            <div class="oauth-tile-actions">
+              <button type="button" class="btn-secondary" style="padding: 5px 8px; font-size: 10px;" onclick={() => pickOAuthIdePreset(op)}>
+                Add
+              </button>
+              <button
+                type="button"
+                class="btn-primary"
+                style="padding: 5px 8px; font-size: 10px;"
+                disabled={!oauthIdeEnabled || !hasSession || wiringOAuth === op.oauth_provider}
+                title={!hasSession ? 'Authorize in OAuth IDE first' : 'Upsert connection'}
+                onclick={() => quickWireOAuth(op.oauth_provider)}
+              >
+                {wiringOAuth === op.oauth_provider ? '…' : 'Wire'}
+              </button>
+            </div>
           </div>
-        </div>
-      {/each}
-    </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   <!-- Provider Preset Catalog -->
   <div class="card mb-5" style="padding: 0; overflow: hidden;">
     <!-- Preset Header -->
-    <div style="padding: 16px 20px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+    <button
+      style="all: unset; cursor: pointer; padding: 16px 20px; border-bottom: 1px solid {presetsExpanded ? 'var(--color-border)' : 'transparent'}; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; width: 100%; box-sizing: border-box;"
+      onclick={() => presetsExpanded = !presetsExpanded}
+    >
       <div class="flex items-center gap-2">
         <Sparkles size={16} style="color: var(--color-primary);" />
         <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Provider Presets</h3>
         <span style="font-size: 11px; color: var(--color-fg-3);">Click to add · Manage to customize</span>
       </div>
-      <div class="flex items-center gap-2">
-        <div class="relative" style="width: 240px;">
-          <Search size={14} class="absolute" style="left: 10px; top: 50%; transform: translateY(-50%); color: var(--color-fg-3); pointer-events: none;" />
-          <input
-            class="input-field"
-            placeholder="Search providers..."
-            bind:value={presetSearch}
-            style="padding-left: 32px; font-size: 12px; padding-top: 6px; padding-bottom: 6px;"
-          />
+      <span style="transform: rotate({presetsExpanded ? '180deg' : '0deg'}); transition: transform 0.2s; font-size: 12px; color: var(--color-fg-3);">▾</span>
+    </button>
+    {#if presetsExpanded}
+      <!-- Search + action bar -->
+      <div style="padding: 12px 20px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+        <div class="flex items-center gap-2">
+          <div class="relative" style="width: 240px;">
+            <Search size={14} class="absolute" style="left: 10px; top: 50%; transform: translateY(-50%); color: var(--color-fg-3); pointer-events: none;" />
+            <input
+              class="input-field"
+              placeholder="Search providers..."
+              bind:value={presetSearch}
+              style="padding-left: 32px; font-size: 12px; padding-top: 6px; padding-bottom: 6px;"
+            />
+          </div>
+          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 12px; font-size: 12px;" onclick={() => openManage('categories')} title="Manage Categories">
+            <FolderTree size={14} />
+            Categories
+          </button>
+          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 12px; font-size: 12px;" onclick={() => openManage('presets')} title="Manage Presets">
+            <Settings size={14} />
+            Presets
+          </button>
+          <button class="btn-primary flex items-center gap-1" style="padding: 6px 12px; font-size: 12px;" onclick={startNewPreset}>
+            <Plus size={14} />
+            Add
+          </button>
         </div>
-        <button class="btn-secondary flex items-center gap-1" style="padding: 6px 12px; font-size: 12px;" onclick={() => openManage('categories')} title="Manage Categories">
-          <FolderTree size={14} />
-          Categories
-        </button>
-        <button class="btn-secondary flex items-center gap-1" style="padding: 6px 12px; font-size: 12px;" onclick={() => openManage('presets')} title="Manage Presets">
-          <Settings size={14} />
-          Presets
-        </button>
-        <button class="btn-primary flex items-center gap-1" style="padding: 6px 12px; font-size: 12px;" onclick={startNewPreset}>
-          <Plus size={14} />
-          Add
-        </button>
       </div>
-    </div>
 
     {#if presetsLoading || categoriesLoading}
       <div class="flex justify-center" style="padding: 40px;">
@@ -1063,6 +1145,7 @@
           {/if}
         {/each}
       </div>
+    {/if}
     {/if}
   </div>
 
@@ -1283,63 +1366,350 @@
     </div>
   {/if}
 
+  <!-- Pool Health Section -->
+  {#if pools.length > 0}
+    <div style="margin-bottom: 16px;">
+      <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
+        <Layers size={16} style="color: var(--color-primary);" />
+        Connection Pools
+        <span class="badge" style="font-size: 10px; background: var(--color-primary-light); color: var(--color-primary);">{pools.length}</span>
+      </h3>
+      <div class="flex flex-wrap" style="gap: 10px;">
+        {#each pools as pool}
+          <button
+            class="card"
+            style="padding: 12px 16px; min-width: 200px; width: auto; cursor: pointer; user-select: none; border-left: 3px solid {pool.available_count > 0 ? 'var(--color-success)' : pool.rate_limited > 0 ? 'var(--color-error)' : 'var(--color-warning)'}; transition: all 0.15s; text-align: left;"
+            onclick={() => { document.getElementById('pool-' + pool.pool_id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}
+            onmouseenter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 4px 12px rgba(99,102,241,0.1)'; }}
+            onmouseleave={(e) => { e.currentTarget.style.transform = ''; e.currentTarget.style.boxShadow = ''; }}
+            title="Click to jump to {pool.pool_id} connections"
+          >
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <div style="width: 8px; height: 8px; border-radius: 50%; background: {pool.available_count > 0 ? 'var(--color-success)' : 'var(--color-error)'}; box-shadow: 0 0 8px {pool.available_count > 0 ? 'rgba(16,185,129,0.4)' : 'rgba(239,68,68,0.4)'};"></div>
+              <span style="font-size: 13px; font-weight: 600; color: var(--color-fg-0); font-family: var(--font-mono);">{pool.pool_id}</span>
+              <span style="font-size: 10px; color: var(--color-fg-3); margin-left: auto;">{pool.num_accounts} acct</span>
+            </div>
+            <!-- Health mini-bars -->
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <div style="flex: 1; height: 4px; background: var(--color-border); border-radius: 2px; overflow: hidden; display: flex;">
+                {#if pool.total_requests > 0}
+                  <div style="width: {(pool.success_count / pool.total_requests * 100).toFixed(0)}%; height: 100%; background: var(--color-success); border-radius: 2px 0 0 2px; transition: width 0.3s;"></div>
+                  <div style="width: {(pool.fail_count / pool.total_requests * 100).toFixed(0)}%; height: 100%; background: var(--color-error); border-radius: 0 2px 2px 0; transition: width 0.3s;"></div>
+                {:else}
+                  <div style="flex: 1; height: 100%; background: var(--color-border); border-radius: 2px;"></div>
+                {/if}
+              </div>
+              <span style="font-size: 10px; font-weight: 600; color: var(--color-fg-1); font-family: var(--font-mono); white-space: nowrap;">{(pool.success_rate * 100).toFixed(0)}%</span>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 6px; font-size: 10px; color: var(--color-fg-3);">
+              <span title="Requests served">✓ {pool.success_count}</span>
+              <span title="Failed requests">✗ {pool.fail_count}</span>
+              <span title="Rate-limited accounts" class:rate-limited={pool.rate_limited > 0} style="color: {pool.rate_limited > 0 ? 'var(--color-error)' : 'var(--color-fg-3)'};">⚠ {pool.rate_limited}</span>
+              <span title="Healthy accounts" style="margin-left: auto; color: var(--color-success);">{pool.available_count} active</span>
+            </div>
+          </button>
+        {/each}
+      </div>
+    </div>
+  {:else if connections.length > 1}
+    <!-- No pools yet — show hint -->
+    <div style="margin-bottom: 16px; padding: 16px; border: 1px dashed var(--color-border); border-radius: 12px; background: var(--color-bg-body);">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--color-primary-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+          <Layers size={16} style="color: var(--color-primary);" />
+        </div>
+        <div style="flex: 1;">
+          <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-0);">Create a pool to load balance</div>
+          <div style="font-size: 11px; color: var(--color-fg-3); margin-top: 2px;">
+            Click <code style="background: var(--color-border-light); padding: 1px 4px; border-radius: 3px;">+ pool</code> on any connection card below to group API keys for automatic round-robin and failover.
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   {#if loading}
     <Spinner />
   {:else if connections.length === 0}
-    <div class="card">
+    <div class="card" style="text-align: center;">
       <EmptyState title="No connections" description="Pick a provider above to add your first LLM connection." />
+      <div style="margin-top: 16px; padding: 14px 18px; background: var(--color-bg-body); border-radius: 10px; text-align: left; font-size: 12px; color: var(--color-fg-2); line-height: 1.6;">
+        <div style="font-weight: 600; margin-bottom: 6px; color: var(--color-fg-0); display: flex; align-items: center; gap: 6px;"><Layers size={14} style="color: var(--color-primary);" /> Why use pools?</div>
+        <ul style="margin: 0; padding-left: 18px; list-style: disc;">
+          <li><strong>Load balance</strong> across multiple API keys for the same provider</li>
+          <li><strong>Auto failover</strong> — if one key gets rate-limited, the next takes over</li>
+          <li><strong>Priority draining</strong> — drain primary accounts first, fallback last</li>
+          <li>Group connections by provider model line (e.g. <code style="background: var(--color-bg-3); padding: 1px 4px; border-radius: 3px;">openai-prod</code>, <code style="background: var(--color-bg-3); padding: 1px 4px; border-radius: 3px;">anthropic-us</code>)</li>
+        </ul>
+      </div>
     </div>
   {:else}
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3" style="gap: 16px;">
-      {#each connections as conn}
-        <div class="card relative connection-card" style="padding: 20px;">
-          <div class="absolute" style="top: 16px; right: 16px; width: 8px; height: 8px; border-radius: 50%; background: {conn.is_active ? 'var(--color-success)' : 'var(--color-error)'}; box-shadow: 0 0 {conn.is_active ? '8px rgba(16,185,129,0.5)' : '8px rgba(239,68,68,0.5)'};"></div>
+    <!-- Group connections by pool -->
+    {#snippet connectionCard(conn: any)}
+      <div class="card relative connection-card" style="padding: 20px;">
+        <div class="absolute" style="top: 16px; right: 16px; width: 8px; height: 8px; border-radius: 50%; background: {conn.is_active ? 'var(--color-success)' : 'var(--color-error)'}; box-shadow: 0 0 {conn.is_active ? '8px rgba(16,185,129,0.5)' : '8px rgba(239,68,68,0.5)'};"></div>
 
-          <div class="flex items-center gap-3 mb-3">
-            <div class="flex items-center justify-center rounded-lg" style="width: 36px; height: 36px; background: var(--color-primary-light); border-radius: 10px;">
-              <Link2 size={18} style="color: var(--color-primary);" />
-            </div>
-            <div>
-              <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0);">{conn.name}</div>
-              <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono);">{conn.base_url}</div>
-            </div>
+        <div class="flex items-center gap-3 mb-3">
+          <div class="flex items-center justify-center rounded-lg" style="width: 36px; height: 36px; background: var(--color-primary-light); border-radius: 10px;">
+            <Link2 size={18} style="color: var(--color-primary);" />
           </div>
-
-          <div class="flex flex-wrap gap- 2 mb-3">
-            <span class="badge" style="background: var(--color-purple-light); color: var(--color-purple);">{conn.format}</span>
-            {#if conn.oauth_provider}
-              <span class="badge" style="background: rgba(139,92,246,0.15); color: #a78bfa;">OAuth:{conn.oauth_provider}</span>
-            {/if}
-            <span class="badge" style="background: var(--color-info-light); color: var(--color-info);">P{conn.priority}</span>
-            <span class="badge" style="background: var(--color-border-light); color: var(--color-fg-2);">{conn.models_count || 0} models</span>
-          </div>
-
-          {#if conn.api_key}
-            <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono); margin-bottom: 12px; padding: 4px 8px; background: var(--color-bg-body); border-radius: 4px;">{conn.api_key}</div>
-          {:else if conn.oauth_provider}
-            <div style="font-size: 11px; color: var(--color-fg-3); margin-bottom: 12px;">Token from OAuth IDE session</div>
-          {/if}
-
-          <div class="flex items-center gap-2">
-            <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
-              {#if conn.is_active}<ToggleRight size={16} style="color: var(--color-success);" />{:else}<ToggleLeft size={16} />{/if}
-            </button>
-            <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => testConn(conn.id)} disabled={testing === conn.id}>
-              <TestTube2 size={14} /> {testing === conn.id ? '...' : 'Test'}
-            </button>
-            <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => openModelsViewer(conn)} title="View discovered models">
-              <Eye size={14} /> Models
-            </button>
-            <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync models from upstream">
-              <RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /> Sync
-            </button>
-            <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px; color: var(--color-error);" onclick={() => deleteConn(conn.id)}>
-              <Trash2 size={14} />
-            </button>
+          <div>
+            <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0);">{conn.name}</div>
+            <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono);">{conn.base_url}</div>
           </div>
         </div>
-      {/each}
-    </div>
+
+        <div class="flex flex-wrap gap-2 mb-3">
+          <span class="badge" style="background: var(--color-purple-light); color: var(--color-purple);">{conn.format}</span>
+          {#if conn.oauth_provider}
+            <span class="badge" style="background: rgba(139,92,246,0.15); color: #a78bfa;">OAuth:{conn.oauth_provider}</span>
+          {/if}
+          <span class="badge" style="background: var(--color-info-light); color: var(--color-info);">P{conn.priority}</span>
+          <span class="badge" style="background: var(--color-border-light); color: var(--color-fg-2);">{conn.models_count || 0} models</span>
+
+          <!-- Pool badge with inline edit + reassign dropdown -->
+          {#if editingPool === conn.id}
+            <div style="display: flex; gap: 4px; align-items: center; position: relative;">
+              <input
+                type="text"
+                bind:value={conn._poolEdit}
+                placeholder="pool name"
+                style="font-size: 10px; padding: 2px 6px; width: 90px; border: 1px solid var(--color-primary); border-radius: 4px; font-family: var(--font-mono); background: var(--color-bg-card); color: var(--color-fg-0);"
+                onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') setPoolId(conn.id, conn._poolEdit.trim()); if (e.key === 'Escape') editingPool = null; }}
+              />
+              <!-- Quick reassign: dropdown pick existing pool -->
+              {#if pools.length > 0}
+                <select
+                  style="font-size: 10px; padding: 2px 4px; border: 1px solid var(--color-border); border-radius: 4px; font-family: var(--font-mono); background: var(--color-bg-card); color: var(--color-fg-0); cursor: pointer;"
+                  onchange={(e: Event) => { conn._poolEdit = (e.target as HTMLSelectElement).value; }}
+                  title="Quick pick an existing pool"
+                >
+                  <option value="">pick pool…</option>
+                  {#each pools as p}
+                    <option value={p.pool_id}>{p.pool_id} ({p.num_accounts})</option>
+                  {/each}
+                </select>
+              {/if}
+              <button onclick={() => setPoolId(conn.id, conn._poolEdit.trim())} style="all: unset; cursor: pointer; color: var(--color-success);" title="Save"><Check size={14} /></button>
+              <button onclick={() => editingPool = null} style="all: unset; cursor: pointer; color: var(--color-fg-3);" title="Cancel"><X size={14} /></button>
+            </div>
+          {:else if conn.pool_id}
+            <div style="display: flex; gap: 4px; align-items: center;">
+              <span class="badge" style="background: rgba(99,102,241,0.12); color: #818cf8; cursor: pointer; display: flex; align-items: center; gap: 4px; border: 1px dashed transparent; transition: all 0.15s;"
+                onclick={() => { conn._poolEdit = conn.pool_id; editingPool = conn.id; }}
+                onmouseenter={(e) => e.currentTarget.style.borderColor = 'var(--color-primary)'}
+                onmouseleave={(e) => e.currentTarget.style.borderColor = 'transparent'}
+                title="Click to change pool (pool: {conn.pool_id})">
+                <Layers size={11} />{conn.pool_id}
+                <span style="font-size: 9px; opacity: 0.5; cursor: pointer;" title="Edit pool">✎</span>
+              </span>
+              <!-- Quick reassign: one-click move -->
+              {#if pools.length > 1}
+                <select
+                  style="font-size: 9px; padding: 1px 2px; border: 1px solid var(--color-border); border-radius: 3px; width: 20px; height: 18px; background: var(--color-bg-card); color: var(--color-fg-3); cursor: pointer; opacity: 0.5;"
+                  onchange={(e: Event) => {
+                    const target = (e.target as HTMLSelectElement).value;
+                    if (target) setPoolId(conn.id, target);
+                    (e.target as HTMLSelectElement).value = '';
+                  }}
+                  title="Quick assign to another pool"
+                >
+                  <option value="" style="color: var(--color-fg-3);">⇄</option>
+                  {#each pools.filter(p => p.pool_id !== conn.pool_id) as p}
+                    <option value={p.pool_id}>{p.pool_id}</option>
+                  {/each}
+                </select>
+              {/if}
+            </div>
+          {:else}
+            <span class="badge" style="background: var(--color-border-light); color: var(--color-fg-3); cursor: pointer; opacity: 0.6; display: flex; align-items: center; gap: 3px; transition: all 0.15s;"
+              onclick={() => { conn._poolEdit = ''; editingPool = conn.id; }}
+              onmouseenter={(e) => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.border = '1px dashed var(--color-primary)'; }}
+              onmouseleave={(e) => { e.currentTarget.style.opacity = '0.6'; e.currentTarget.style.border = '1px solid transparent'; }}
+              title="Click to add to pool">
+              + pool
+            </span>
+          {/if}
+        </div>
+
+        {#if conn.api_key}
+          <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono); margin-bottom: 12px; padding: 4px 8px; background: var(--color-bg-body); border-radius: 4px;">{conn.api_key}</div>
+        {:else if conn.oauth_provider}
+          <div style="font-size: 11px; color: var(--color-fg-3); margin-bottom: 12px;">Token from OAuth IDE session</div>
+        {/if}
+
+        <div class="flex items-center gap-2">
+          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
+            {#if conn.is_active}<ToggleRight size={16} style="color: var(--color-success);" />{:else}<ToggleLeft size={16} />{/if}
+          </button>
+          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => testConn(conn.id)} disabled={testing === conn.id}>
+            <TestTube2 size={14} /> {testing === conn.id ? '...' : 'Test'}
+          </button>
+          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => openModelsViewer(conn)} title="View discovered models">
+            <Eye size={14} /> Models
+          </button>
+          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px;" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync models from upstream">
+            <RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /> Sync
+          </button>
+          <button class="btn-secondary flex items-center gap-1" style="padding: 6px 10px; font-size: 12px; color: var(--color-error);" onclick={() => deleteConn(conn.id)}>
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    {/snippet}
+
+    {#snippet poolConnectionRow(conn: any)}
+      <div class="connection-row" style="display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; background: var(--color-bg-body); transition: all 0.12s; position: relative;">
+        <div style="width: 8px; height: 8px; border-radius: 50%; background: {conn.is_active ? 'var(--color-success)' : 'var(--color-error)'}; box-shadow: 0 0 8px {conn.is_active ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)'}; flex-shrink: 0;" title={conn.is_active ? 'Active' : 'Inactive'}></div>
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em;">{conn.name}</div>
+          {#if conn.api_key}
+            <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px;" title={conn.api_key}>{conn.api_key}</div>
+          {:else if conn.oauth_provider}
+            <div style="font-size: 11px; color: #a78bfa; margin-top: 1px;">OAuth:{conn.oauth_provider}</div>
+          {/if}
+        </div>
+        <div style="display: flex; gap: 6px; align-items: center; flex-shrink: 0;">
+          <span class="badge" style="font-size: 11px; padding: 2px 7px; background: var(--color-info-light); color: var(--color-info);">P{conn.priority}</span>
+          <span class="badge" style="font-size: 11px; padding: 2px 7px; background: var(--color-border-light); color: var(--color-fg-2);">{conn.models_count || 0} models</span>
+        </div>
+        <!-- Pool badge — always visible, quick-edit on click -->
+        <div style="display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
+          {#if editingPool === conn.id}
+            <div style="display: flex; gap: 4px; align-items: center; background: var(--color-bg-card); border: 1px solid var(--color-primary); border-radius: 6px; padding: 3px 6px;">
+              <input type="text" bind:value={conn._poolEdit} placeholder="pool" style="font-size: 11px; padding: 2px 4px; width: 70px; border: none; outline: none; background: transparent; color: var(--color-fg-0); font-family: var(--font-mono);" onkeydown={(e: KeyboardEvent) => { if (e.key === 'Enter') setPoolId(conn.id, conn._poolEdit.trim()); if (e.key === 'Escape') editingPool = null; }} />
+              {#if pools.length > 0}
+                <select style="font-size: 10px; padding: 2px 2px; border: none; outline: none; border-left: 1px solid var(--color-border); background: transparent; color: var(--color-fg-2); cursor: pointer; font-family: var(--font-mono);" onchange={(e: Event) => { conn._poolEdit = (e.target as HTMLSelectElement).value; }} title="Existing pools">
+                  <option value="">pick…</option>
+                  {#each pools as p}
+                    <option value={p.pool_id}>{p.pool_id}</option>
+                  {/each}
+                </select>
+              {/if}
+              <button onclick={() => setPoolId(conn.id, conn._poolEdit.trim())} style="all: unset; cursor: pointer; color: var(--color-success); padding: 0 2px;" title="Save"><Check size={14} /></button>
+              <button onclick={() => editingPool = null} style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 0 2px;" title="Cancel"><X size={14} /></button>
+            </div>
+          {:else if conn.pool_id}
+            <button
+              style="all: unset; display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 600; color: #818cf8; background: rgba(99,102,241,0.08); font-family: var(--font-mono); transition: all 0.12s;"
+              onclick={() => { conn._poolEdit = conn.pool_id; editingPool = conn.id; }}
+              onmouseenter={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.15)'; e.currentTarget.style.color = '#6366f1'; }}
+              onmouseleave={(e) => { e.currentTarget.style.background = 'rgba(99,102,241,0.08)'; e.currentTarget.style.color = '#818cf8'; }}
+              title="Click to change pool">
+              <Layers size={12} />
+              {conn.pool_id}
+            </button>
+            {#if pools.length > 1}
+              <select
+                style="font-size: 9px; padding: 1px 2px; border: 1px solid var(--color-border); border-radius: 4px; background: var(--color-bg-card); color: var(--color-fg-3); cursor: pointer; opacity: 0.4;"
+                onchange={(e: Event) => { const t = (e.target as HTMLSelectElement).value; if (t) setPoolId(conn.id, t); (e.target as HTMLSelectElement).value = ''; }}
+                title="Quick reassign">
+                <option value="">⇄</option>
+                {#each pools.filter(p => p.pool_id !== conn.pool_id) as p}
+                  <option value={p.pool_id}>{p.pool_id}</option>
+                {/each}
+              </select>
+            {/if}
+          {:else}
+            <button
+              style="all: unset; display: flex; align-items: center; gap: 3px; padding: 3px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500; color: var(--color-fg-3); border: 1px dashed var(--color-border); transition: all 0.12s;"
+              onclick={() => { conn._poolEdit = ''; editingPool = conn.id; }}
+              onmouseenter={(e) => { e.currentTarget.style.borderColor = 'var(--color-primary)'; e.currentTarget.style.color = 'var(--color-primary)'; e.currentTarget.style.background = 'rgba(99,102,241,0.04)'; }}
+              onmouseleave={(e) => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-fg-3)'; e.currentTarget.style.background = 'transparent'; }}
+              title="Add to a pool">
+              + pool
+            </button>
+          {/if}
+        </div>
+        <div style="display: flex; gap: 2px; align-items: center; flex-shrink: 0; opacity: 0.5; transition: opacity 0.12s;" class="row-actions">
+          <button class="btn-icon-mini" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
+            {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
+          </button>
+          <button class="btn-icon-mini" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test"><TestTube2 size={14} /></button>
+          <button class="btn-icon-mini" onclick={() => openModelsViewer(conn)} title="Models"><Eye size={14} /></button>
+          <button class="btn-icon-mini" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync"><RefreshCw size={14} class={syncing === conn.id ? 'animate-spin' : ''} /></button>
+          <button class="btn-icon-mini" style="color: var(--color-error);" onclick={() => deleteConn(conn.id)} title="Delete"><Trash2 size={14} /></button>
+        </div>
+      </div>
+    {/snippet}
+
+    <!-- Group by pool -->
+    {#each pools as pool}
+      {@const poolConns = connections.filter(c => c.pool_id === pool.pool_id)}
+      {#if poolConns.length > 0}
+        <div id="pool-{pool.pool_id}" style="margin-bottom: 20px; padding: 16px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-bg-card); box-shadow: 0 2px 8px rgba(99,102,241,0.06); scroll-margin-top: 20px;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--color-border);">
+            <div style="width: 28px; height: 28px; border-radius: 8px; background: var(--color-primary-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+              <Layers size={14} style="color: var(--color-primary);" />
+            </div>
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-0); font-family: var(--font-mono);">{pool.pool_id}</div>
+              <div style="font-size: 11px; color: var(--color-fg-3);">
+                {poolConns[0]?.base_url}
+                <span style="margin: 0 6px; opacity: 0.4;">·</span>
+                <span class="badge" style="font-size: 9px; background: var(--color-purple-light); color: var(--color-purple); padding: 1px 5px;">{poolConns[0]?.format}</span>
+                <span style="margin: 0 6px; opacity: 0.4;">·</span>
+                {poolConns.length} key{poolConns.length !== 1 ? 's' : ''} · round-robin
+                {#if pool.success_rate > 0}
+                  <span style="margin: 0 6px; opacity: 0.4;">·</span>
+                  <span style="color: {pool.success_rate >= 0.95 ? 'var(--color-success)' : pool.success_rate >= 0.7 ? 'var(--color-warning)' : 'var(--color-error)'};">{(pool.success_rate * 100).toFixed(0)}%</span>
+                {/if}
+              </div>
+            </div>
+            <!-- Compact health bar -->
+            <div style="display: flex; gap: 3px; align-items: flex-end; height: 20px; flex-shrink: 0;">
+              {#each poolConns as c}
+                <div
+                  style="width: 4px; height: {c.is_active ? '100%' : '30%'}; border-radius: 2px; background: var(--color-success); opacity: 0.5; transition: height 0.3s;"
+                  title="{c.name} · {c.is_active ? 'active' : 'inactive'}"
+                ></div>
+              {/each}
+            </div>
+            <!-- Quick add another key to this pool -->
+            <button
+              class="btn-secondary flex items-center gap-1"
+              style="padding: 5px 10px; font-size: 11px; border-radius: 6px; flex-shrink: 0;"
+              onclick={() => { form = { ...form, pool_id: pool.pool_id, name: pool.pool_id + '-', base_url: poolConns[0]?.base_url || '', format: poolConns[0]?.format || 'openai' }; showForm = true; testResult = null; setTimeout(() => { document.getElementById('add-connection-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 50); }}
+              title="Add another API key to {pool.pool_id}"
+            >
+              <Plus size={12} />
+              Add key
+            </button>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            {#each poolConns as conn}
+              {@render poolConnectionRow(conn)}
+            {/each}
+          </div>
+        </div>
+      {/if}
+    {/each}
+
+    <!-- Ungrouped connections (no pool) -->
+    {@const unpooled = connections.filter(c => !c.pool_id)}
+    {#if unpooled.length > 0}
+      {#if pools.length > 0}
+        <div style="margin-bottom: 20px;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+            <Layers size={14} style="color: var(--color-fg-3);" />
+            <span style="font-size: 13px; font-weight: 600; color: var(--color-fg-2);">Ungrouped</span>
+            <span style="font-size: 11px; color: var(--color-fg-3);">{unpooled.length} connection{unpooled.length !== 1 ? 's' : ''}</span>
+            <span class="badge" style="font-size: 10px; background: var(--color-bg-body); color: var(--color-fg-3); cursor: help;" title="These connections aren't part of any pool. Click the '+pool' badge on a connection to add it to a pool for load balancing and failover.">ⓘ what's this?</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 4px;">
+            {#each unpooled as conn}
+              {@render poolConnectionRow(conn)}
+            {/each}
+          </div>
+        </div>
+      {:else}
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3" style="gap: 16px;">
+          {#each unpooled as conn}
+            {@render connectionCard(conn)}
+          {/each}
+        </div>
+      {/if}
+    {/if}
   {/if}
 
   <!-- Models Viewer Modal -->
@@ -1568,5 +1938,46 @@
     30%  { transform: scale(1.08); box-shadow: 0 0 0 10px rgba(59,130,246,0); }
     60%  { transform: scale(0.97); box-shadow: 0 0 0 6px rgba(59,130,246,0); }
     100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+  }
+  /* Pool card entrance animation */
+  @keyframes poolCardPop {
+    0%   { transform: scale(0.95); opacity: 0; }
+    60%  { transform: scale(1.02); opacity: 1; }
+    100% { transform: scale(1);    opacity: 1; }
+  }
+  /* Compact row inside pool group */
+  .connection-row {
+    transition: background 0.12s, box-shadow 0.12s;
+  }
+  .connection-row:hover {
+    background: var(--color-bg-card) !important;
+    box-shadow: 0 1px 4px rgba(99,102,241,0.08);
+  }
+  .connection-row .row-actions {
+    opacity: 0.3;
+    transition: opacity 0.12s;
+  }
+  .connection-row:hover .row-actions {
+    opacity: 1;
+  }
+  .btn-icon-mini {
+    all: unset;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 5px;
+    color: var(--color-fg-3);
+    transition: all 0.12s;
+  }
+  .btn-icon-mini:hover:not(:disabled) {
+    background: var(--color-border-light);
+    color: var(--color-fg-0);
+  }
+  .btn-icon-mini:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 </style>

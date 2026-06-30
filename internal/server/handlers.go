@@ -142,7 +142,7 @@ func (s *Server) handleModelsCatalog(w http.ResponseWriter, r *http.Request) {
 
 // Connections CRUD
 func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Conn().Query(`SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, is_active, priority, models_count, created_at FROM connections ORDER BY priority DESC, created_at DESC`)
+	rows, err := s.db.Conn().Query(`SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, is_active, priority, models_count, created_at, COALESCE(pool_id,'') FROM connections ORDER BY priority DESC, created_at DESC`)
 	if err != nil {
 		http.Error(w, `{"error":"failed to query connections"}`, http.StatusInternalServerError)
 		return
@@ -160,12 +160,13 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 		Priority    int    `json:"priority"`
 		ModelsCount int    `json:"models_count"`
 		CreatedAt   string `json:"created_at"`
+		PoolID      string `json:"pool_id,omitempty"`
 	}
 
 	var conns []ConnResponse
 	for rows.Next() {
 		var c ConnResponse
-		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.IsActive, &c.Priority, &c.ModelsCount, &c.CreatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.IsActive, &c.Priority, &c.ModelsCount, &c.CreatedAt, &c.PoolID); err != nil {
 			continue
 		}
 		// Mask API key
@@ -201,6 +202,7 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 		AuthHeader    string `json:"authHeader"`
 		AuthPrefix    string `json:"authPrefix"`
 		OAuthProvider string `json:"oauth_provider"`
+		PoolID        string `json:"pool_id"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -222,12 +224,17 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 
 	id := uuid.New().String()
 	_, err := s.db.Conn().Exec(
-		`INSERT INTO connections (id, name, base_url, api_key, oauth_provider, format, priority, chat_path, models_path, auth_header, auth_prefix) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, input.Name, input.BaseURL, input.APIKey, strings.TrimSpace(strings.ToLower(input.OAuthProvider)), input.Format, input.Priority, input.ChatPath, input.ModelsPath, input.AuthHeader, input.AuthPrefix,
+		`INSERT INTO connections (id, name, base_url, api_key, oauth_provider, format, priority, chat_path, models_path, auth_header, auth_prefix, pool_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, input.Name, input.BaseURL, input.APIKey, strings.TrimSpace(strings.ToLower(input.OAuthProvider)), input.Format, input.Priority, input.ChatPath, input.ModelsPath, input.AuthHeader, input.AuthPrefix, strings.TrimSpace(input.PoolID),
 	)
 	if err != nil {
 		http.Error(w, `{"error":"failed to create connection"}`, http.StatusInternalServerError)
 		return
+	}
+
+	// Refresh multi-account pools if pool_id was set
+	if input.PoolID != "" {
+		s.proxy.RefreshMultiAccountPools()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -252,8 +259,77 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 	// Also delete associated models
 	s.db.Conn().Exec("DELETE FROM discovered_models WHERE connection_id = ?", id)
 
+	// Refresh multi-account pools after deletion
+	s.proxy.RefreshMultiAccountPools()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "deleted"})
+}
+
+// handleGetConnectionPools returns health stats for multi-account pools,
+// augmented with runtime stats from the proxy's in-memory load balancers.
+func (s *Server) handleGetConnectionPools(w http.ResponseWriter, r *http.Request) {
+	type PoolEntry struct {
+		PoolID         string  `json:"pool_id"`
+		NumAccounts    int     `json:"num_accounts"`
+		SuccessCount   int64   `json:"success_count"`
+		FailCount      int64   `json:"fail_count"`
+		TotalRequests  int64   `json:"total_requests"`
+		SuccessRate    float64 `json:"success_rate"`
+		RateLimited    int     `json:"rate_limited"`
+		AvailableCount int     `json:"available_count"`
+	}
+	var pools []PoolEntry
+
+	rows, err := s.db.Conn().Query(`
+		SELECT pool_id, COUNT(*) as count
+		FROM connections
+		WHERE pool_id != '' AND is_active = 1
+		GROUP BY pool_id
+		ORDER BY pool_id
+	`)
+	if err != nil {
+		http.Error(w, `{"error":"failed to query pools"}`, http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var poolID string
+		var count int
+		if err := rows.Scan(&poolID, &count); err != nil {
+			continue
+		}
+		entry := PoolEntry{PoolID: poolID, NumAccounts: count}
+
+		// Augment with runtime health from proxy's in-memory LBs
+		if s.proxy != nil {
+			s.proxy.mabMu.RLock()
+			if lb, ok := s.proxy.multiAccountLBs[poolID]; ok {
+				stats := lb.AccountStats()
+				for _, st := range stats {
+					entry.SuccessCount += st.SuccessCount
+					entry.FailCount += st.FailCount
+					if st.RateLimited {
+						entry.RateLimited++
+					}
+					if st.Active && !st.RateLimited {
+						entry.AvailableCount++
+					}
+				}
+				entry.TotalRequests = entry.SuccessCount + entry.FailCount
+				if entry.TotalRequests > 0 {
+					entry.SuccessRate = float64(entry.SuccessCount) / float64(entry.TotalRequests)
+				}
+			}
+			s.proxy.mabMu.RUnlock()
+		}
+
+		pools = append(pools, entry)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"data": pools})
 }
 
 func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
@@ -264,6 +340,7 @@ func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
 		APIKey        *string `json:"api_key"`
 		OAuthProvider *string `json:"oauth_provider"`
 		IsActive      *int    `json:"is_active"`
+		PoolID        *string `json:"pool_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		// Body may be empty (frontend sends id as query param). Use zero values.
@@ -290,11 +367,20 @@ func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
 		updates = append(updates, "oauth_provider = ?")
 		args = append(args, strings.TrimSpace(strings.ToLower(*input.OAuthProvider)))
 	}
+	if input.PoolID != nil {
+		updates = append(updates, "pool_id = ?")
+		args = append(args, strings.TrimSpace(*input.PoolID))
+	}
 
 	if len(updates) > 0 {
 		updates = append(updates, "updated_at = datetime('now', 'localtime')")
 		args = append(args, input.ID)
-		s.db.Conn().Exec("UPDATE connections SET " + strings.Join(updates, ", ") + " WHERE id=?", args...)
+		s.db.Conn().Exec("UPDATE connections SET "+strings.Join(updates, ", ")+" WHERE id=?", args...)
+
+		// Refresh pools if pool_id or is_active changed
+		if input.PoolID != nil || input.IsActive != nil {
+			s.proxy.RefreshMultiAccountPools()
+		}
 	}
 	w.Header().Set("Content-Type", "application/json"); json.NewEncoder(w).Encode(map[string]any{"success":true,"data":map[string]any{"id":input.ID}})
 }

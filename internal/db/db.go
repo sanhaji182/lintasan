@@ -219,6 +219,8 @@ func (d *DB) migrate() error {
 		`ALTER TABLE oauth_sessions ADD COLUMN device_code TEXT DEFAULT ''`,
 		`ALTER TABLE oauth_sessions ADD COLUMN flow_meta TEXT DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN oauth_provider TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE connections ADD COLUMN pool_id TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_connections_pool_id ON connections(pool_id)`,
 		// P1: Experimental Provider Registry Persistence — stores lifecycle state,
 		// admission reports, validation evidence, and descriptor snapshots for the
 		// Experimental provider ecosystem. Credentials are NEVER stored (Invariant 3).
