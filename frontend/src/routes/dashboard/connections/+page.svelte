@@ -7,7 +7,7 @@
   import { showToast } from '$lib/toast';
   import { OAUTH_IDE_PRESETS, type OAuthIdePreset } from '$lib/oauthIdePresets';
   import { brandForProvider, logoPaths } from '$lib/oauthIdeBrands';
-  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers } from 'lucide-svelte';
+  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers, ChevronRight } from 'lucide-svelte';
 
   let connections = $state<any[]>([]);
   let loading = $state(true);
@@ -95,6 +95,61 @@
     });
     return list;
   });
+
+  // Group connections by provider (base_url domain or pool_id)
+  let collapsedGroups = $state<Set<string>>(new Set());
+
+  function extractProvider(url: string): string {
+    try {
+      const host = new URL(url).hostname.replace(/^www\./, '');
+      // e.g. "api.commandcode.ai" → "commandcode", "api.deepseek.com" → "deepseek"
+      const parts = host.split('.');
+      if (parts.length >= 3 && parts[0] === 'api') return parts[1];
+      if (parts.length >= 2) return parts[parts.length - 2];
+      return host;
+    } catch { return url; }
+  }
+
+  function providerDisplayName(key: string, conns: any[]): string {
+    // Try to get a clean name: if all names share a prefix, use that
+    const names = conns.map(c => c.name || '');
+    if (names.length === 1) return names[0];
+    // Find common prefix (e.g., "CommandCode" from "CommandCode (sanhaji)", "CommandCode (alex)")
+    const first = names[0];
+    let prefix = first;
+    for (const n of names) {
+      while (!n.startsWith(prefix) && prefix.length > 0) {
+        prefix = prefix.slice(0, -1);
+      }
+    }
+    prefix = prefix.replace(/[\s(-_]+$/, '').trim();
+    return prefix || key.charAt(0).toUpperCase() + key.slice(1);
+  }
+
+  const groupedConnections = $derived.by(() => {
+    const groups = new Map<string, { key: string; label: string; connections: any[]; active: number; totalModels: number }>();
+    for (const conn of sortedConnections) {
+      const key = conn.pool_id || extractProvider(conn.base_url || '');
+      if (!groups.has(key)) {
+        groups.set(key, { key, label: '', connections: [], active: 0, totalModels: 0 });
+      }
+      const g = groups.get(key)!;
+      g.connections.push(conn);
+      if (conn.is_active) g.active++;
+      g.totalModels += conn.models_count || 0;
+    }
+    // Set labels after grouping
+    for (const g of groups.values()) {
+      g.label = providerDisplayName(g.key, g.connections);
+    }
+    return [...groups.values()];
+  });
+
+  function toggleGroup(key: string) {
+    const s = new Set(collapsedGroups);
+    s.has(key) ? s.delete(key) : s.add(key);
+    collapsedGroups = s;
+  }
 
   // Close dropdown menu on outside click
   $effect(() => {
@@ -1526,78 +1581,149 @@
         <EmptyState title="No matching connections" description="Try adjusting your search filter." />
       </div>
     {:else}
-      <div class="conn-grid">
-        {#each sortedConnections as conn (conn.id)}
-          <div class="card conn-card" class:conn-inactive={!conn.is_active}>
-            <!-- Card header: status + name + format -->
-            <div class="conn-card-header">
-              <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
-              <span class="conn-card-name" title={conn.name}>{conn.name}</span>
-              <span class="badge conn-format-badge">{conn.format}</span>
-              <span class="conn-card-priority" title="Priority">P{conn.priority}</span>
-            </div>
+      <div class="conn-groups">
+        {#each groupedConnections as group (group.key)}
+          {@const isSingle = group.connections.length === 1}
+          {@const isCollapsed = collapsedGroups.has(group.key)}
 
-            <!-- Card meta: key + url + pool -->
-            <div class="conn-card-meta">
-              {#if conn.api_key}
-                <span class="conn-card-key" title={conn.api_key}>{conn.api_key}</span>
-              {:else if conn.oauth_provider}
-                <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
-              {/if}
-              <div class="conn-card-meta-row">
-                <span class="conn-card-url" title={conn.base_url}>{conn.base_url}</span>
-                {#if conn.pool_id}
-                  <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
-                {/if}
-                <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
+          {#if isSingle}
+            <!-- Single connection: render card directly without group wrapper -->
+            {@const conn = group.connections[0]}
+            <div class="card conn-card" class:conn-inactive={!conn.is_active}>
+              <div class="conn-card-header">
+                <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
+                <span class="conn-card-name" title={conn.name}>{conn.name}</span>
+                <span class="badge conn-format-badge">{conn.format}</span>
+                <span class="conn-card-priority" title="Priority">P{conn.priority}</span>
               </div>
-            </div>
-
-            <!-- Card actions: primary inline, secondary in dropdown -->
-            <div class="conn-card-actions">
-              <button class="btn-secondary conn-action-btn" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
-                {#if testing === conn.id}
-                  <span class="conn-spinner"></span>
-                {:else}
-                  <TestTube2 size={13} />
+              <div class="conn-card-meta">
+                {#if conn.api_key}
+                  <span class="conn-card-key" title={conn.api_key}>{conn.api_key}</span>
+                {:else if conn.oauth_provider}
+                  <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
                 {/if}
-                <span>Test</span>
-              </button>
-              <button class="btn-secondary conn-action-btn" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
-                {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
-                <span>{conn.is_active ? 'On' : 'Off'}</span>
-              </button>
-              <button class="btn-secondary conn-action-btn" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync models">
-                <RefreshCw size={13} class={syncing === conn.id ? 'animate-spin' : ''} />
-                <span>Sync</span>
-              </button>
-              <button class="btn-secondary conn-action-btn" onclick={() => openModelsViewer(conn)} title="View models">
-                <Cpu size={13} />
-                <span>Models</span>
-              </button>
-              <div class="kebab-menu-container" style="position: relative;">
-                <button class="btn-secondary conn-action-btn conn-kebab-btn" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More actions">
-                  ⋯
+                <div class="conn-card-meta-row">
+                  <span class="conn-card-url" title={conn.base_url}>{conn.base_url}</span>
+                  {#if conn.pool_id}
+                    <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
+                  {/if}
+                  <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
+                </div>
+              </div>
+              <div class="conn-card-actions">
+                <button class="btn-secondary conn-action-btn" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
+                  {#if testing === conn.id}<span class="conn-spinner"></span>{:else}<TestTube2 size={13} />{/if}
+                  <span>Test</span>
                 </button>
-                {#if openMenuConnId === conn.id}
-                  <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
-                    {#if !conn.pool_id}
-                      <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}>
-                        <Layers size={14} /> Edit Pool
-                      </button>
-                    {/if}
-                    <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}>
-                      <Copy size={14} /> Copy API Key
-                    </button>
-                    <div class="conn-dropdown-divider"></div>
-                    <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}>
-                      <Trash2 size={14} /> Delete
-                    </button>
-                  </div>
-                {/if}
+                <button class="btn-secondary conn-action-btn" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
+                  {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
+                  <span>{conn.is_active ? 'On' : 'Off'}</span>
+                </button>
+                <button class="btn-secondary conn-action-btn" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync models">
+                  <RefreshCw size={13} class={syncing === conn.id ? 'animate-spin' : ''} />
+                  <span>Sync</span>
+                </button>
+                <button class="btn-secondary conn-action-btn" onclick={() => openModelsViewer(conn)} title="View models">
+                  <Cpu size={13} /><span>Models</span>
+                </button>
+                <div class="kebab-menu-container" style="position: relative;">
+                  <button class="btn-secondary conn-action-btn conn-kebab-btn" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More actions">⋯</button>
+                  {#if openMenuConnId === conn.id}
+                    <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
+                      {#if !conn.pool_id}
+                        <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={14} /> Edit Pool</button>
+                      {/if}
+                      <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={14} /> Copy API Key</button>
+                      <div class="conn-dropdown-divider"></div>
+                      <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}><Trash2 size={14} /> Delete</button>
+                    </div>
+                  {/if}
+                </div>
               </div>
             </div>
-          </div>
+
+          {:else}
+            <!-- Multi-connection group -->
+            <div class="conn-group" class:collapsed={isCollapsed}>
+              <button class="conn-group-header" onclick={() => toggleGroup(group.key)}>
+                <div class="conn-group-header-left">
+                  <span class="conn-group-chevron" class:rotated={!isCollapsed}><ChevronRight size={16} /></span>
+                  <span class="conn-group-label">{group.label}</span>
+                  <span class="conn-group-count">{group.connections.length} accounts</span>
+                </div>
+                <div class="conn-group-header-right">
+                  <span class="conn-group-stat">
+                    <span class="conn-group-stat-dot active"></span>
+                    {group.active}/{group.connections.length} active
+                  </span>
+                  {#if group.totalModels > 0}
+                    <span class="conn-group-stat">
+                      <Cpu size={12} />
+                      {group.totalModels} models
+                    </span>
+                  {/if}
+                </div>
+              </button>
+
+              {#if !isCollapsed}
+                <div class="conn-group-body">
+                  {#each group.connections as conn (conn.id)}
+                    <div class="card conn-card conn-card-nested" class:conn-inactive={!conn.is_active}>
+                      <div class="conn-card-header">
+                        <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
+                        <span class="conn-card-name" title={conn.name}>{conn.name}</span>
+                        <span class="badge conn-format-badge">{conn.format}</span>
+                        <span class="conn-card-priority" title="Priority">P{conn.priority}</span>
+                      </div>
+                      <div class="conn-card-meta">
+                        {#if conn.api_key}
+                          <span class="conn-card-key" title={conn.api_key}>{conn.api_key}</span>
+                        {:else if conn.oauth_provider}
+                          <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
+                        {/if}
+                        <div class="conn-card-meta-row">
+                          {#if conn.pool_id}
+                            <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
+                          {/if}
+                          <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
+                        </div>
+                      </div>
+                      <div class="conn-card-actions">
+                        <button class="btn-secondary conn-action-btn" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test">
+                          {#if testing === conn.id}<span class="conn-spinner"></span>{:else}<TestTube2 size={13} />{/if}
+                          <span>Test</span>
+                        </button>
+                        <button class="btn-secondary conn-action-btn" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
+                          {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
+                          <span>{conn.is_active ? 'On' : 'Off'}</span>
+                        </button>
+                        <button class="btn-secondary conn-action-btn" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync">
+                          <RefreshCw size={13} class={syncing === conn.id ? 'animate-spin' : ''} />
+                          <span>Sync</span>
+                        </button>
+                        <button class="btn-secondary conn-action-btn" onclick={() => openModelsViewer(conn)} title="Models">
+                          <Cpu size={13} /><span>Models</span>
+                        </button>
+                        <div class="kebab-menu-container" style="position: relative;">
+                          <button class="btn-secondary conn-action-btn conn-kebab-btn" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More">⋯</button>
+                          {#if openMenuConnId === conn.id}
+                            <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
+                              {#if !conn.pool_id}
+                                <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={14} /> Edit Pool</button>
+                              {/if}
+                              <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={14} /> Copy API Key</button>
+                              <div class="conn-dropdown-divider"></div>
+                              <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}><Trash2 size={14} /> Delete</button>
+                            </div>
+                          {/if}
+                        </div>
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
         {/each}
       </div>
     {/if}
@@ -1961,11 +2087,110 @@
     display: inline;
   }
 
-  /* Connection cards grid */
+  /* Connection cards grid + groups */
+  .conn-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
   .conn-grid {
     display: grid;
     grid-template-columns: 1fr;
     gap: 12px;
+  }
+
+  /* Provider group */
+  .conn-group {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--color-bg-card);
+  }
+  .conn-group-header {
+    all: unset;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px 16px;
+    cursor: pointer;
+    background: var(--color-bg-body);
+    border-bottom: 1px solid var(--color-border);
+    transition: background 0.1s;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .conn-group-header:hover {
+    background: var(--color-bg-sidebar-hover);
+  }
+  .conn-group-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .conn-group-header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .conn-group-label {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--color-fg-0);
+  }
+  .conn-group-count {
+    font-size: 11px;
+    color: var(--color-fg-3);
+    background: var(--color-bg-card);
+    padding: 2px 8px;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+  }
+  .conn-group-stat {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: var(--color-fg-2);
+  }
+  .conn-group-stat-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-fg-3);
+  }
+  .conn-group-stat-dot.active {
+    background: var(--color-success);
+  }
+  :global(.conn-group-chevron) {
+    color: var(--color-fg-3);
+    transition: transform 0.2s;
+    flex-shrink: 0;
+  }
+  :global(.conn-group-chevron.rotated) {
+    transform: rotate(90deg);
+  }
+  .conn-group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--color-border-light);
+  }
+  .conn-card-nested {
+    border-radius: 0 !important;
+    border: none !important;
+    border-bottom: 1px solid var(--color-border-light) !important;
+    box-shadow: none !important;
+  }
+  .conn-card-nested:hover {
+    box-shadow: none !important;
+    border-color: var(--color-border-light) !important;
+  }
+  .conn-card-nested:last-child {
+    border-bottom: none !important;
   }
   .conn-card {
     padding: 16px !important;
