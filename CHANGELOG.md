@@ -10,6 +10,17 @@ semantic-ish versioning.
 > history as a reference point; `v0.24.0` is the first release of the new
 > numbering scheme (the `.24` keeps continuity with the prior work).
 
+## [0.26.3] — 2026-06-30
+
+### Fixed
+- **Connections page UX overhaul:**
+  - Button overload fixed — 6 buttons per row reduced to 2 inline (Toggle,
+    Test) + a ⋯ dropdown menu (Models, Sync, Pool assignment, Delete).
+  - Search/filter bar added — filter connections by name, format, or pool_id
+    with match count display.
+  - Pool health display — 0% success rate now shows "—%" when no traffic data
+    exists, preventing misleading "broken" appearance.
+
 ## [0.26.2] — 2026-06-30
 
 ### Fixed
