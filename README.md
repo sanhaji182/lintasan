@@ -74,7 +74,7 @@ Lintasan exists as an intelligent pathway connecting humans, AI, and systems in 
 <details open>
 <summary>🇮🇩 Bahasa Indonesia</summary>
 
-Lintasan adalah **LLM proxy gateway** — satu endpoint OpenAI-compatible untuk semua provider AI. Routing cerdas, failover otomatis, embedded cache, token compression, dan dashboard monitoring real-time.
+Lintasan adalah **LLM gateway** — satu endpoint OpenAI-compatible untuk semua provider AI. Routing cerdas, failover otomatis, embedded cache, token compression, dan dashboard monitoring real-time.
 
 **Masalah yang diselesaikan:**
 - 🔀 **Multi-provider complexity** — ganti provider = ganti SDK, ganti API key, ganti format
@@ -96,7 +96,7 @@ Lintasan adalah **LLM proxy gateway** — satu endpoint OpenAI-compatible untuk 
 <details>
 <summary>🇬🇧 English</summary>
 
-Lintasan is an **LLM proxy gateway** — one OpenAI-compatible endpoint for all AI providers. Smart routing, automatic failover, embedded cache, token compression, and real-time dashboard monitoring.
+Lintasan is an **LLM gateway** — one OpenAI-compatible endpoint for all AI providers. Smart routing, automatic failover, embedded cache, token compression, and real-time dashboard monitoring.
 
 **Problems solved:**
 - 🔀 **Multi-provider complexity** — switching providers means switching SDKs, API keys, and formats
@@ -158,7 +158,7 @@ Lintasan is an **LLM proxy gateway** — one OpenAI-compatible endpoint for all 
 
 | # | Fitur | Deskripsi |
 |---|-------|-----------|
-| 1 | **Multi-Provider Proxy** | Satu endpoint OpenAI-compatible untuk semua provider LLM |
+| 1 | **Multi-Provider Gateway** | Satu endpoint OpenAI-compatible untuk semua provider LLM |
 | 2 | **Smart Routing** | Multi-stage: header → model → priority → fallback |
 | 3 | **Grouped Connections** | Kelompokkan akun per provider, shared models viewer |
 | 4 | **Connection Pool** | Load balancing round-robin + failover per pool |
@@ -177,7 +177,7 @@ Lintasan is an **LLM proxy gateway** — one OpenAI-compatible endpoint for all 
 | 17 | **Vector Memory** | Pluggable embedder dengan SQLite default |
 | 18 | **Web Search** | Augment chat dengan live web results |
 | 19 | **OAuth IDE** | OAuth flow untuk IDE agents (Experimental) |
-| 20 | **Image Generation** | Proxy ke DALL-E / Stable Diffusion |
+| 20 | **Image Generation** | Routing ke DALL-E / Stable Diffusion |
 | 21 | **Audio (TTS + STT)** | Speech + transcription via OpenAI API |
 | 22 | **Cost Tracking** | Real-time cost tracking per request |
 | 23 | **Token Compression** | RTK compressor untuk hemat token |
@@ -205,7 +205,7 @@ Lintasan is an **LLM proxy gateway** — one OpenAI-compatible endpoint for all 
 
 | # | Feature | Description |
 |---|---------|-------------|
-| 1 | **Multi-Provider Proxy** | One OpenAI-compatible endpoint for all LLM providers |
+| 1 | **Multi-Provider Gateway** | One OpenAI-compatible endpoint for all LLM providers |
 | 2 | **Smart Routing** | Multi-stage: header → model → priority → fallback |
 | 3 | **Grouped Connections** | Group accounts per provider, shared models viewer |
 | 4 | **Connection Pool** | Round-robin load balancing + failover per pool |
@@ -224,7 +224,7 @@ Lintasan is an **LLM proxy gateway** — one OpenAI-compatible endpoint for all 
 | 17 | **Vector Memory** | Pluggable embedder with SQLite default |
 | 18 | **Web Search** | Augment chat with live web results |
 | 19 | **OAuth IDE** | OAuth flow for IDE agents (Experimental) |
-| 20 | **Image Generation** | Proxy to DALL-E / Stable Diffusion |
+| 20 | **Image Generation** | Routing to DALL-E / Stable Diffusion |
 | 21 | **Audio (TTS + STT)** | Speech + transcription via OpenAI API |
 | 22 | **Cost Tracking** | Real-time cost tracking per request |
 | 23 | **Token Compression** | RTK compressor for token savings |
@@ -264,7 +264,7 @@ Client (App / Agent / curl / IDE)
          │ Go Backend :20180 (lintasan start) │
          │ ── Serves BOTH API & UI ──         │
          │ • Embedded SPA UI (go:embed)       │
-         │ • OpenAI-compatible LLM proxy      │
+         │ • OpenAI-compatible LLM gateway      │
          └──────────────┬────────────────────┘
                     │
          ┌──────────▼──────────────┐
@@ -613,7 +613,7 @@ lintasan-go/
 ├── internal/                  # 43 Go packages
 │   ├── auth/                  # JWT auth, password hashing, user CRUD
 │   ├── server/                # HTTP mux, 70+ routes, middleware
-│   ├── proxy/                 # Core LLM proxy: chat, embeddings, images, audio
+│   ├── proxy/                 # Core LLM gateway: chat, embeddings, images, audio
 │   ├── config/                # Loading & validation
 │   ├── db/                    # SQLite schema + migrations
 │   ├── cache/                 # Semantic cache (cosine similarity)
@@ -710,7 +710,7 @@ scp lintasan user@server:/opt/lintasan/
 # Systemd service
 sudo tee /etc/systemd/system/lintasan.service << 'EOF'
 [Unit]
-Description=Lintasan LLM Proxy Gateway
+Description=Lintasan LLM Gateway
 After=network.target
 
 [Service]
@@ -762,7 +762,7 @@ scp lintasan user@server:/opt/lintasan/
 # Systemd service
 sudo tee /etc/systemd/system/lintasan.service << 'EOF'
 [Unit]
-Description=Lintasan LLM Proxy Gateway
+Description=Lintasan LLM Gateway
 After=network.target
 
 [Service]
