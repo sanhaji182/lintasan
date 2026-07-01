@@ -6,7 +6,7 @@
 
 ## 1. Apa itu Lintasan
 
-Lintasan adalah **LLM proxy gateway** — satu endpoint OpenAI-compatible yang merutekan request ke banyak provider AI (OpenAI, Anthropic, DeepSeek, Gemini, Groq, dll) dengan smart routing, failover, caching, token compression, observability, dan dashboard.
+Lintasan adalah **LLM gateway** — satu endpoint OpenAI-compatible yang merutekan request ke banyak provider AI (OpenAI, Anthropic, DeepSeek, Gemini, Groq, dll) dengan smart routing, failover, caching, token compression, observability, dan dashboard.
 
 - **Backend:** Go (single binary, ~24MB)
 - **Frontend:** SvelteKit 5 (dashboard, 26+ halaman)
@@ -30,7 +30,7 @@ Lintasan adalah **LLM proxy gateway** — satu endpoint OpenAI-compatible yang m
                    │  Go backend  :20180   (lintasan start)  │
                    │  ── serves BOTH ──                       │
                    │   • embedded SPA dashboard (go:embed)    │
-                   │   • API + OpenAI-compatible LLM proxy    │
+                   │   • API + OpenAI-compatible LLM gateway    │
                    └────────────────────┬───────────────────┘
                                         │
                                         ▼
@@ -118,7 +118,7 @@ Setiap package punya tanggung jawab tunggal. Saat menambah fitur, ikuti pola pac
 | Package | Fungsi |
 |---------|--------|
 | `server` | HTTP mux, route registration, middleware (18 file, ~70 route) |
-| `proxy` | Core LLM proxy: chat completions, embeddings, images, audio |
+| `proxy` | Core LLM gateway: chat completions, embeddings, images, audio |
 | `auth` | JWT auth (HS256), password hashing (SHA-512), user CRUD, middleware |
 | `config` | Loading & validasi konfigurasi |
 | `db` | SQLite schema + migrations |
@@ -242,7 +242,7 @@ Pitfall lama (sudah resolved tapi catat): lucide-svelte sebagai komponen di `Emp
 Dibangun dengan cobra. Command tersedia:
 
 ```
-lintasan start          # start proxy server (port dari env PORT, default 20180)
+lintasan start          # start gateway server (port dari env PORT, default 20180)
 lintasan setup          # interactive setup wizard
 lintasan mitm start     # MITM bridge untuk IDE traffic interception (port MITM_PORT, default 8443)
 ```
@@ -286,7 +286,7 @@ DB ada di `$LINTASAN_DATA_DIR/` (default `./data/`). Migrasi otomatis saat start
 | `connections` | Provider connections (base_url, api_key, format) |
 | `discovered_models` | Hasil model discovery per provider |
 | `settings` | Key-value settings global |
-| `request_logs` | Log semua proxy request |
+| `request_logs` | Log semua gateway request |
 | `audit_events` | Audit trail (perubahan penting) |
 | `cost_entries` | Cost tracking per request |
 | `cost_savings` | Penghematan dari cache/routing/compress |

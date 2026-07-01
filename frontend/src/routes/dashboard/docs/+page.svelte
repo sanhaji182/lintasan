@@ -44,7 +44,7 @@
           id: 'what-is-lintasan',
           id_title: 'Apa itu Lintasan?',
           en_title: 'What is Lintasan?',
-          id_content: `Lintasan adalah **LLM proxy gateway** — sebuah server perantara yang berada di antara aplikasi kamu dan berbagai provider AI (OpenAI, Anthropic, DeepSeek, Google Gemini, Groq, dll).
+          id_content: `Lintasan adalah **LLM gateway** — sebuah server perantara yang berada di antara aplikasi kamu dan berbagai provider AI (OpenAI, Anthropic, DeepSeek, Google Gemini, Groq, dll).
 
 **Kenapa butuh Lintasan?**
 
@@ -64,7 +64,7 @@ Kamu → Lintasan (routing) → Provider AI (OpenAI / Claude / Gemini / ...)
 \`\`\`
 
 Kamu kirim request ke Lintasan pakai format standard OpenAI. Lintasan memilih provider terbaik, meneruskan request, dan mengembalikan response — semua transparan.`,
-          en_content: `Lintasan is an **LLM proxy gateway** — a middleware server that sits between your application and multiple AI providers (OpenAI, Anthropic, DeepSeek, Google Gemini, Groq, etc.).
+          en_content: `Lintasan is an **LLM gateway** — a middleware server that sits between your application and multiple AI providers (OpenAI, Anthropic, DeepSeek, Google Gemini, Groq, etc.).
 
 **Why do you need Lintasan?**
 
@@ -400,7 +400,7 @@ Lintasan reads: URL, headers (-H), body (-d), and method (-X).`,
           id: 'auth-flow',
           id_title: 'Autentikasi & API Key',
           en_title: 'Authentication & API Keys',
-          id_content: `Lintasan pakai **JWT (JSON Web Token)** untuk dashboard dan **API Key** untuk proxy access.
+          id_content: `Lintasan pakai **JWT (JSON Web Token)** untuk dashboard dan **API Key for gateway access.
 
 **Dashboard Auth:**
 - Login pakai username + password → dapat JWT token
@@ -416,7 +416,7 @@ Lintasan reads: URL, headers (-H), body (-d), and method (-X).`,
 - Semua koneksi ke provider disimpan di SQLite (terenkripsi AES-256)
 - API key tidak pernah di-expose ke client
 - Rate limiting default: 60 request/menit per key`,
-          en_content: `Lintasan uses **JWT (JSON Web Token)** for dashboard access and **API Key** for proxy access.
+          en_content: `Lintasan uses **JWT (JSON Web Token)** for dashboard access and **API Key for gateway access.
 
 **Dashboard Auth:**
 - Login with username + password → get JWT token
