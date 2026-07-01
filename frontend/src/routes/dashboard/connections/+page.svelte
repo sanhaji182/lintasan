@@ -1815,7 +1815,6 @@
                               ⚡ {balances[conn.id].rate_info}
                             </span>
                           {/if}
-                          <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
                         </div>
                         {#if balances[conn.id]?.rate_windows?.length}
                           <div class="conn-balance-detail">
