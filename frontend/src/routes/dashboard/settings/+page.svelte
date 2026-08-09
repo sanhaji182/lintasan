@@ -23,6 +23,68 @@
   let error = $state('');
   let success = $state('');
 
+  // --- Danger zone: system reset -------------------------------------------
+  // Two modes because they mean very different things. Soft keeps the operator
+  // logged in; factory returns the install to first-run and invalidates every
+  // API key and session. The typed phrase is the last line of defence, so it
+  // differs per mode — a soft confirmation can never trigger a factory wipe.
+  type ResetMode = 'soft' | 'factory';
+
+  const RESET_PHRASE: Record<ResetMode, string> = {
+    soft: 'RESET',
+    factory: 'FACTORY RESET'
+  };
+
+  let resetMode = $state<ResetMode | null>(null);
+  let resetConfirm = $state('');
+  let resetting = $state(false);
+  let resetResult = $state<any>(null);
+
+  function openReset(mode: ResetMode) {
+    resetMode = mode;
+    resetConfirm = '';
+    resetResult = null;
+  }
+
+  function closeReset() {
+    resetMode = null;
+    resetConfirm = '';
+  }
+
+  async function runReset() {
+    if (!resetMode) return;
+    if (resetConfirm.trim() !== RESET_PHRASE[resetMode]) return;
+
+    resetting = true;
+    try {
+      const res = await api.post<any>('/api/system/reset', {
+        mode: resetMode,
+        confirm: resetConfirm.trim()
+      });
+      resetResult = res;
+      showToast(
+        resetMode === 'factory'
+          ? 'Factory reset complete — you will be signed out'
+          : 'Reset complete',
+        'success'
+      );
+      // A factory reset destroys this session's user and the JWT secret, so
+      // staying on the page would just produce 401s. Give the operator a
+      // moment to copy the new admin password, then send them to login.
+      if (resetMode === 'factory') {
+        setTimeout(() => { window.location.href = '/login'; }, 30000);
+      } else {
+        setTimeout(() => loadSettings(), 500);
+      }
+    } catch (e: any) {
+      showToast(e?.message || 'Reset failed', 'error');
+      resetting = false;
+      return;
+    }
+    resetting = false;
+    resetMode = null;
+  }
+
   async function loadSettings() {
     try {
       const res = await api.get<{ data: Record<string, any> }>('/api/settings');
@@ -293,6 +355,49 @@
       </div>
     </div>
 
+    <!-- Danger Zone -->
+    <div class="card" style="animation: fadeInUp 0.5s ease-out; border-color: rgba(239, 68, 68, 0.35);">
+      <div class="flex items-center gap-2.5" style="margin-bottom: 8px;">
+        <div
+          class="flex items-center justify-center rounded-lg"
+          style="width: 32px; height: 32px; background: rgba(239, 68, 68, 0.12);"
+        >
+          <RotateCcw size={16} style="color: #ef4444;" />
+        </div>
+        <div style="font-size: 14px; font-weight: 600; color: #ef4444;">Danger Zone</div>
+      </div>
+      <p style="font-size: 12px; color: var(--color-fg-3); margin-bottom: 20px;">
+        A full database backup is written before anything is deleted, and the path is
+        returned to you. Recovery is a file copy.
+      </p>
+
+      <div class="settings-group">
+        <div class="setting-row">
+          <div class="setting-info">
+            <span style="font-size: 13px; font-weight: 500; color: var(--color-fg-0);">Reset data</span>
+            <span style="font-size: 12px; color: var(--color-fg-3);">
+              Clears connections, discovered models, request logs, caches and routing config
+              (combos, aliases, fallback chains). <strong>Keeps</strong> your login, API keys
+              and master key — existing clients keep working.
+            </span>
+          </div>
+          <button class="danger-btn" onclick={() => openReset('soft')}>Reset data</button>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span style="font-size: 13px; font-weight: 500; color: var(--color-fg-0);">Factory reset</span>
+            <span style="font-size: 12px; color: var(--color-fg-3);">
+              Everything above, <strong>plus</strong> users, sessions, master key and JWT secret.
+              The install returns to first-run setup: every existing API key stops working and
+              you are signed out. A new admin password is generated and shown once.
+            </span>
+          </div>
+          <button class="danger-btn solid" onclick={() => openReset('factory')}>Factory reset</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Gateway Section -->
     <div class="card" style="animation: fadeInUp 0.4s ease-out;">
       <div class="flex items-center gap-2.5" style="margin-bottom: 24px;">
@@ -458,7 +563,161 @@
   {/if}
 </div>
 
+<!-- Reset confirmation dialog. The action button stays disabled until the exact
+     phrase is typed, so a mis-click can never destroy an install. -->
+{#if resetMode}
+  <div
+    class="reset-overlay"
+    role="button"
+    tabindex="-1"
+    onclick={(e) => { if (e.target === e.currentTarget && !resetting) closeReset(); }}
+    onkeydown={(e) => { if (e.key === 'Escape' && !resetting) closeReset(); }}
+  >
+    <div class="reset-dialog">
+      <h3 style="font-size: 15px; font-weight: 600; color: #ef4444; margin-bottom: 8px;">
+        {resetMode === 'factory' ? 'Factory reset' : 'Reset data'}
+      </h3>
+
+      <p style="font-size: 13px; color: var(--color-fg-2); line-height: 1.55; margin-bottom: 6px;">
+        {#if resetMode === 'factory'}
+          This deletes <strong>all providers, models, logs, users and secrets</strong>.
+          Every existing API key stops working, all sessions end, and the install
+          returns to first-run setup.
+        {:else}
+          This deletes <strong>all providers, discovered models, request logs, caches
+          and routing config</strong>. Your login and API keys are kept.
+        {/if}
+      </p>
+      <p style="font-size: 12px; color: var(--color-fg-3); margin-bottom: 16px;">
+        A backup is written first — you can restore by copying that file back.
+      </p>
+
+      <label for="reset-confirm-input" style="font-size: 12px; color: var(--color-fg-2);">
+        Type <code style="color: #ef4444; font-weight: 600;">{RESET_PHRASE[resetMode]}</code> to confirm
+      </label>
+      <input
+        id="reset-confirm-input"
+        class="input-field"
+        style="margin-top: 8px;"
+        bind:value={resetConfirm}
+        disabled={resetting}
+        autocomplete="off"
+        placeholder={RESET_PHRASE[resetMode]}
+      />
+
+      <div class="flex items-center gap-2" style="margin-top: 20px; justify-content: flex-end;">
+        <button class="cancel-btn" onclick={closeReset} disabled={resetting}>Cancel</button>
+        <button
+          class="danger-btn solid"
+          disabled={resetting || resetConfirm.trim() !== RESET_PHRASE[resetMode]}
+          onclick={runReset}
+        >
+          {resetting ? 'Resetting…' : (resetMode === 'factory' ? 'Factory reset' : 'Reset data')}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Post-reset receipt. For a factory reset this is the ONLY time the new admin
+     password is shown, so it stays until dismissed. -->
+{#if resetResult}
+  <div class="reset-overlay">
+    <div class="reset-dialog">
+      <h3 style="font-size: 15px; font-weight: 600; color: var(--color-success); margin-bottom: 12px;">
+        Reset complete
+      </h3>
+
+      {#if resetResult.admin_password}
+        <div style="padding: 12px; border-radius: 8px; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); margin-bottom: 16px;">
+          <div style="font-size: 12px; color: #ef4444; font-weight: 600; margin-bottom: 6px;">
+            Save this now — it is not shown again
+          </div>
+          <div style="font-size: 13px; color: var(--color-fg-0);">
+            Username: <code>{resetResult.admin_username}</code>
+          </div>
+          <div style="font-size: 13px; color: var(--color-fg-0); word-break: break-all;">
+            Password: <code>{resetResult.admin_password}</code>
+          </div>
+          <div style="font-size: 11px; color: var(--color-fg-3); margin-top: 6px;">
+            You must change it at first login. Signing out in 30 seconds.
+          </div>
+        </div>
+      {/if}
+
+      <div style="font-size: 12px; color: var(--color-fg-2); margin-bottom: 4px;">Backup written to</div>
+      <code style="font-size: 12px; color: var(--color-fg-0); word-break: break-all;">{resetResult.backup_path}</code>
+
+      <div class="flex items-center" style="margin-top: 20px; justify-content: flex-end;">
+        <button
+          class="cancel-btn"
+          onclick={() => {
+            const wasFactory = !!resetResult?.admin_password;
+            resetResult = null;
+            if (wasFactory) window.location.href = '/login';
+          }}
+        >Done</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
+  .danger-btn {
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    background: transparent;
+    color: #ef4444;
+    transition: background 0.15s ease, opacity 0.15s ease;
+  }
+  .danger-btn:hover:not(:disabled) { background: rgba(239, 68, 68, 0.1); }
+  .danger-btn.solid {
+    background: #ef4444;
+    color: #fff;
+    border-color: #ef4444;
+  }
+  .danger-btn.solid:hover:not(:disabled) { background: #dc2626; }
+  .danger-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .cancel-btn {
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    color: var(--color-fg-2);
+  }
+  .cancel-btn:hover:not(:disabled) { background: var(--color-bg-2); }
+  .cancel-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .reset-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+  }
+  .reset-dialog {
+    width: 100%;
+    max-width: 460px;
+    padding: 24px;
+    border-radius: 14px;
+    background: var(--color-bg-1);
+    border: 1px solid var(--color-border);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+  }
+
   .settings-group {
     display: flex;
     flex-direction: column;

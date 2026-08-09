@@ -278,6 +278,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/preset-categories/{key}", s.handleUpdatePresetCategory)
 	s.mux.HandleFunc("DELETE /api/preset-categories/{key}", s.handleDeletePresetCategory)
 	s.mux.HandleFunc("POST /api/preset-categories/seed", s.handleSeedBuiltinCategories)
+	// Destructive: wipes the install back to a baseline. Admin-only, requires a
+	// typed confirmation phrase, and takes a full DB backup before touching
+	// anything (see handlers_system_reset.go).
+	s.mux.HandleFunc("POST /api/system/reset", s.handleSystemReset)
 	s.mux.HandleFunc("GET /api/combos", s.handleGetCombos)
 	s.mux.HandleFunc("POST /api/combos", s.handleCreateCombo)
 	s.mux.HandleFunc("PUT /api/combos", s.handleUpdateCombo)

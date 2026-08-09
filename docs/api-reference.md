@@ -254,6 +254,30 @@ DELETE /v1/memory/{key}
 | `POST` | `/api/connections/import-curl` | Import connection from cURL command |
 | `POST` | `/api/models/sync/{connection_id}` | Sync models for a connection |
 
+### System Reset *(destructive, admin-only)*
+
+Mengembalikan instalasi ke kondisi dasar. **Selalu membuat backup database lengkap
+terlebih dahulu** — pemulihan cukup dengan menyalin file itu kembali. Seluruh penghapusan
+berjalan dalam satu transaksi: berhasil penuh, atau instalasi tidak berubah sama sekali.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/system/reset` | Reset. Body: `{"mode": "soft"\|"factory", "confirm": "<phrase>"}` |
+
+Dua mode, karena "reset" bisa berarti dua hal yang sangat berbeda:
+
+| | **soft** (`confirm: "RESET"`) | **factory** (`confirm: "FACTORY RESET"`) |
+|---|---|---|
+| Connections, discovered models, request logs, cache | dihapus | dihapus |
+| Routing config (combos, aliases, fallback chains) | dihapus | dihapus |
+| Preset bawaan | di-reseed | di-reseed |
+| **Users, session, `master_key`, `jwt_secret`** | **dipertahankan** | **dihapus** |
+| Efek | "bersihkan data uji" — klien API & login tetap jalan | "seperti baru install" — semua API key mati, operator logout, password admin baru dibuat (ditampilkan sekali) |
+
+Frasa konfirmasi wajib persis dan berbeda per mode, agar konfirmasi soft tidak bisa
+terpakai untuk factory. Response berisi `backup_path`, `rows_deleted`, dan (khusus
+factory) kredensial admin baru.
+
 ### Routing (Combos)
 
 | Method | Endpoint | Description |
