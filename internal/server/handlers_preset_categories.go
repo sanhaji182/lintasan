@@ -241,11 +241,23 @@ func (s *Server) handleSeedBuiltinCategories(w http.ResponseWriter, r *http.Requ
 
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	inserted := 0
+	updated := 0
 	for _, c := range builtins {
 		var exists int
 		if err := s.db.Conn().QueryRow(
 			"SELECT COUNT(*) FROM preset_categories WHERE key = ?", c.Key,
 		).Scan(&exists); err == nil && exists > 0 {
+			// Refresh the label/icon/colour of an existing built-in so a renamed
+			// category reaches installs that seeded the old label. The key is
+			// the identity and never changes; manual categories are not in this
+			// list, so only built-ins are ever updated.
+			if _, err := s.db.Conn().Exec(
+				`UPDATE preset_categories SET label = ?, icon = ?, color = ?, sort_order = ?, updated_at = ?
+				   WHERE key = ? AND is_builtin = 1`,
+				c.Label, c.Icon, c.Color, c.SortOrder, now, c.Key,
+			); err == nil {
+				updated++
+			}
 			continue
 		}
 		_, err := s.db.Conn().Exec(`
@@ -257,5 +269,5 @@ func (s *Server) handleSeedBuiltinCategories(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	writeJSON(w, map[string]any{"success": true, "inserted": inserted})
+	writeJSON(w, map[string]any{"success": true, "inserted": inserted, "updated": updated})
 }
