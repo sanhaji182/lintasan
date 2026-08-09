@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/sanhaji182/lintasan-go/internal/metrics"
 	"github.com/sanhaji182/lintasan-go/internal/translator"
 )
 
@@ -32,7 +33,7 @@ import (
 
 // HandleResponses is the entry point for POST /v1/responses (Codex ingress).
 func (p *ProxyHandler) HandleResponses(w http.ResponseWriter, r *http.Request) {
-	if !p.responsesAPI {
+	if !p.responsesAPIEnabled() {
 		// Flag OFF (default): the Responses surface does not exist. 404 keeps
 		// prod byte-identical to a build without this route.
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
@@ -58,6 +59,14 @@ func (p *ProxyHandler) HandleResponses(w http.ResponseWriter, r *http.Request) {
 		// Sentinel validation errors → 400 with the specific message.
 		writeResponsesError(w, http.StatusBadRequest, responsesErrMessage(err))
 		return
+	}
+
+	// M5: record tools that could not be represented as chat functions (Codex
+	// sends provider built-ins like web_search alongside real functions). The
+	// translation itself is pure; observability lives here so a shrunk tool list
+	// is visible in /metrics rather than silent.
+	if _, dropped := translator.ResponsesToolsStats(raw); dropped > 0 {
+		metrics.RecordResponsesToolsDropped(dropped)
 	}
 
 	// Codex always streams on /responses; force streaming for the core handler so

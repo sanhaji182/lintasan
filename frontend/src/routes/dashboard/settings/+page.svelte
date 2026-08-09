@@ -34,7 +34,7 @@
             const parsedVal = JSON.parse(value);
             parsed[key] = parsedVal;
           } catch {
-            if (key === 'oauth_ide_enabled') {
+            if (key === 'oauth_ide_enabled' || key === 'responses_api_enabled') {
               parsed[key] = value === 'true' || value === '1';
             } else {
               parsed[key] = value;
@@ -57,6 +57,7 @@
         rate_limit_enabled: false,
         cors_enabled: true,
         oauth_ide_enabled: false,
+        responses_api_enabled: false,
         ...parsed
       };
     } catch (e: any) {
@@ -259,6 +260,30 @@
             aria-label={`OAuth IDE lab: ${(settings.oauth_ide_enabled ?? false) ? 'enabled' : 'disabled'}`}
             title={`OAuth IDE ${(settings.oauth_ide_enabled ?? false) ? 'enabled' : 'disabled'}`}
             onclick={() => settings.oauth_ide_enabled = !(settings.oauth_ide_enabled ?? false)}
+          >
+            <div class="toggle-track">
+              <div class="toggle-thumb"></div>
+            </div>
+          </button>
+        </div>
+
+        <!-- Codex Responses API Toggle -->
+        <div class="setting-row">
+          <div class="setting-info">
+            <div class="flex items-center gap-2">
+              <KeyRound size={14} style="color: #7c3aed;" />
+              <span style="font-size: 13px; font-weight: 500; color: var(--color-fg-0);">Codex Responses API (lab)</span>
+            </div>
+            <span style="font-size: 12px; color: var(--color-fg-3);">
+              POST /v1/responses — Codex-compatible ingress (streaming + tool calls). Admin-only; no server restart.
+            </span>
+          </div>
+          <button
+            class="toggle-btn"
+            class:active={settings.responses_api_enabled ?? false}
+            aria-label={`Codex Responses API: ${(settings.responses_api_enabled ?? false) ? 'enabled' : 'disabled'}`}
+            title={`Codex Responses API ${(settings.responses_api_enabled ?? false) ? 'enabled' : 'disabled'}`}
+            onclick={() => settings.responses_api_enabled = !(settings.responses_api_enabled ?? false)}
           >
             <div class="toggle-track">
               <div class="toggle-thumb"></div>
