@@ -26,6 +26,14 @@
     partial: boolean;
     skipped_models?: string[];
   }
+  interface Provider {
+    name: string;
+    base_url: string;
+    format: string;
+    prefix?: string;
+    accounts: number;
+    healthy: number;
+  }
   interface Summary {
     healthy: number;
     unusable: number;
@@ -42,6 +50,7 @@
     unusable: Conn[];
     blocked: Conn[];
     combos: Combo[];
+    providers: Provider[];
     warnings: string[];
   }
 
@@ -88,6 +97,24 @@
     dragging = false;
     const f = e.dataTransfer?.files?.[0];
     if (f) { file = f; await runPreview(f); }
+  }
+
+  // Importing only the endpoints is a separate request, not a flag on the
+  // account import: the two produce different results and conflating them in
+  // one button would make it unclear which one just ran.
+  async function importProvidersOnly() {
+    if (!file) return;
+    busy = true;
+    error = '';
+    try {
+      const text = await file.text();
+      const res = await api.post<{ data: any }>('/api/migrate/providers', JSON.parse(text));
+      result = { ...res.data, providers_only: true };
+    } catch (e: any) {
+      error = e?.message || 'Import failed';
+    } finally {
+      busy = false;
+    }
   }
 
   async function confirmImport() {
@@ -263,6 +290,18 @@
       <button class="btn primary" onclick={confirmImport} disabled={busy || willImport === 0}>
         {#if busy}<Spinner />{:else}Import {willImport} connection(s) <ArrowRight size={16} />{/if}
       </button>
+      {#if preview.providers?.length}
+        <div class="alt">
+          <span class="alt-or">or</span>
+          <button class="btn ghost" onclick={importProvidersOnly} disabled={busy}>
+            Import the {preview.providers.length} provider(s) only
+          </button>
+          <p class="explain">
+            Adds the endpoints as presets so you can create connections with your own keys.
+            No accounts and no API keys are copied.
+          </p>
+        </div>
+      {/if}
     </section>
   {/if}
 
@@ -270,22 +309,36 @@
   {#if result}
     <section class="panel done">
       <h2><CircleCheck size={18} /> Import complete</h2>
-      <ul class="result">
-        <li><strong>{result.connections_imported}</strong> connection(s) added</li>
-        {#if result.connections_skipped}
-          <li><strong>{result.connections_skipped}</strong> skipped (already present)</li>
-        {/if}
-        {#if result.combos_imported}
-          <li><strong>{result.combos_imported}</strong> combo(s) added</li>
-        {/if}
-        {#if result.combos_skipped}
-          <li><strong>{result.combos_skipped}</strong> combo(s) skipped (name already used)</li>
-        {/if}
-      </ul>
+      {#if result.providers_only}
+        <ul class="result">
+          <li><strong>{result.presets_imported}</strong> provider(s) added</li>
+          {#if result.presets_skipped}
+            <li><strong>{result.presets_skipped}</strong> skipped (already present)</li>
+          {/if}
+          <li><strong>{result.accounts_ignored}</strong> account(s) ignored, as requested</li>
+        </ul>
+      {:else}
+        <ul class="result">
+          <li><strong>{result.connections_imported}</strong> connection(s) added</li>
+          {#if result.connections_skipped}
+            <li><strong>{result.connections_skipped}</strong> skipped (already present)</li>
+          {/if}
+          {#if result.combos_imported}
+            <li><strong>{result.combos_imported}</strong> combo(s) added</li>
+          {/if}
+          {#if result.combos_skipped}
+            <li><strong>{result.combos_skipped}</strong> combo(s) skipped (name already used)</li>
+          {/if}
+        </ul>
+      {/if}
       {#each result.skipped_reasons || [] as r}
         <p class="explain">{r}</p>
       {/each}
-      <a class="btn primary" href="/dashboard/connections">View connections <ArrowRight size={16} /></a>
+      {#if result.providers_only}
+        <a class="btn primary" href="/dashboard/providers">View providers <ArrowRight size={16} /></a>
+      {:else}
+        <a class="btn primary" href="/dashboard/connections">View connections <ArrowRight size={16} /></a>
+      {/if}
     </section>
   {/if}
 </div>
@@ -361,6 +414,10 @@
   .btn.primary { background: var(--accent, #8b5cf6); border-color: transparent; color: #fff; }
   .btn:disabled { opacity: .5; cursor: not-allowed; }
   .ghost { background: none; border: none; color: var(--text-muted, #94a3b8); cursor: pointer; display: flex; align-items: center; gap: .3rem; font-size: .82rem; }
+
+  .alt { display: flex; flex-direction: column; gap: .3rem; margin-top: .4rem; }
+  .alt-or { font-size: .75rem; color: var(--text-muted, #64748b); text-transform: uppercase; letter-spacing: .05em; }
+  .alt .btn.ghost { text-decoration: underline; padding-left: 0; }
 
   .done h2 { color: #22c55e; }
   .result { list-style: none; padding: 0; margin: 0 0 .8rem; display: flex; flex-direction: column; gap: .3rem; font-size: .88rem; }

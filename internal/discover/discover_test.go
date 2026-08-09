@@ -180,13 +180,40 @@ func TestDiscoverer_NewDiscoverer(t *testing.T) {
 
 func TestFallbackModels_ValidFormat(t *testing.T) {
 	d := NewDiscoverer(nil)
-	conn := map[string]any{"format": "openai"}
+	// The catalogue may only stand in for the vendor it actually describes, so
+	// the endpoint has to be OpenAI's for the OpenAI catalogue to apply.
+	conn := map[string]any{"format": "openai", "base_url": "https://api.openai.com/v1"}
 	models, err := d.fallbackModels(conn)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(models) < 5 {
 		t.Errorf("expected at least 5 openai fallback models, got %d", len(models))
+	}
+}
+
+// A third-party endpoint that merely speaks the OpenAI protocol must NOT be
+// handed OpenAI's model list. Doing so invents models it does not serve: sync
+// reports success, the dashboard fills with plausible ids, and the failure only
+// surfaces at request time as "no route found".
+//
+// This is a real regression: an imported MiMo endpoint was credited with
+// gpt-4o/o1 because it was format "openai".
+func TestFallbackModels_ThirdPartyOpenAICompatibleGetsNothing(t *testing.T) {
+	d := NewDiscoverer(nil)
+	for _, base := range []string{
+		"https://api.xiaomimimo.com/v1",
+		"https://openrouter.ai/api/v1",
+		"http://localhost:11434/v1",
+	} {
+		conn := map[string]any{"format": "openai", "base_url": base}
+		models, err := d.fallbackModels(conn)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(models) != 0 {
+			t.Errorf("%s: expected no invented models, got %d (%v)", base, len(models), models)
+		}
 	}
 }
 
@@ -253,9 +280,10 @@ func TestFetchModelsFromProvider_HTTPErrorFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Should return fallback models for openai
-	if len(models) < 5 {
-		t.Errorf("expected at least 5 fallback models on error, got %d", len(models))
+	// An unidentified host that fails to answer gets nothing, rather than being
+	// credited with OpenAI's catalogue. Empty is the honest answer.
+	if len(models) != 0 {
+		t.Errorf("expected no models when an unknown host errors, got %d (%v)", len(models), models)
 	}
 }
 
@@ -276,7 +304,9 @@ func TestFetchModelsFromProvider_EmptyResponseFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(models) < 5 {
-		t.Errorf("expected at least 5 fallback models on empty response, got %d", len(models))
+	// The endpoint answered and said it serves nothing. Substituting a vendor
+	// catalogue here would contradict the endpoint's own answer.
+	if len(models) != 0 {
+		t.Errorf("expected an empty catalogue to be reported as empty, got %d (%v)", len(models), models)
 	}
 }

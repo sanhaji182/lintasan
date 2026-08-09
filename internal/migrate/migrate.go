@@ -123,7 +123,7 @@ type Plan struct {
 
 	// Importable connections, already split by health so the caller can offer
 	// "include dead ones too" without recomputing anything.
-	Healthy []Connection `json:"healthy"`
+	Healthy  []Connection `json:"healthy"`
 	Unusable []Connection `json:"unusable"`
 
 	// Connections that cannot be represented at all, kept for honest reporting.
@@ -255,7 +255,121 @@ func Parse(data []byte, presets PresetLookup) (Plan, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Shared helpers
+// Providers-only view
+// ---------------------------------------------------------------------------
+
+// Provider is a distinct endpoint discovered in an export, with the accounts
+// stripped off.
+//
+// WHY: an export is account-shaped — one row per API key — but a user who wants
+// their *catalogue* moved does not want 922 copies of the same endpoint under
+// 922 keys. Collapsing to the endpoint gives them the useful half of the export
+// (which providers exist, and where they live) with none of the credentials.
+type Provider struct {
+	Name    string `json:"name"`
+	BaseURL string `json:"base_url"`
+	Format  string `json:"format"`
+
+	// Prefix is the source router's short alias, kept because combos reference
+	// providers by it.
+	Prefix string `json:"prefix,omitempty"`
+
+	// Accounts is how many connections in the export pointed here. Shown so the
+	// user can see that one endpoint stood for hundreds of rows.
+	Accounts int `json:"accounts"`
+
+	// Healthy is how many of those accounts the source considered working. An
+	// endpoint whose every account was dead is still a valid endpoint, but the
+	// user deserves to know before they go hunting for a key.
+	Healthy int `json:"healthy"`
+}
+
+// Providers collapses the plan's connections into distinct endpoints, dropping
+// API keys entirely.
+//
+// Blocked connections are deliberately included when their endpoint is known:
+// an OAuth provider cannot bring its credentials across, but its endpoint is
+// still a real provider the user may want in their catalogue. Connections with
+// no endpoint at all are the only ones with nothing to contribute.
+func (p Plan) Providers() []Provider {
+	byURL := map[string]*Provider{}
+	order := []string{}
+
+	consider := func(c Connection, healthy bool) {
+		base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/")
+		if base == "" {
+			return
+		}
+		key := strings.ToLower(base)
+		prov, seen := byURL[key]
+		if !seen {
+			prov = &Provider{
+				Name:    providerDisplayName(c),
+				BaseURL: base,
+				Format:  c.Format,
+				Prefix:  c.Prefix,
+			}
+			byURL[key] = prov
+			order = append(order, key)
+		}
+		prov.Accounts++
+		if healthy {
+			prov.Healthy++
+		}
+		// Prefer a prefix over none: combos reference providers by prefix, so a
+		// named alias is more useful than the first row's blank.
+		if prov.Prefix == "" && c.Prefix != "" {
+			prov.Prefix = c.Prefix
+		}
+	}
+
+	for _, c := range p.Healthy {
+		consider(c, true)
+	}
+	for _, c := range p.Unusable {
+		consider(c, false)
+	}
+	for _, c := range p.Blocked {
+		consider(c, false)
+	}
+
+	out := make([]Provider, 0, len(order))
+	for _, k := range order {
+		out = append(out, *byURL[k])
+	}
+	return out
+}
+
+// providerDisplayName picks a label for an endpoint. Export rows are named per
+// account ("Key 1", "Key 960"), which says nothing about the provider, so we
+// fall back to the source provider id and finally the host.
+func providerDisplayName(c Connection) string {
+	if n := strings.TrimSpace(c.SourceProvider); n != "" && !isOpaqueProviderID(n) {
+		return n
+	}
+	if n := strings.TrimSpace(c.Prefix); n != "" {
+		return n
+	}
+	base := strings.TrimSpace(c.BaseURL)
+	base = strings.TrimPrefix(strings.TrimPrefix(base, "https://"), "http://")
+	if i := strings.IndexAny(base, "/"); i > 0 {
+		base = base[:i]
+	}
+	if base != "" {
+		return base
+	}
+	return strings.TrimSpace(c.Name)
+}
+
+// isOpaqueProviderID reports whether a source provider id is a generated handle
+// rather than a human-meaningful name, e.g.
+// "openai-compatible-chat-555a26bb-b7ab-4b1b-bde9-87c75aa0c1bd".
+func isOpaqueProviderID(id string) bool {
+	return strings.HasPrefix(id, "openai-compatible-") ||
+		strings.HasPrefix(id, "anthropic-compatible-") ||
+		strings.HasPrefix(id, "custom-embedding-")
+}
+
 // ---------------------------------------------------------------------------
 
 // mapPresets is a PresetLookup backed by a plain map, for tests and defaults.

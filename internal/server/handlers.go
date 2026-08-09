@@ -150,17 +150,17 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type ConnResponse struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		BaseURL     string `json:"base_url"`
+		ID            string `json:"id"`
+		Name          string `json:"name"`
+		BaseURL       string `json:"base_url"`
 		APIKey        string `json:"api_key"`
 		OAuthProvider string `json:"oauth_provider,omitempty"`
 		Format        string `json:"format"`
-		IsActive    int    `json:"is_active"`
-		Priority    int    `json:"priority"`
-		ModelsCount int    `json:"models_count"`
-		CreatedAt   string `json:"created_at"`
-		PoolID      string `json:"pool_id,omitempty"`
+		IsActive      int    `json:"is_active"`
+		Priority      int    `json:"priority"`
+		ModelsCount   int    `json:"models_count"`
+		CreatedAt     string `json:"created_at"`
+		PoolID        string `json:"pool_id,omitempty"`
 	}
 
 	var conns []ConnResponse
@@ -190,15 +190,15 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name       string `json:"name"`
-		BaseURL    string `json:"base_url"`
-		BaseURL2   string `json:"baseUrl"`
-		APIKey     string `json:"api_key"`
-		APIKey2    string `json:"apiKey"`
-		Format     string `json:"format"`
-		Priority   int    `json:"priority"`
-		ChatPath   string `json:"chatPath"`
-		ModelsPath string `json:"modelsPath"`
+		Name          string `json:"name"`
+		BaseURL       string `json:"base_url"`
+		BaseURL2      string `json:"baseUrl"`
+		APIKey        string `json:"api_key"`
+		APIKey2       string `json:"apiKey"`
+		Format        string `json:"format"`
+		Priority      int    `json:"priority"`
+		ChatPath      string `json:"chatPath"`
+		ModelsPath    string `json:"modelsPath"`
 		AuthHeader    string `json:"authHeader"`
 		AuthPrefix    string `json:"authPrefix"`
 		OAuthProvider string `json:"oauth_provider"`
@@ -210,17 +210,35 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if input.BaseURL == "" { input.BaseURL = input.BaseURL2 }
-	if input.APIKey == "" { input.APIKey = input.APIKey2 }
+	if input.BaseURL == "" {
+		input.BaseURL = input.BaseURL2
+	}
+	if input.APIKey == "" {
+		input.APIKey = input.APIKey2
+	}
 	if input.Name == "" || input.BaseURL == "" {
 		http.Error(w, `{"error":{"message":"name and baseUrl are required"}}`, http.StatusBadRequest)
 		return
 	}
-	if input.Format == "" { input.Format = "openai" }
-	if input.ChatPath == "" { input.ChatPath = "/v1/chat/completions" }
-	if input.ModelsPath == "" { input.ModelsPath = "/v1/models" }
-	if input.AuthHeader == "" { input.AuthHeader = "Authorization" }
-	if input.AuthPrefix == "" { input.AuthPrefix = "Bearer " }
+	if input.Format == "" {
+		input.Format = "openai"
+	}
+	// Derive the paths from the base URL rather than assuming "/v1/...": a base
+	// that already ends in a version segment would otherwise yield "/v1/v1/...",
+	// which 404s on every request and shows up as a silently broken connection.
+	defaultChatPath, defaultModelsPath := apiPathsFor(input.BaseURL)
+	if input.ChatPath == "" {
+		input.ChatPath = defaultChatPath
+	}
+	if input.ModelsPath == "" {
+		input.ModelsPath = defaultModelsPath
+	}
+	if input.AuthHeader == "" {
+		input.AuthHeader = "Authorization"
+	}
+	if input.AuthPrefix == "" {
+		input.AuthPrefix = "Bearer "
+	}
 
 	id := uuid.New().String()
 	_, err := s.db.Conn().Exec(
@@ -244,7 +262,9 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if id == "" { id = r.URL.Query().Get("id") }
+	if id == "" {
+		id = r.URL.Query().Get("id")
+	}
 	if id == "" {
 		http.Error(w, `{"error":"id is required"}`, http.StatusBadRequest)
 		return
@@ -334,9 +354,9 @@ func (s *Server) handleGetConnectionPools(w http.ResponseWriter, r *http.Request
 
 func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		ID       string  `json:"id"`
-		Name     *string `json:"name"`
-		BaseURL  *string `json:"base_url"`
+		ID            string  `json:"id"`
+		Name          *string `json:"name"`
+		BaseURL       *string `json:"base_url"`
 		APIKey        *string `json:"api_key"`
 		OAuthProvider *string `json:"oauth_provider"`
 		IsActive      *int    `json:"is_active"`
@@ -346,16 +366,28 @@ func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
 		// Body may be empty (frontend sends id as query param). Use zero values.
 	}
 	// Accept id from query param if not in body (frontend sends as query)
-	if input.ID == "" { input.ID = r.URL.Query().Get("id") }
 	if input.ID == "" {
-		http.Error(w, `{"error":{"message":"id is required"}}`, http.StatusBadRequest); return
+		input.ID = r.URL.Query().Get("id")
 	}
-	
+	if input.ID == "" {
+		http.Error(w, `{"error":{"message":"id is required"}}`, http.StatusBadRequest)
+		return
+	}
+
 	var updates []string
 	var args []any
-	if input.Name != nil { updates = append(updates, "name = ?"); args = append(args, *input.Name) }
-	if input.BaseURL != nil { updates = append(updates, "base_url = ?"); args = append(args, *input.BaseURL) }
-	if input.IsActive != nil { updates = append(updates, "is_active = ?"); args = append(args, *input.IsActive) }
+	if input.Name != nil {
+		updates = append(updates, "name = ?")
+		args = append(args, *input.Name)
+	}
+	if input.BaseURL != nil {
+		updates = append(updates, "base_url = ?")
+		args = append(args, *input.BaseURL)
+	}
+	if input.IsActive != nil {
+		updates = append(updates, "is_active = ?")
+		args = append(args, *input.IsActive)
+	}
 	if input.APIKey != nil {
 		newKey := *input.APIKey
 		if !(strings.Contains(newKey, "...") && len(newKey) < 20) {
@@ -382,7 +414,8 @@ func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
 			s.proxy.RefreshMultiAccountPools()
 		}
 	}
-	w.Header().Set("Content-Type", "application/json"); json.NewEncoder(w).Encode(map[string]any{"success":true,"data":map[string]any{"id":input.ID}})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"id": input.ID}})
 }
 
 // Combos - read from settings (Node.js stores combos in settings as JSON)
@@ -609,7 +642,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"tokensToday":       tokensToday,
 		"tokensMonth":       tokensToday * 30,
 		"tokensSaved":       cachedRequests * 2000, // rough estimate: ~2K tokens per cache hit
-		"tokensCompressed":  0, // token compression counters TBD when compressor tracks stats
+		"tokensCompressed":  0,                     // token compression counters TBD when compressor tracks stats
 		"activeModels":      modelCount,
 		"activeConnections": connCount,
 		"features":          features,

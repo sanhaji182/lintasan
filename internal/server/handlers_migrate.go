@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/sanhaji182/lintasan-go/internal/migrate"
@@ -14,16 +15,23 @@ import (
 
 // handlers_migrate.go — import a competitor router's export.
 //
-// Two endpoints, deliberately split:
+// Three endpoints, deliberately split:
 //
-//	POST /api/migrate/preview  → parse and report, write nothing
-//	POST /api/migrate/import   → parse and apply
+//	POST /api/migrate/preview    → parse and report, write nothing
+//	POST /api/migrate/import     → parse and apply (accounts + keys)
+//	POST /api/migrate/providers  → apply endpoints only, no accounts, no keys
 //
-// The split exists because most of a real export cannot be migrated: in the
-// sample that drove this feature, 973 connections yielded 16 usable ones (the
-// rest were OAuth-based or already dead upstream). Importing silently would
-// leave the user staring at a mostly-empty dashboard with no explanation, so the
-// preview is a first-class step rather than a convenience.
+// The preview/import split exists because most of a real export cannot be
+// migrated: in the sample that drove this feature, 973 connections yielded 16
+// usable ones (the rest were OAuth-based or already dead upstream). Importing
+// silently would leave the user staring at a mostly-empty dashboard with no
+// explanation, so the preview is a first-class step rather than a convenience.
+//
+// The providers endpoint exists because "move my setup" and "just give me the
+// provider list, I'll bring my own keys" are different requests. An export is
+// account-shaped — the reference file held 922 accounts behind a single
+// endpoint — so collapsing to distinct endpoints is what makes the catalogue
+// view useful rather than a wall of duplicates.
 //
 // The uploaded file is never written to disk. It contains live API keys, and a
 // temp file is one stray backup away from being a credential leak.
@@ -41,6 +49,7 @@ const maxImportBytes = 16 << 20
 func (s *Server) registerMigrateRoutes() {
 	s.mux.HandleFunc("POST /api/migrate/preview", s.handleMigratePreview)
 	s.mux.HandleFunc("POST /api/migrate/import", s.handleMigrateImport)
+	s.mux.HandleFunc("POST /api/migrate/providers", s.handleMigrateProviders)
 }
 
 // --- preview ---------------------------------------------------------------
@@ -60,14 +69,15 @@ func (s *Server) handleMigratePreview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"success": true,
 		"data": map[string]any{
-			"source":   plan.Source,
-			"summary":  plan.Summarize(),
-			"selected": plan.Selected(includeUnusable),
-			"healthy":  plan.Healthy,
-			"unusable": plan.Unusable,
-			"blocked":  plan.Blocked,
-			"combos":   plan.Combos,
-			"warnings": plan.Warnings,
+			"source":    plan.Source,
+			"summary":   plan.Summarize(),
+			"selected":  plan.Selected(includeUnusable),
+			"healthy":   plan.Healthy,
+			"unusable":  plan.Unusable,
+			"blocked":   plan.Blocked,
+			"combos":    plan.Combos,
+			"providers": plan.Providers(),
+			"warnings":  plan.Warnings,
 		},
 	})
 }
@@ -107,6 +117,166 @@ func (s *Server) handleMigrateImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"success": true, "data": res})
+}
+
+// --- providers-only import -------------------------------------------------
+
+// handleMigrateProviders imports the export's distinct endpoints as provider
+// presets, without importing a single account or key.
+//
+// WHY THIS EXISTS SEPARATELY: the account-level import answers "move my setup".
+// This answers a different question — "I only want the provider list" — for a
+// user who intends to supply their own keys. Folding it into the main import as
+// a flag would have made an already branchy handler decide between two
+// different output shapes; a second endpoint keeps each one honest.
+//
+// Nothing here touches api_key. The uploaded bytes still never leave memory.
+func (s *Server) handleMigrateProviders(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeMigrateError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	if s.db == nil {
+		writeMigrateError(w, http.StatusServiceUnavailable, "database unavailable")
+		return
+	}
+
+	plan, err := s.parseUpload(r)
+	if err != nil {
+		writeMigrateError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	providers := plan.Providers()
+	if len(providers) == 0 {
+		writeMigrateError(w, http.StatusUnprocessableEntity,
+			"no provider endpoints found in this export")
+		return
+	}
+
+	res, err := s.applyProviderImport(providers)
+	if err != nil {
+		writeMigrateError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, map[string]any{"success": true, "data": res})
+}
+
+type providerImportResult struct {
+	PresetsImported int      `json:"presets_imported"`
+	PresetsSkipped  int      `json:"presets_skipped"`
+	SkippedReasons  []string `json:"skipped_reasons,omitempty"`
+	AccountsIgnored int      `json:"accounts_ignored"`
+}
+
+// applyProviderImport writes each distinct endpoint into provider_presets,
+// skipping any endpoint already present so a repeat run is a no-op.
+func (s *Server) applyProviderImport(providers []migrate.Provider) (providerImportResult, error) {
+	var res providerImportResult
+
+	tx, err := s.db.Conn().Begin()
+	if err != nil {
+		return res, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Existing presets, indexed by normalised base URL and by name, so we skip
+	// both "same endpoint under another label" and "same label".
+	existingURL := map[string]bool{}
+	existingName := map[string]bool{}
+	rows, err := tx.Query("SELECT name, base_url FROM provider_presets")
+	if err == nil {
+		for rows.Next() {
+			var name, base string
+			if rows.Scan(&name, &base) == nil {
+				existingURL[normalizeBaseURL(base)] = true
+				existingName[strings.ToLower(strings.TrimSpace(name))] = true
+			}
+		}
+		rows.Close()
+	}
+
+	insert, err := tx.Prepare(`
+		INSERT INTO provider_presets (id, name, domain, base_url, format, key_label, category, is_builtin, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'API Key', 'imported', 0, ?, ?)`)
+	if err != nil {
+		return res, fmt.Errorf("prepare insert: %w", err)
+	}
+	defer insert.Close()
+
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	for _, p := range providers {
+		res.AccountsIgnored += p.Accounts
+
+		urlKey := normalizeBaseURL(p.BaseURL)
+		if existingURL[urlKey] {
+			res.PresetsSkipped++
+			res.SkippedReasons = appendUnique(res.SkippedReasons,
+				"some endpoints already had a preset and were left untouched")
+			continue
+		}
+
+		name := uniquePresetName(p.Name, existingName)
+		format := p.Format
+		if strings.TrimSpace(format) == "" {
+			format = "openai"
+		}
+		id, err := generatePresetID()
+		if err != nil {
+			return res, fmt.Errorf("generate preset id: %w", err)
+		}
+		if _, err := insert.Exec(id, name, presetDomainOf(p.BaseURL), p.BaseURL, format, now, now); err != nil {
+			return res, fmt.Errorf("insert preset %q: %w", name, err)
+		}
+		existingURL[urlKey] = true
+		existingName[strings.ToLower(name)] = true
+		res.PresetsImported++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("commit: %w", err)
+	}
+	return res, nil
+}
+
+// normalizeBaseURL makes endpoint comparison insensitive to case and a trailing
+// slash, so "https://api.x.ai/v1/" and "https://api.x.ai/v1" are one endpoint.
+func normalizeBaseURL(u string) string {
+	return strings.ToLower(strings.TrimRight(strings.TrimSpace(u), "/"))
+}
+
+// presetDomainOf extracts the host's registrable part, which is what preset
+// alias matching indexes on.
+func presetDomainOf(rawURL string) string {
+	h := strings.TrimSpace(rawURL)
+	h = strings.TrimPrefix(strings.TrimPrefix(h, "https://"), "http://")
+	if i := strings.IndexAny(h, "/:"); i > 0 {
+		h = h[:i]
+	}
+	parts := strings.Split(h, ".")
+	if len(parts) >= 2 {
+		return strings.ToLower(strings.Join(parts[len(parts)-2:], "."))
+	}
+	return strings.ToLower(h)
+}
+
+// uniquePresetName appends a numeric suffix when a name is taken, because
+// presets are looked up by name and a silent collision would hide an endpoint.
+func uniquePresetName(name string, taken map[string]bool) string {
+	base := strings.TrimSpace(name)
+	if base == "" {
+		base = "Imported provider"
+	}
+	if !taken[strings.ToLower(base)] {
+		return base
+	}
+	for i := 2; i < 1000; i++ {
+		candidate := fmt.Sprintf("%s (%d)", base, i)
+		if !taken[strings.ToLower(candidate)] {
+			return candidate
+		}
+	}
+	return base
 }
 
 type importResult struct {

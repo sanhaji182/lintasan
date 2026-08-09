@@ -336,12 +336,53 @@ func parseModelsResponse(body []byte) []ModelInfo {
 }
 
 // fallbackModels returns known models for the connection's format (or empty).
+//
+// The format alone is NOT enough to justify a fallback. "openai" here means
+// "speaks the OpenAI wire protocol", which is true of dozens of unrelated
+// providers — returning OpenAI's catalogue for all of them invents models the
+// endpoint does not serve. That failure is worse than returning nothing: model
+// sync reports success, the dashboard fills with plausible ids, and the first
+// real request fails with "no route found" long after the cause is visible.
+//
+// So a fallback only applies when the endpoint really is the vendor whose
+// catalogue we are about to claim.
 func (d *Discoverer) fallbackModels(conn map[string]any) ([]ModelInfo, error) {
 	format, _ := conn["format"].(string)
-	if known, ok := d.knownModels[format]; ok {
-		return known, nil
+	known, ok := d.knownModels[format]
+	if !ok {
+		return nil, nil
 	}
-	return nil, nil
+	baseURL, _ := conn["base_url"].(string)
+	if !fallbackAppliesTo(format, baseURL) {
+		return nil, nil
+	}
+	return known, nil
+}
+
+// fallbackAppliesTo reports whether a hardcoded catalogue may stand in for a
+// live /models call, by checking the endpoint belongs to that vendor.
+func fallbackAppliesTo(format, baseURL string) bool {
+	host := strings.ToLower(strings.TrimSpace(baseURL))
+	host = strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
+	if i := strings.IndexAny(host, "/:"); i > 0 {
+		host = host[:i]
+	}
+	if host == "" {
+		return false
+	}
+	// Hosts whose catalogue we are willing to assert without asking the
+	// endpoint. Anything else must answer /models for itself.
+	vendorHosts := map[string][]string{
+		"openai":      {"api.openai.com"},
+		"anthropic":   {"api.anthropic.com"},
+		"commandcode": {"api.commandcode.ai"},
+	}
+	for _, h := range vendorHosts[format] {
+		if host == h || strings.HasSuffix(host, "."+h) {
+			return true
+		}
+	}
+	return false
 }
 
 // knownModels returns the hardcoded fallback map keyed by format.
