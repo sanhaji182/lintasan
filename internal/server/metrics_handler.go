@@ -68,6 +68,26 @@ func cacheCollector(w io.Writer) {
 		"Cache-eligible requests that missed and went upstream.", float64(c.Misses))
 }
 
+// responsesCollector bridges the Codex Responses-shim counters from the metrics
+// package into Prometheus families (M4 observability). All plain counters, no
+// labels — bounded by construction. They stay at zero while the shim flag is OFF
+// (default), so they add no cost to a build that never serves /v1/responses.
+func responsesCollector(w io.Writer) {
+	rs := metrics.ResponsesStats()
+	metrics.WriteCounter(w, "lintasan_responses_streams_started_total",
+		"Codex /v1/responses streams where response.created was emitted.", float64(rs.StreamsStarted))
+	metrics.WriteCounter(w, "lintasan_responses_streams_completed_total",
+		"Responses streams terminated by response.completed (success).", float64(rs.StreamsCompleted))
+	metrics.WriteCounter(w, "lintasan_responses_streams_failed_total",
+		"Responses streams terminated by response.failed (upstream/translation error).", float64(rs.StreamsFailed))
+	metrics.WriteCounter(w, "lintasan_responses_streams_incomplete_total",
+		"Responses streams terminated by response.incomplete (truncated/partial).", float64(rs.StreamsIncomplete))
+	metrics.WriteCounter(w, "lintasan_responses_tool_calls_total",
+		"function_call items emitted across all Responses streams.", float64(rs.ToolCalls))
+	metrics.WriteCounter(w, "lintasan_responses_text_streams_total",
+		"Responses streams that emitted at least one text delta.", float64(rs.TextStreams))
+}
+
 // buildInfoCollector emits a single build_info gauge carrying the server
 // version as a BOUNDED info label. Value is always 1 (the Prometheus
 // build-info idiom). Version is a fixed compile-time string, never secret.
