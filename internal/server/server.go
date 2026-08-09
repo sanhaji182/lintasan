@@ -183,6 +183,9 @@ func (s *Server) routes() {
 	// Register Credential Management API (V1)
 	s.registerCredentialRoutes()
 
+	// Register competitor-router migration API (9router import, OmniRouter next)
+	s.registerMigrateRoutes()
+
 	// Register Auth routes (JWT-based dashboard login)
 	s.mux.HandleFunc("POST /api/auth/login", s.authHandler.HandleLogin())
 	s.mux.HandleFunc("GET /api/auth/me", s.authHandler.HandleMe())
