@@ -214,32 +214,40 @@ func (s *Server) handleDeletePresetCategory(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, map[string]any{"success": true})
 }
 
-// handleSeedBuiltinCategories inserts built-in categories if they don't exist
+// handleSeedBuiltinCategories inserts any built-in category that is missing.
+//
+// Seeding is additive, not bail-out: an install that seeded once before a new
+// category existed must still receive it. The earlier version returned early
+// whenever any built-in was present, which froze such installs at the old set.
 func (s *Server) handleSeedBuiltinCategories(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Check if already seeded
-	var count int
-	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM preset_categories WHERE is_builtin = 1").Scan(&count); err == nil && count > 0 {
-		writeJSON(w, map[string]any{"success": true, "message": "already seeded", "count": count})
-		return
-	}
-
 	builtins := []PresetCategory{
 		{Key: "foundation", Label: "Foundation Models", Icon: "🧠", Color: "#8b5cf6", SortOrder: 10},
-		{Key: "open", Label: "Open Source", Icon: "🌐", Color: "#10b981", SortOrder: 20},
-		{Key: "inference", Label: "Fast Inference", Icon: "⚡", Color: "#f59e0b", SortOrder: 30},
+		{Key: "open", Label: "Open Models", Icon: "🌐", Color: "#10b981", SortOrder: 20},
+		{Key: "inference", Label: "Inference Cloud", Icon: "⚡", Color: "#f59e0b", SortOrder: 30},
 		{Key: "aggregator", Label: "Aggregators", Icon: "🔀", Color: "#3b82f6", SortOrder: 40},
 		{Key: "search", Label: "Search & Augment", Icon: "🔍", Color: "#ec4899", SortOrder: 50},
 		{Key: "local", Label: "Local & Self-Host", Icon: "🏠", Color: "#6366f1", SortOrder: 60},
+		// free-tier and coding exist because presets already reference them, but
+		// they were never registered as categories — leaving eight presets
+		// pointing at keys the UI cannot label.
+		{Key: "free-tier", Label: "Free & Open", Icon: "🆓", Color: "#22c55e", SortOrder: 70},
+		{Key: "coding", Label: "Coding & Agents", Icon: "💻", Color: "#06b6d4", SortOrder: 80},
 	}
 
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	inserted := 0
 	for _, c := range builtins {
+		var exists int
+		if err := s.db.Conn().QueryRow(
+			"SELECT COUNT(*) FROM preset_categories WHERE key = ?", c.Key,
+		).Scan(&exists); err == nil && exists > 0 {
+			continue
+		}
 		_, err := s.db.Conn().Exec(`
 			INSERT INTO preset_categories (key, label, icon, color, sort_order, is_builtin, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, 1, ?, ?)

@@ -235,34 +235,34 @@ func seedCatalogue() []Preset {
 		// want from a preset. Providers using a bespoke wire format (Anthropic,
 		// Gemini, Vertex), an OAuth-only login, or a non-HTTP transport are
 		// deliberately excluded rather than guessed at.
-		{Name: "Alibaba Coding", Domain: "aliyuncs.com", BaseURL: "https://coding.dashscope.aliyuncs.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
-		{Name: "Alibaba Coding (Intl)", Domain: "aliyuncs.com", BaseURL: "https://coding-intl.dashscope.aliyuncs.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
-		{Name: "Alibaba Model Studio (Intl)", Domain: "aliyuncs.com", BaseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Alibaba Coding", Domain: "aliyuncs.com", BaseURL: "https://coding.dashscope.aliyuncs.com/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
+		{Name: "Alibaba Coding (Intl)", Domain: "aliyuncs.com", BaseURL: "https://coding-intl.dashscope.aliyuncs.com/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
+		{Name: "Alibaba Model Studio Intl", Domain: "aliyuncs.com", BaseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "API.airforce", Domain: "api.airforce", BaseURL: "https://api.airforce/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
-		{Name: "Baidu Qianfan", Domain: "baidubce.com", BaseURL: "https://qianfan.baidubce.com/v2", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Baidu Qianfan", Domain: "baidubce.com", BaseURL: "https://qianfan.baidubce.com/v2", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "Bazaarlink", Domain: "bazaarlink.ai", BaseURL: "https://bazaarlink.ai/api/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
-		{Name: "Blackbox AI", Domain: "blackbox.ai", BaseURL: "https://api.blackbox.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
-		{Name: "BluesMinds", Domain: "bluesminds.com", BaseURL: "https://api.bluesminds.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
-		{Name: "BytePlus ModelArk", Domain: "bytepluses.com", BaseURL: "https://ark.ap-southeast.bytepluses.com/api/coding/v3", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
+		{Name: "Blackbox AI", Domain: "blackbox.ai", BaseURL: "https://api.blackbox.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
+		{Name: "BluesMinds", Domain: "bluesminds.com", BaseURL: "https://api.bluesminds.com/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
+		{Name: "BytePlus ModelArk", Domain: "bytepluses.com", BaseURL: "https://ark.ap-southeast.bytepluses.com/api/coding/v3", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "Cerebras", Domain: "cerebras.ai", BaseURL: "https://api.cerebras.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Chutes AI", Domain: "chutes.ai", BaseURL: "https://llm.chutes.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
-		{Name: "Featherless", Domain: "featherless.ai", BaseURL: "https://api.featherless.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
-		{Name: "GLM (China)", Domain: "bigmodel.cn", BaseURL: "https://open.bigmodel.cn/api/coding/paas/v4", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Featherless", Domain: "featherless.ai", BaseURL: "https://api.featherless.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
+		{Name: "GLM China", Domain: "bigmodel.cn", BaseURL: "https://open.bigmodel.cn/api/coding/paas/v4", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "Hyperbolic", Domain: "hyperbolic.xyz", BaseURL: "https://api.hyperbolic.xyz/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Kilo Gateway", Domain: "kilo.ai", BaseURL: "https://api.kilo.ai/api/gateway", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
 		{Name: "Kimchi", Domain: "kimchi.dev", BaseURL: "https://llm.kimchi.dev/openai/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
-		{Name: "LLM7", Domain: "llm7.io", BaseURL: "https://api.llm7.io/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
-		{Name: "Morph", Domain: "morphllm.com", BaseURL: "https://api.morphllm.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "LLM7", Domain: "llm7.io", BaseURL: "https://api.llm7.io/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
+		{Name: "Morph", Domain: "morphllm.com", BaseURL: "https://api.morphllm.com/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "Nebius AI", Domain: "nebius.ai", BaseURL: "https://api.studio.nebius.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "OpenCode Go", Domain: "opencode.ai", BaseURL: "https://opencode.ai/zen/go/v1", Format: "openai", KeyLabel: "API Key", Category: "coding"},
 		{Name: "Poolside", Domain: "poolside.ai", BaseURL: "https://inference.poolside.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
 		{Name: "SambaNova", Domain: "sambanova.ai", BaseURL: "https://api.sambanova.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
-		{Name: "SiliconFlow", Domain: "siliconflow.com", BaseURL: "https://api.siliconflow.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
-		{Name: "Tencent Hunyuan", Domain: "tencent.com", BaseURL: "https://api.hunyuan.cloud.tencent.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "SiliconFlow", Domain: "siliconflow.com", BaseURL: "https://api.siliconflow.com/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
+		{Name: "Tencent Hunyuan", Domain: "tencent.com", BaseURL: "https://api.hunyuan.cloud.tencent.com/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "TokenRouter", Domain: "tokenrouter.com", BaseURL: "https://api.tokenrouter.com/v1", Format: "openai", KeyLabel: "API Key", Category: "aggregator"},
 		{Name: "Venice AI", Domain: "venice.ai", BaseURL: "https://api.venice.ai/api/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Vercel AI Gateway", Domain: "vercel.sh", BaseURL: "https://ai-gateway.vercel.sh/v1", Format: "openai", KeyLabel: "API Key", Category: "aggregator"},
-		{Name: "Volcengine Ark", Domain: "volces.com", BaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Volcengine Ark", Domain: "volces.com", BaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
 		// Named "Xiaomi TokenPlan" (no space before Plan) because the alias
 		// generator turns spaces into hyphens: this is the only natural
 		// spelling whose aliases include "xiaomi-tokenplan", the id a 9router
@@ -271,38 +271,73 @@ func seedCatalogue() []Preset {
 	}
 }
 
-// handleSeedBuiltinPresets inserts built-in presets if they don't exist
+// handleSeedBuiltinPresets inserts missing built-in presets AND refreshes the
+// name/category of ones already present, keyed on base_url.
+//
+// Two behaviours in one endpoint because both answer "bring this install up to
+// the current catalogue":
+//   - Insert: a preset added in a later release must reach installs that seeded
+//     before it existed (the old bail-out froze them).
+//   - Refresh: a renamed or recategorised preset must update in place. The key
+//     is base_url, not name — a rename changes the name, so matching on name
+//     would insert a duplicate rather than update. Manual (non-builtin)
+//     presets are never touched, so a user's own edits are safe.
 func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Seeding is additive: we insert any built-in that is missing rather than
-	// bailing out when some already exist. Bailing out meant an install that
-	// seeded once could never receive presets added in a later release.
-	seededBefore := 0
-	_ = s.db.Conn().QueryRow("SELECT COUNT(*) FROM provider_presets WHERE is_builtin = 1").Scan(&seededBefore)
-
 	builtins := seedCatalogue()
+
+	// oldName -> currentName for presets that have been renamed. Matching the
+	// old name first is what lets a rename update the existing row instead of
+	// inserting a second one under the new name.
+	renames := map[string]string{
+		"gitlawb":                     "GitLawb",
+		"Alibaba Model Studio (Intl)": "Alibaba Model Studio Intl",
+		"GLM (China)":                 "GLM China",
+	}
 
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	inserted := 0
+	updated := 0
 	skipped := 0
 	for _, p := range builtins {
-		// Skip presets already present so repeated seeding stays idempotent.
-		var exists int
-		if err := s.db.Conn().QueryRow(
-			"SELECT COUNT(*) FROM provider_presets WHERE lower(name) = lower(?)", p.Name,
-		).Scan(&exists); err == nil && exists > 0 {
-			skipped++
+		// Find the existing row, preferring the current name, then a prior
+		// name, then the endpoint. base_url is the stable identity.
+		var id string
+		var isBuiltin int
+		row := s.db.Conn().QueryRow(
+			`SELECT id, is_builtin FROM provider_presets
+			   WHERE lower(name) = lower(?)
+			      OR lower(name) = lower(?)
+			      OR lower(rtrim(base_url, '/')) = lower(rtrim(?, '/'))
+			   LIMIT 1`,
+			p.Name, oldNameFor(renames, p.Name), p.BaseURL,
+		)
+		if err := row.Scan(&id, &isBuiltin); err == nil && id != "" {
+			if isBuiltin == 1 {
+				// Refresh a built-in in place: name and category only. Never
+				// the base_url — that is the identity we matched on — and
+				// never a manual preset.
+				if _, err := s.db.Conn().Exec(
+					`UPDATE provider_presets SET name = ?, category = ?, updated_at = ? WHERE id = ? AND is_builtin = 1`,
+					p.Name, p.Category, now, id,
+				); err == nil {
+					updated++
+				}
+			} else {
+				skipped++ // manual preset shares the endpoint; leave it alone
+			}
 			continue
 		}
-		id, _ := generatePresetID()
+
+		newID, _ := generatePresetID()
 		_, err := s.db.Conn().Exec(`
 			INSERT INTO provider_presets (id, name, domain, base_url, format, key_label, category, is_builtin, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-		`, id, p.Name, p.Domain, p.BaseURL, p.Format, p.KeyLabel, p.Category, now, now)
+		`, newID, p.Name, p.Domain, p.BaseURL, p.Format, p.KeyLabel, p.Category, now, now)
 		if err == nil {
 			inserted++
 		}
@@ -311,9 +346,21 @@ func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{
 		"success":  true,
 		"inserted": inserted,
+		"updated":  updated,
 		"skipped":  skipped,
-		"total":    seededBefore + inserted,
 	})
+}
+
+// oldNameFor returns the previous name of a preset if it was renamed, so the
+// seeder can find and update the existing row. Returns the current name when
+// there is no rename, which makes the OR clause a harmless no-op.
+func oldNameFor(renames map[string]string, current string) string {
+	for old, cur := range renames {
+		if cur == current {
+			return old
+		}
+	}
+	return current
 }
 
 // generatePresetID generates a random ID
