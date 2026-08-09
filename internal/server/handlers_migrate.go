@@ -149,7 +149,7 @@ func (s *Server) applyImport(conns []migrate.Connection, combos []migrate.Combo,
 	insert, err := tx.Prepare(`
 		INSERT INTO connections (id, name, base_url, api_key, format, priority, is_active,
 			chat_path, models_path, auth_header, auth_prefix)
-		VALUES (?, ?, ?, ?, ?, ?, ?, '/v1/chat/completions', '/v1/models', 'Authorization', 'Bearer ')`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Authorization', 'Bearer ')`)
 	if err != nil {
 		return res, fmt.Errorf("prepare insert: %w", err)
 	}
@@ -171,8 +171,9 @@ func (s *Server) applyImport(conns []migrate.Connection, combos []migrate.Combo,
 		if c.IsActive && c.Health == migrate.HealthOK {
 			active = 1
 		}
+		chatPath, modelsPath := apiPathsFor(c.BaseURL)
 		if _, err := insert.Exec(uuid.New().String(), c.Name, c.BaseURL, c.APIKey,
-			c.Format, c.Priority, active); err != nil {
+			c.Format, c.Priority, active, chatPath, modelsPath); err != nil {
 			return res, fmt.Errorf("insert connection %q: %w", c.Name, err)
 		}
 		existing[fp] = true
@@ -367,6 +368,19 @@ func presetAliases(name, domain string) []string {
 		add(domain[:i]) // "xiaomimimo.com" → "xiaomimimo"
 	}
 	return out
+}
+
+// apiPathsFor picks the chat/models paths that match a base URL. A competitor
+// export stores endpoints like "https://api.example.com/v1", and appending the
+// usual "/v1/chat/completions" to that yields a doubled "/v1/v1/..." path that
+// 404s. When the base URL already carries the version segment we append the
+// bare paths instead.
+func apiPathsFor(baseURL string) (chatPath, modelsPath string) {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if strings.HasSuffix(strings.ToLower(trimmed), "/v1") {
+		return "/chat/completions", "/models"
+	}
+	return "/v1/chat/completions", "/v1/models"
 }
 
 func connFingerprint(baseURL, apiKey string) string {

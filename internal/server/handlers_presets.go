@@ -205,12 +205,11 @@ func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if already seeded
-	var count int
-	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM provider_presets WHERE is_builtin = 1").Scan(&count); err == nil && count > 0 {
-		writeJSON(w, map[string]any{"success": true, "message": "already seeded", "count": count})
-		return
-	}
+	// Seeding is additive: we insert any built-in that is missing rather than
+	// bailing out when some already exist. Bailing out meant an install that
+	// seeded once could never receive presets added in a later release.
+	seededBefore := 0
+	_ = s.db.Conn().QueryRow("SELECT COUNT(*) FROM provider_presets WHERE is_builtin = 1").Scan(&seededBefore)
 
 	builtins := []Preset{
 		{Name: "OpenAI", Domain: "openai.com", BaseURL: "https://api.openai.com/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
@@ -231,11 +230,26 @@ func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request
 		{Name: "Replicate", Domain: "replicate.com", BaseURL: "https://api.replicate.com/v1", Format: "openai", KeyLabel: "API Key", Category: "aggregator"},
 		{Name: "Perplexity", Domain: "perplexity.ai", BaseURL: "https://api.perplexity.ai", Format: "openai", KeyLabel: "API Key", Category: "search"},
 		{Name: "Ollama", Domain: "ollama.com", BaseURL: "http://localhost:11434/v1", Format: "openai", KeyLabel: "API Key (optional)", Category: "local"},
+		// Endpoints below were confirmed by a live GET /v1/models against the
+		// provider before being added here, so the importer can restore
+		// connections that a competitor's export leaves without a base URL.
+		{Name: "Xiaomi MiMo", Domain: "xiaomimimo.com", BaseURL: "https://api.xiaomimimo.com/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
+		{Name: "NVIDIA", Domain: "nvidia.com", BaseURL: "https://integrate.api.nvidia.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Qoder", Domain: "qoder.com", BaseURL: "https://api.qoder.com/v1", Format: "openai", KeyLabel: "API Key", Category: "coding"},
 	}
 
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	inserted := 0
+	skipped := 0
 	for _, p := range builtins {
+		// Skip presets already present so repeated seeding stays idempotent.
+		var exists int
+		if err := s.db.Conn().QueryRow(
+			"SELECT COUNT(*) FROM provider_presets WHERE lower(name) = lower(?)", p.Name,
+		).Scan(&exists); err == nil && exists > 0 {
+			skipped++
+			continue
+		}
 		id, _ := generatePresetID()
 		_, err := s.db.Conn().Exec(`
 			INSERT INTO provider_presets (id, name, domain, base_url, format, key_label, category, is_builtin, created_at, updated_at)
@@ -246,7 +260,12 @@ func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	writeJSON(w, map[string]any{"success": true, "inserted": inserted})
+	writeJSON(w, map[string]any{
+		"success":  true,
+		"inserted": inserted,
+		"skipped":  skipped,
+		"total":    seededBefore + inserted,
+	})
 }
 
 // generatePresetID generates a random ID
