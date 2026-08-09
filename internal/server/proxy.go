@@ -708,6 +708,9 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 					w.Header().Add(k, vv)
 				}
 			}
+			// AFTER the upstream copy above: Set overwrites, so a provider
+			// echoing our own header name can't stack onto ours.
+			setProviderHeaders(w.Header(), hedgeConn.ID, hedgeConn.Name)
 			if compressionStats.WasCompressed {
 				w.Header().Set("X-Lintasan-Compressed", "true")
 				w.Header().Set("X-Lintasan-Original-Tokens", fmt.Sprintf("%d", compressionStats.OriginalTokens))
@@ -912,6 +915,14 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			w.Header().Set("X-Lintasan-Messages-Before", fmt.Sprintf("%d", compressionStats.MessagesBefore))
 			w.Header().Set("X-Lintasan-Messages-After", fmt.Sprintf("%d", compressionStats.MessagesAfter))
 		}
+
+		// Tell the caller which upstream actually served this request. Routing
+		// is dynamic — load balancing, task-class reordering, and (for
+		// auto/tiered/multi-model routes) failover across candidates — so the
+		// answer differs between two identical requests and is otherwise only
+		// visible in server logs. Set before WriteHeader: on the streaming
+		// branch below the header block is flushed with the first byte.
+		setProviderHeaders(w.Header(), conn.ID, conn.Name)
 
 		if stream {
 			w.Header().Set("Content-Type", "text/event-stream")

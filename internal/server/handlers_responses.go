@@ -159,6 +159,17 @@ func (p *ProxyHandler) handleResponsesBuffered(w http.ResponseWriter, chatReq *h
 	metrics.RecordResponsesStream(true, metrics.ResponsesTerminalCompleted, toolCalls, hadText)
 	logResponsesBuffered(model, "completed", toolCalls, hadText)
 
+	// Forward headers the chat handler set on the success path too. Without
+	// this the buffered path silently drops everything the streaming path
+	// copies through — most visibly X-Lintasan-Provider (which upstream
+	// served this), but also compression / caching headers. This mirrors the
+	// non-2xx branch above; Content-Type is reset right after.
+	for k, vs := range rec.header {
+		for _, v := range vs {
+			w.Header().Add(k, v)
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(resp)
