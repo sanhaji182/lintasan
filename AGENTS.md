@@ -349,6 +349,37 @@ sudo systemctl is-active lintasan
 6. **Default theme clean light** — hindari desain dark-heavy/glow berlebihan untuk halaman entry.
 7. **Verifikasi nyata** — pakai browser/curl untuk cek hasil sebelum klaim "done", jangan berasumsi.
 8. **Secrets** — jangan commit `.env`, API key, atau credential. Pakai `.env.example` untuk dokumentasi env.
+9. **Satu agent = satu git worktree.** Repo ini dikerjakan beberapa agent sekaligus. JANGAN bekerja langsung di `~/lintasan-go` kalau agent lain sedang aktif — lihat §10b.
+
+---
+
+## 10b. Multi-agent: worktree wajib
+
+Beberapa agent bisa mengerjakan repo ini bersamaan. Bekerja di satu working tree yang sama **sudah pernah menyebabkan insiden nyata** (Agustus 2026): dua agent mengedit `handlers_responses.go` berbarengan, lalu `git add <file>` milik agent A ikut membawa potongan kode agent B yang fungsinya belum di-commit — menghasilkan commit yang secara teori tidak bisa di-build.
+
+**Aturan:**
+
+```bash
+# Sekali per agent — buat ruang kerja sendiri
+git -C ~/lintasan-go worktree add ~/worktrees/<nama-agent> -b agent/<nama-agent> origin/main
+cp -r ~/lintasan-go/frontend/node_modules ~/worktrees/<nama-agent>/frontend/   # ~176M, biar `make build` jalan
+cd ~/worktrees/<nama-agent>
+```
+
+- **Kerjakan semuanya di worktree-mu**, bukan di `~/lintasan-go`.
+- **`git add` per file, eksplisit.** Jangan `git add -A` / `git commit -a` — keduanya menyapu perubahan yang bukan milikmu.
+- **Sebelum commit, cek `git status`.** Kalau ada file yang tidak kamu sentuh, jangan di-stage.
+- **Rebase ke `origin/main` sebelum push** (`git fetch origin && git rebase origin/main`) — agent lain mungkin sudah landing sesuatu.
+- **Verifikasi buildable dari checkout bersih**, bukan cuma dari tree lokalmu yang mungkin memuat kode agent lain:
+  ```bash
+  git clone file://$HOME/lintasan-go /tmp/verify && cd /tmp/verify
+  git fetch origin main && git checkout FETCH_HEAD
+  mkdir -p internal/web/dist && touch internal/web/dist/.gitkeep   # dist/ di-gitignore
+  go build ./... && go test ./...
+  ```
+- **`make build` mengompilasi working tree apa adanya** — termasuk perubahan agent lain yang belum di-commit. Selalu build dari worktree bersihmu sebelum deploy ke prod.
+
+**Kalau menemukan perubahan yang bukan milikmu di tree:** jangan commit, jangan revert, jangan `checkout --`. Tanya dulu. Pekerjaan setengah jadi milik agent lain kelihatan seperti kerusakan padahal bukan.
 
 ---
 
