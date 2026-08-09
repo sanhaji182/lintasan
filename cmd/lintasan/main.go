@@ -67,7 +67,7 @@ func main() {
 			// No separate start here to avoid a double listener and the old
 			// static bypass token.
 			srv := server.New(cfg, database)
-			fmt.Printf("🚀 Lintasan v%s listening on :%d\n", version.Version, cfg.Port)
+			fmt.Printf("🚀 Lintasan %s listening on :%d\n", version.Version, cfg.Port)
 			return srv.Start()
 		},
 	}
