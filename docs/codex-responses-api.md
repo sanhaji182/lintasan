@@ -103,6 +103,15 @@ path (same status, same body) — an auth failure or rate limit reaches the
 client as itself, not as a translation error. An upstream body with no usable
 choice is `502` (`ErrResponsesBadUpstream`), never a hollow `"completed"` turn.
 
+### Provider identity headers
+
+Both paths forward `X-Lintasan-Provider` and `X-Lintasan-Provider-Id` from the
+underlying chat call, so a Responses caller sees which upstream answered just
+like a chat caller does. The streaming adapter copies the chat handler's
+headers automatically; the buffered path forwards them explicitly (before this
+fix it dropped everything the chat handler set on success, which also lost
+compression and caching headers).
+
 ## Metrics
 
 All counters gated by the standard `/metrics` switch (no prompt content, no

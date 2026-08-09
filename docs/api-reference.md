@@ -82,6 +82,18 @@ POST /v1/chat/completions
 
 Supports **streaming** (SSE) and **non-streaming** responses.
 
+**Response headers** — routing Lintasan dinamis (load balancing, task-class
+reordering, failover), jadi dua request identik bisa dilayani provider
+berbeda. Setiap respons chat memberi tahu upstream mana yang benar-benar
+menjawab, supaya jawaban aneh bisa dilacak tanpa mengorek log server:
+
+| Header | Isi |
+|---|---|
+| `X-Lintasan-Provider` | label koneksi (mis. `Cerebras`) |
+| `X-Lintasan-Provider-Id` | id koneksi stabil — pakai ini untuk filter log; label bisa diubah/dobel |
+
+Header mengalir juga lewat `/v1/responses` (streaming & non-streaming).
+
 ```bash
 curl http://localhost:20180/v1/chat/completions \
   -H "Authorization: Bearer *** \
