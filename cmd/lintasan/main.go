@@ -11,6 +11,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/db"
 	"github.com/sanhaji182/lintasan-go/internal/mitm"
 	"github.com/sanhaji182/lintasan-go/internal/server"
+	"github.com/sanhaji182/lintasan-go/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -37,13 +38,11 @@ func startPprofIfEnabled() {
 	}()
 }
 
-var version = "0.24.0"
-
 func main() {
 	rootCmd := &cobra.Command{
 		Use:     "lintasan",
 		Short:   "Lintasan - High-performance LLM proxy router",
-		Version: version,
+		Version: version.Version,
 	}
 
 	startCmd := &cobra.Command{
@@ -68,7 +67,7 @@ func main() {
 			// No separate start here to avoid a double listener and the old
 			// static bypass token.
 			srv := server.New(cfg, database)
-			fmt.Printf("🚀 Lintasan v%s listening on :%d\n", version, cfg.Port)
+			fmt.Printf("🚀 Lintasan v%s listening on :%d\n", version.Version, cfg.Port)
 			return srv.Start()
 		},
 	}
