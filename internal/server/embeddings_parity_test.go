@@ -9,6 +9,7 @@ import (
 
 	"github.com/sanhaji182/lintasan-go/internal/config"
 	"github.com/sanhaji182/lintasan-go/internal/db"
+	"github.com/sanhaji182/lintasan-go/internal/provider"
 )
 
 // F2.5 server-layer parity tests.
@@ -45,8 +46,10 @@ func newEmbeddingsHandler(t *testing.T, embOn bool) *ProxyHandler {
 
 // buildEmbeddingsInline replicates the legacy inline path in HandleEmbeddings
 // EXACTLY (the flag-OFF branch), so the SDK path can be compared against it.
+// The URL join mirrors the handler's provider.JoinUpstreamPath call: a base
+// that already ends in "/v1" must not become "/v1/v1/embeddings".
 func buildEmbeddingsInline(ctx context.Context, conn *Connection, body []byte) *http.Request {
-	upstreamURL := strings.TrimRight(conn.BaseURL, "/") + "/v1/embeddings"
+	upstreamURL := provider.JoinUpstreamPath(conn.BaseURL, "/v1/embeddings")
 	upReq, _ := http.NewRequestWithContext(ctx, "POST", upstreamURL, strings.NewReader(string(body)))
 	upReq.Header.Set("Content-Type", "application/json")
 	authHeader := conn.AuthHeader

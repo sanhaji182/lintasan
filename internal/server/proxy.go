@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"runtime"
@@ -1924,8 +1926,11 @@ func (p *ProxyHandler) HandleEmbeddings(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	} else {
-		// Legacy inline path (UNCHANGED): default OFF, zero behavior change.
-		upstreamURL := strings.TrimRight(conn.BaseURL, "/") + "/v1/embeddings"
+		// Legacy inline path: default OFF. The URL join goes through
+		// provider.JoinUpstreamPath so a base that already ends in "/v1" does
+		// not yield "/v1/v1/embeddings"; the SDK path applies the same rule, so
+		// the two stay byte-identical.
+		upstreamURL := provider.JoinUpstreamPath(conn.BaseURL, "/v1/embeddings")
 		upReq, err = http.NewRequestWithContext(r.Context(), "POST", upstreamURL, strings.NewReader(string(body)))
 		if err != nil {
 			http.Error(w, `{"error":"failed to create upstream request"}`, http.StatusInternalServerError)
@@ -1972,19 +1977,87 @@ func (p *ProxyHandler) HandleEmbeddings(w http.ResponseWriter, r *http.Request) 
 	io.Copy(w, resp.Body)
 }
 
+// modelFromNonChatRequest extracts the model a non-chat request is asking for.
+// Two wire shapes reach these endpoints:
+//
+//   - JSON (embeddings, images, audio/speech): a top-level "model" field.
+//   - multipart/form-data (audio/transcriptions): a "model" form field, which
+//     never appears in the JSON decode and would otherwise be invisible.
+//
+// The body bytes are already buffered by the caller, so parsing here consumes
+// nothing — the original bytes are still forwarded verbatim. An unparseable or
+// model-less body yields "", which the caller treats as "fall back to the first
+// connection", preserving the pre-change behaviour.
+func modelFromNonChatRequest(contentType string, body []byte) string {
+	if mt, params, err := mime.ParseMediaType(contentType); err == nil && strings.HasPrefix(mt, "multipart/") {
+		boundary := params["boundary"]
+		if boundary == "" {
+			return ""
+		}
+		mr := multipart.NewReader(bytes.NewReader(body), boundary)
+		for {
+			part, err := mr.NextPart()
+			if err != nil {
+				return ""
+			}
+			if part.FormName() == "model" && part.FileName() == "" {
+				v, err := io.ReadAll(io.LimitReader(part, 1<<12))
+				part.Close()
+				if err != nil {
+					return ""
+				}
+				return strings.TrimSpace(string(v))
+			}
+			part.Close()
+		}
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return ""
+	}
+	model, _ := parsed["model"].(string)
+	return strings.TrimSpace(model)
+}
+
+// resolveNonChatConnection picks the connection that serves the requested
+// model, falling back to the first active connection when the model is absent
+// or unknown to any connection.
+//
+// Non-chat endpoints previously called getFirstConnection() unconditionally,
+// so in any install with more than one connection the request went to whichever
+// connection ranked highest by priority — not the one that actually owns the
+// model. The fallback is retained deliberately: a body with no "model" field is
+// legal for some providers, and turning those into a 404 would be a regression.
+func (p *ProxyHandler) resolveNonChatConnection(model string) (*Connection, error) {
+	if model != "" {
+		if conn, err := p.findConnectionForModel(model); err == nil {
+			return conn, nil
+		}
+	}
+	return p.getFirstConnection()
+}
+
 func (p *ProxyHandler) proxyPath(w http.ResponseWriter, r *http.Request, upstreamPath string) {
 	body, _ := io.ReadAll(r.Body)
 	var reqBody io.Reader = bytes.NewReader(body)
-	conn, err := p.getFirstConnection()
+	// Route on the model named in the body, not on "whatever connection sorts
+	// first". Reading the body for routing is safe: reqBody above wraps the
+	// same bytes, so the upstream still receives them unchanged.
+	conn, err := p.resolveNonChatConnection(modelFromNonChatRequest(r.Header.Get("Content-Type"), body))
 	if err != nil {
 		http.Error(w, `{"error":"no active connections"}`, 404)
 		return
 	}
-	upReq, err := http.NewRequestWithContext(r.Context(), "POST", strings.TrimRight(conn.BaseURL, "/")+upstreamPath, reqBody)
+	// provider.JoinUpstreamPath, not naive concatenation: every catalogue preset
+	// stores a base URL that already ends in "/v1", and appending the canonical
+	// "/v1/..." path to that produced "/v1/v1/..." — a 404 on every provider.
+	upReq, err := http.NewRequestWithContext(r.Context(), "POST", provider.JoinUpstreamPath(conn.BaseURL, upstreamPath), reqBody)
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
+
 	upReq.Header.Set("Content-Type", r.Header.Get("Content-Type"))
 	if upReq.Header.Get("Content-Type") == "" {
 		upReq.Header.Set("Content-Type", "application/json")

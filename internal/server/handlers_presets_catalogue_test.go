@@ -4,6 +4,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sanhaji182/lintasan-go/internal/provider"
 )
 
 // builtinPresets re-runs the seeding handler's catalogue definition by calling
@@ -115,6 +117,32 @@ func TestBuiltinPresetPathsNeverDoubleVersion(t *testing.T) {
 		for _, joined := range []string{base + chat, base + models} {
 			if strings.Contains(joined, "/v1/v1") {
 				t.Errorf("preset %q yields doubled version segment: %s", p.Name, joined)
+			}
+		}
+	}
+}
+
+// The non-chat endpoints (embeddings/images/audio) hardcode canonical "/v1/..."
+// paths rather than deriving them via apiPathsFor, so they need their own
+// guard: joining a catalogue base to those paths must never double the version
+// segment either. This is the catalogue-wide counterpart to the unit tests on
+// provider.JoinUpstreamPath, and it fails the moment a preset is added with a
+// base shape the join rule does not handle.
+func TestBuiltinPresetNonChatPathsNeverDoubleVersion(t *testing.T) {
+	nonChatPaths := []string{
+		"/v1/embeddings",
+		"/v1/images/generations",
+		"/v1/audio/speech",
+		"/v1/audio/transcriptions",
+	}
+	for _, p := range builtinPresetCatalogue(t) {
+		for _, path := range nonChatPaths {
+			joined := provider.JoinUpstreamPath(p.BaseURL, path)
+			if strings.Contains(joined, "/v1/v1") {
+				t.Errorf("preset %q + %q yields doubled version segment: %s", p.Name, path, joined)
+			}
+			if !strings.HasPrefix(joined, strings.TrimRight(p.BaseURL, "/")) {
+				t.Errorf("preset %q + %q escaped its base URL: %s", p.Name, path, joined)
 			}
 		}
 	}

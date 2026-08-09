@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 )
 
@@ -14,7 +13,7 @@ import (
 // makes the parity contract explicit and keeps the provider package free of a
 // server dependency.
 func legacyEmbeddingsRequest(conn *ConnConfig, body []byte) (url, method, contentType, authHeader, authValue string, outBody []byte) {
-	url = strings.TrimRight(conn.BaseURL, "/") + "/v1/embeddings"
+	url = JoinUpstreamPath(conn.BaseURL, "/v1/embeddings")
 	method = http.MethodPost
 	contentType = "application/json"
 	ah := conn.AuthHeader
@@ -60,6 +59,16 @@ func TestEmbedByteParityVsLegacy(t *testing.T) {
 		{
 			name: "trailing-slash-baseurl",
 			conn: &ConnConfig{BaseURL: "https://api.openai.com/", APIKey: "sk-abc", Format: "openai"},
+		},
+		{
+			// The shape every catalogue preset stores. Before JoinUpstreamPath
+			// this produced "/v1/v1/embeddings" and 404'd on every provider.
+			name: "versioned-baseurl-does-not-double",
+			conn: &ConnConfig{BaseURL: "https://api.openai.com/v1", APIKey: "sk-abc", Format: "openai"},
+		},
+		{
+			name: "versioned-baseurl-trailing-slash",
+			conn: &ConnConfig{BaseURL: "https://api.deepinfra.com/v1/", APIKey: "sk-abc", Format: "openai"},
 		},
 		{
 			name: "custom-auth-header-empty-prefix-quirk",

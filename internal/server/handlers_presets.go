@@ -268,6 +268,20 @@ func seedCatalogue() []Preset {
 		// spelling whose aliases include "xiaomi-tokenplan", the id a 9router
 		// export uses for this endpoint.
 		{Name: "Xiaomi TokenPlan", Domain: "xiaomimimo.com", BaseURL: "https://token-plan-sgp.xiaomimimo.com/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
+		// Providers below were added for the NON-CHAT endpoints (embeddings,
+		// images, audio). Two probes gate inclusion, because per-model routing
+		// on those endpoints needs both to hold:
+		//   1. the non-chat path itself answers (200/400/401/403, not 404), and
+		//   2. GET /models answers, so discovery can populate discovered_models
+		//      — without it the model is unknown and the request silently falls
+		//      back to the first connection, which is the bug we just fixed.
+		// Voyage AI was probed and deliberately EXCLUDED: /v1/embeddings is real
+		// (400) but /v1/models is 404, so its models can never be discovered and
+		// a preset would route by accident rather than by model.
+		{Name: "DeepInfra", Domain: "deepinfra.com", BaseURL: "https://api.deepinfra.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Jina AI", Domain: "jina.ai", BaseURL: "https://api.jina.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Baseten", Domain: "baseten.co", BaseURL: "https://inference.baseten.co/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Novita AI", Domain: "novita.ai", BaseURL: "https://api.novita.ai/v3/openai", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 	}
 }
 

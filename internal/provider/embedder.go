@@ -3,7 +3,6 @@ package provider
 import (
 	"context"
 	"net/http"
-	"strings"
 )
 
 // embeddingsPath is the canonical OpenAI-compatible embeddings endpoint. It is
@@ -51,7 +50,7 @@ func (d *DefaultProvider) Embed(ctx context.Context, req *Request, conn *ConnCon
 	}
 
 	return &UpstreamRequest{
-		URL:    strings.TrimRight(conn.BaseURL, "/") + embeddingsPath,
+		URL:    JoinUpstreamPath(conn.BaseURL, embeddingsPath),
 		Method: http.MethodPost,
 		Header: h,
 		Body:   req.Body, // passthrough: the original embeddings request bytes
