@@ -94,6 +94,20 @@ menjawab, supaya jawaban aneh bisa dilacak tanpa mengorek log server:
 
 Header mengalir juga lewat `/v1/responses` (streaming & non-streaming).
 
+**Failover otomatis** — kalau upstream membalas error, Lintasan tidak langsung
+menyerahkan error itu ke klien:
+
+| Error upstream | Perilaku |
+|---|---|
+| `429` rate limit | retry + backoff, lalu pindah kandidat |
+| `5xx` gangguan provider | retry + backoff, lalu pindah kandidat |
+| **`401` / `403` auth atau kuota habis** | **tidak** di-retry ke koneksi yang sama (kuncinya memang ditolak) — Lintasan mencari koneksi aktif lain yang melayani model itu dan mengulang request ke sana |
+| `400` / `404` | diteruskan apa adanya (kesalahan permintaan, bukan provider) |
+
+Untuk model yang hanya dilayani satu koneksi, tidak ada tujuan failover; klien
+menerima status asli provider (mis. `403`) beserta body-nya, sehingga penyebab
+tetap terbaca — bukan error samar.
+
 ```bash
 curl http://localhost:20180/v1/chat/completions \
   -H "Authorization: Bearer *** \

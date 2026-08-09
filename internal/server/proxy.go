@@ -761,7 +761,13 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 	var lastErr string
 	var lastStatusCode int
-	for i, conn := range candidates {
+	// NOTE: index loop, not "for i, conn := range candidates". The range form
+	// evaluates len(candidates) ONCE at loop start, so appending a candidate
+	// mid-loop (the auth-failover below, and the circuit-open connection
+	// fallback) would never actually iterate to it — the appended candidate is
+	// silently dropped. Re-checking len each iteration lets those appends work.
+	for i := 0; i < len(candidates); i++ {
+		conn := candidates[i]
 		// Circuit breaker check
 		breaker := p.getBreaker(conn.ID)
 		if !breaker.Allow() {
@@ -870,6 +876,47 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				p.fb.RecordEvent(resolvedModel, "", fallback.Reason429, resp.StatusCode)
+			}
+			continue
+		}
+
+		// On 401/403: failover to another connection serving this model. A
+		// 401/403 is an auth or quota failure — retrying the SAME connection
+		// knocks on a locked door, and passing it through hands the client a
+		// dead end (the "stuck here and stops" case). findConnectionForModel
+		// returns only ONE connection, so the loop's candidate list normally
+		// has no second entry for a plain model route. Look one up here, ONLY
+		// on auth failure, so 429/5xx routing and its single-candidate
+		// behaviour are completely untouched.
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			b, _ := io.ReadAll(resp.Body)
+			lastErr = string(b)
+			lastStatusCode = resp.StatusCode
+			resp.Body.Close()
+			breaker.Failure()
+			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			if p.fb != nil {
+				p.fb.RecordEvent(resolvedModel, "", fallback.Reason401, resp.StatusCode)
+			}
+
+			// If the loop still has candidates, just advance to the next one.
+			if i < len(candidates)-1 {
+				continue
+			}
+
+			// Otherwise this was the last candidate. Try to widen it with
+			// another active connection that serves the same model and has not
+			// been tried yet. If there is none, the continue below exits the
+			// loop and the exhausted-routes path reports the auth/quota failure
+			// with its real status code.
+			tried := make([]string, 0, len(candidates))
+			for _, c := range candidates {
+				tried = append(tried, c.ID)
+			}
+			if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
+				candidates = append(candidates, alternates...)
+				continue
 			}
 			continue
 		}
@@ -1748,6 +1795,58 @@ func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error)
 	}
 	p.applyConnectionAuth(&conn)
 	return &conn, nil
+}
+
+// scanConnections runs the shared connection-column query and folds every row
+// into a Connection, applying per-connection auth. Used where more than one
+// candidate is needed (findConnectionForModel deliberately returns just one).
+func (p *ProxyHandler) scanConnections(rows *sql.Rows) []*Connection {
+	var out []*Connection
+	for rows.Next() {
+		var conn Connection
+		if err := rows.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID); err != nil {
+			continue
+		}
+		p.applyConnectionAuth(&conn)
+		out = append(out, &conn)
+	}
+	return out
+}
+
+// findAlternateConnectionsForModel returns every OTHER active connection that
+// serves the model, best-first, excluding ones already tried. It exists for a
+// single purpose: auth/quota failover. findConnectionForModel returns only the
+// top connection (LIMIT 1), so on a 401/403 there is normally no second
+// candidate in the loop — the request dies at the locked door. This query is
+// run ONLY at the auth-failure point, so normal 429/5xx routing and its
+// single-candidate behaviour are untouched.
+func (p *ProxyHandler) findAlternateConnectionsForModel(model string, excludeIDs []string) []*Connection {
+	// Build the NOT IN clause from the already-tried ids. These come from our
+	// own candidate loop, not from user input, so interpolation cannot be
+	// influenced by a caller.
+	placeholders := make([]string, len(excludeIDs))
+	args := []any{model}
+	for i, id := range excludeIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	exclude := ""
+	if len(placeholders) > 0 {
+		exclude = " AND c.id NOT IN (" + strings.Join(placeholders, ",") + ")"
+	}
+
+	rows, err := p.db.Conn().Query(`
+		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority, COALESCE(c.pool_id,'')
+		FROM discovered_models m
+		JOIN connections c ON m.connection_id = c.id
+		WHERE m.model_id = ? AND m.is_active = 1 AND c.is_active = 1`+exclude+`
+		ORDER BY c.priority DESC
+	`, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	return p.scanConnections(rows)
 }
 
 func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
