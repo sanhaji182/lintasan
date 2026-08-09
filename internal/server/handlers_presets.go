@@ -198,20 +198,10 @@ func (s *Server) handleDeletePreset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"success": true})
 }
 
-// handleSeedBuiltinPresets inserts built-in presets if they don't exist
-func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
-		return
-	}
-
-	// Seeding is additive: we insert any built-in that is missing rather than
-	// bailing out when some already exist. Bailing out meant an install that
-	// seeded once could never receive presets added in a later release.
-	seededBefore := 0
-	_ = s.db.Conn().QueryRow("SELECT COUNT(*) FROM provider_presets WHERE is_builtin = 1").Scan(&seededBefore)
-
-	builtins := []Preset{
+// seedCatalogue is the list of built-in provider presets. It lives in its own
+// function so tests can assert on the catalogue without needing a database.
+func seedCatalogue() []Preset {
+	return []Preset{
 		{Name: "OpenAI", Domain: "openai.com", BaseURL: "https://api.openai.com/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "Anthropic", Domain: "anthropic.com", BaseURL: "https://api.anthropic.com/v1", Format: "anthropic", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "Google AI", Domain: "ai.google.dev", BaseURL: "https://generativelanguage.googleapis.com/v1beta", Format: "gemini", KeyLabel: "API Key", Category: "foundation"},
@@ -236,7 +226,59 @@ func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request
 		{Name: "Xiaomi MiMo", Domain: "xiaomimimo.com", BaseURL: "https://api.xiaomimimo.com/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
 		{Name: "NVIDIA", Domain: "nvidia.com", BaseURL: "https://integrate.api.nvidia.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Qoder", Domain: "qoder.com", BaseURL: "https://api.qoder.com/v1", Format: "openai", KeyLabel: "API Key", Category: "coding"},
+		// Providers below are cross-referenced from the 9router registry
+		// (github.com/decolua/9router, open-sse/providers/registry) so a user
+		// migrating from it lands on a catalogue that already knows their
+		// endpoints. Only OpenAI-compatible chat providers are listed, and each
+		// base URL was probed with GET /models before inclusion: 200, 401, or
+		// 403 means the endpoint is real and merely auth-gated, which is what we
+		// want from a preset. Providers using a bespoke wire format (Anthropic,
+		// Gemini, Vertex), an OAuth-only login, or a non-HTTP transport are
+		// deliberately excluded rather than guessed at.
+		{Name: "Alibaba Coding", Domain: "aliyuncs.com", BaseURL: "https://coding.dashscope.aliyuncs.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Alibaba Coding (Intl)", Domain: "aliyuncs.com", BaseURL: "https://coding-intl.dashscope.aliyuncs.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Alibaba Model Studio (Intl)", Domain: "aliyuncs.com", BaseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "API.airforce", Domain: "api.airforce", BaseURL: "https://api.airforce/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
+		{Name: "Baidu Qianfan", Domain: "baidubce.com", BaseURL: "https://qianfan.baidubce.com/v2", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Bazaarlink", Domain: "bazaarlink.ai", BaseURL: "https://bazaarlink.ai/api/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
+		{Name: "Blackbox AI", Domain: "blackbox.ai", BaseURL: "https://api.blackbox.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "BluesMinds", Domain: "bluesminds.com", BaseURL: "https://api.bluesminds.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "BytePlus ModelArk", Domain: "bytepluses.com", BaseURL: "https://ark.ap-southeast.bytepluses.com/api/coding/v3", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
+		{Name: "Cerebras", Domain: "cerebras.ai", BaseURL: "https://api.cerebras.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Chutes AI", Domain: "chutes.ai", BaseURL: "https://llm.chutes.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Featherless", Domain: "featherless.ai", BaseURL: "https://api.featherless.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "GLM (China)", Domain: "bigmodel.cn", BaseURL: "https://open.bigmodel.cn/api/coding/paas/v4", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Hyperbolic", Domain: "hyperbolic.xyz", BaseURL: "https://api.hyperbolic.xyz/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Kilo Gateway", Domain: "kilo.ai", BaseURL: "https://api.kilo.ai/api/gateway", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
+		{Name: "Kimchi", Domain: "kimchi.dev", BaseURL: "https://llm.kimchi.dev/openai/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
+		{Name: "LLM7", Domain: "llm7.io", BaseURL: "https://api.llm7.io/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Morph", Domain: "morphllm.com", BaseURL: "https://api.morphllm.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Nebius AI", Domain: "nebius.ai", BaseURL: "https://api.studio.nebius.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Poolside", Domain: "poolside.ai", BaseURL: "https://inference.poolside.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
+		{Name: "SambaNova", Domain: "sambanova.ai", BaseURL: "https://api.sambanova.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "SiliconFlow", Domain: "siliconflow.com", BaseURL: "https://api.siliconflow.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Tencent Hunyuan", Domain: "tencent.com", BaseURL: "https://api.hunyuan.cloud.tencent.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "TokenRouter", Domain: "tokenrouter.com", BaseURL: "https://api.tokenrouter.com/v1", Format: "openai", KeyLabel: "API Key", Category: "aggregator"},
+		{Name: "Venice AI", Domain: "venice.ai", BaseURL: "https://api.venice.ai/api/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "Vercel AI Gateway", Domain: "vercel.sh", BaseURL: "https://ai-gateway.vercel.sh/v1", Format: "openai", KeyLabel: "API Key", Category: "aggregator"},
+		{Name: "Volcengine Ark", Domain: "volces.com", BaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 	}
+}
+
+// handleSeedBuiltinPresets inserts built-in presets if they don't exist
+func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Seeding is additive: we insert any built-in that is missing rather than
+	// bailing out when some already exist. Bailing out meant an install that
+	// seeded once could never receive presets added in a later release.
+	seededBefore := 0
+	_ = s.db.Conn().QueryRow("SELECT COUNT(*) FROM provider_presets WHERE is_builtin = 1").Scan(&seededBefore)
+
+	builtins := seedCatalogue()
 
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	inserted := 0
