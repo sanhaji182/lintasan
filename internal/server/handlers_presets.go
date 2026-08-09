@@ -254,6 +254,7 @@ func seedCatalogue() []Preset {
 		{Name: "LLM7", Domain: "llm7.io", BaseURL: "https://api.llm7.io/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Morph", Domain: "morphllm.com", BaseURL: "https://api.morphllm.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Nebius AI", Domain: "nebius.ai", BaseURL: "https://api.studio.nebius.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		{Name: "OpenCode Go", Domain: "opencode.ai", BaseURL: "https://opencode.ai/zen/go/v1", Format: "openai", KeyLabel: "API Key", Category: "coding"},
 		{Name: "Poolside", Domain: "poolside.ai", BaseURL: "https://inference.poolside.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "free-tier"},
 		{Name: "SambaNova", Domain: "sambanova.ai", BaseURL: "https://api.sambanova.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "SiliconFlow", Domain: "siliconflow.com", BaseURL: "https://api.siliconflow.com/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
@@ -262,6 +263,11 @@ func seedCatalogue() []Preset {
 		{Name: "Venice AI", Domain: "venice.ai", BaseURL: "https://api.venice.ai/api/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Vercel AI Gateway", Domain: "vercel.sh", BaseURL: "https://ai-gateway.vercel.sh/v1", Format: "openai", KeyLabel: "API Key", Category: "aggregator"},
 		{Name: "Volcengine Ark", Domain: "volces.com", BaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+		// Named "Xiaomi TokenPlan" (no space before Plan) because the alias
+		// generator turns spaces into hyphens: this is the only natural
+		// spelling whose aliases include "xiaomi-tokenplan", the id a 9router
+		// export uses for this endpoint.
+		{Name: "Xiaomi TokenPlan", Domain: "xiaomimimo.com", BaseURL: "https://token-plan-sgp.xiaomimimo.com/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
 	}
 }
 

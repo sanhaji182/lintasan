@@ -89,6 +89,10 @@ func TestBuiltinPresetsResolveCompetitorProviderNames(t *testing.T) {
 		"sambanova":   "https://api.sambanova.ai/v1",
 		"chutes":      "https://llm.chutes.ai/v1",
 		"venice":      "https://api.venice.ai/api/v1",
+		// The two that a second pass over the registry caught: probed live, both
+		// answered /models (200 and auth-gated 401 respectively).
+		"opencode-go":      "https://opencode.ai/zen/go/v1",
+		"xiaomi-tokenplan": "https://token-plan-sgp.xiaomimimo.com/v1",
 	}
 	for providerID, wantURL := range cases {
 		got, ok := index[providerID]
