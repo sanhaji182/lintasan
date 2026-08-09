@@ -40,9 +40,6 @@ import (
 // unchanged.
 const FormatResponses Format = "responses"
 
-// ErrResponsesNotImplemented marks helpers not yet built (response-direction is M2).
-var ErrResponsesNotImplemented = errors.New("translator: responses helper not implemented (later milestone)")
-
 // Validation errors are sentinel values so callers (and tests) can match
 // deterministically. The handler (M2) maps these to a 400.
 var (

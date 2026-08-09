@@ -103,6 +103,23 @@ curl http://localhost:20180/v1/chat/completions \
 | `top_p` | number | `1` | Nucleus sampling |
 | `stop` | string/array | — | Stop sequences |
 
+### Responses API (Codex) — *experimental, off by default*
+
+```bash
+POST /v1/responses
+```
+
+Endpoint bergaya OpenAI `/v1/responses` (dipakai Codex CLI / plugin IDE),
+diterjemahkan ke pipeline chat completions yang sama. Mendukung **streaming**
+(SSE, default) dan **non-streaming** (`"stream": false` → satu body JSON).
+
+Dimatikan secara default: selama flag `responses_api_enabled` belum aktif,
+endpoint ini membalas `404`. Aktifkan lewat **Settings → Experimental → Codex
+Responses API** (langsung berlaku, tanpa restart).
+
+Detail lengkap — kontrak request/response, penanganan `tools[]`, metrik:
+[`codex-responses-api.md`](./codex-responses-api.md).
+
 ### List Models
 
 ```bash

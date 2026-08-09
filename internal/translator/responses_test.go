@@ -34,16 +34,11 @@ func TestResponsesNotWiredIntoExistingFormats(t *testing.T) {
 }
 
 // TestResponsesResponseDirectionImplemented: the response-direction helper was
-// an M2-era stub; M6 implements it for the non-streaming path. A body with no
-// usable choice is now a real error (ErrResponsesBadUpstream), not a
-// not-implemented marker. Shape and stream/non-stream parity are covered in
-// responses_nonstream_m6_test.go.
+// an M2-era stub; M6 implements it for the non-streaming path. Shape and
+// stream/non-stream parity are covered in responses_nonstream_m6_test.go.
 func TestResponsesResponseDirectionImplemented(t *testing.T) {
-	// No choices → upstream error, NOT ErrResponsesNotImplemented.
+	// No choices → the upstream body carries no usable assistant turn.
 	_, err := OpenAIResponseToResponses(map[string]any{"object": "chat.completion"})
-	if errors.Is(err, ErrResponsesNotImplemented) {
-		t.Fatal("OpenAIResponseToResponses is still a stub — M6 should have implemented it")
-	}
 	if !errors.Is(err, ErrResponsesBadUpstream) {
 		t.Errorf("err = %v, want ErrResponsesBadUpstream", err)
 	}
