@@ -25,6 +25,7 @@ import { page } from '$app/state';
     '/dashboard/users': 'Users',
     '/dashboard/webhooks': 'Webhooks',
     '/dashboard/backup': 'Backup',
+    '/dashboard/migrate': 'Migrate',
     '/dashboard/settings': 'Settings',
     '/dashboard/plugins': 'Plugins',
     '/dashboard/playground': 'Playground',
