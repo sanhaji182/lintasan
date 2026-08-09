@@ -54,6 +54,12 @@ var (
 	ErrResponsesBadToolsTy = errors.New("responses: 'tools' must be an array")
 )
 
+// ErrResponsesBadUpstream marks a non-streaming upstream body that carries no
+// usable assistant turn (no choices, or a choice with no message). The handler
+// maps it to 502 rather than returning an empty but "completed" response, so a
+// broken upstream is never disguised as a successful empty turn.
+var ErrResponsesBadUpstream = errors.New("responses: upstream returned no usable choice")
+
 // ValidateResponsesRequest performs deterministic structural validation of a
 // parsed Responses request. It is pure (no I/O, no randomness) and returns a
 // sentinel error on the first violation, in a fixed check order, so the same
@@ -156,12 +162,107 @@ func ResponsesToOpenAIRequest(raw map[string]any) (map[string]any, error) {
 	return result, nil
 }
 
-// OpenAIResponseToResponses converts a canonical chat-completion response into a
-// Responses-shaped object. NOTE: M2 scope (response/streaming direction). M1
-// stub — returns ErrResponsesNotImplemented.
+// OpenAIResponseToResponses converts a canonical NON-STREAMING chat-completion
+// response into a Responses-shaped object (M6).
+//
+// The output shape is deliberately identical to the `response` payload the
+// streaming emitter puts on its terminal `response.completed` event
+// (responses_stream.go finishEvents), so a client sees the same object whether
+// it asked for stream=true or stream=false. Shared rules:
+//
+//   - a message item exists ONLY when there is assistant text (a pure tool-call
+//     turn emits no message item, matching the real Responses API);
+//   - tool calls become `function_call` items with call_id preserved VERBATIM,
+//     in upstream order, after the message item;
+//   - `arguments` is always a JSON string, defaulting to "{}" when absent;
+//   - usage is renamed to the Responses vocabulary, zero-filled when missing.
+//
+// Errors: ErrResponsesBadUpstream when the body carries no usable choice, so
+// the handler can answer 502 rather than inventing an empty turn.
 func OpenAIResponseToResponses(raw map[string]any) (map[string]any, error) {
-	_ = raw
-	return nil, ErrResponsesNotImplemented
+	if raw == nil {
+		return nil, ErrResponsesBadUpstream
+	}
+
+	model, _ := raw["model"].(string)
+
+	choices, ok := raw["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		return nil, ErrResponsesBadUpstream
+	}
+	choice, ok := choices[0].(map[string]any)
+	if !ok {
+		return nil, ErrResponsesBadUpstream
+	}
+	message, ok := choice["message"].(map[string]any)
+	if !ok {
+		return nil, ErrResponsesBadUpstream
+	}
+
+	output := make([]any, 0, 2)
+
+	// 1. Assistant text → message item (only when non-empty, mirroring the
+	//    streaming emitter's lazy ensureMessageOpen).
+	if text, _ := message["content"].(string); text != "" {
+		output = append(output, map[string]any{
+			"id":     "msg_" + randomID(),
+			"type":   "message",
+			"status": "completed",
+			"role":   "assistant",
+			"content": []any{map[string]any{
+				"type":        "output_text",
+				"text":        text,
+				"annotations": []any{},
+			}},
+		})
+	}
+
+	// 2. Tool calls → function_call items, upstream order, call_id verbatim.
+	if toolCalls, ok := message["tool_calls"].([]any); ok {
+		for _, tc := range toolCalls {
+			call, ok := tc.(map[string]any)
+			if !ok {
+				continue
+			}
+			fn, ok := call["function"].(map[string]any)
+			if !ok {
+				continue
+			}
+			callID, _ := call["id"].(string)
+			if callID == "" {
+				// No id → the client could never return a matching
+				// function_call_output. Skip rather than fabricate one.
+				continue
+			}
+			name, _ := fn["name"].(string)
+			args, _ := fn["arguments"].(string)
+			if args == "" {
+				args = "{}"
+			}
+			output = append(output, map[string]any{
+				"id":        "fc_" + randomID(),
+				"type":      "function_call",
+				"status":    "completed",
+				"call_id":   callID,
+				"name":      name,
+				"arguments": args,
+			})
+		}
+	}
+
+	usage := map[string]any{"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+	if u, ok := raw["usage"].(map[string]any); ok {
+		usage = mapChatUsageToResponses(u)
+	}
+
+	return map[string]any{
+		"id":     "resp_" + randomID(),
+		"object": "response",
+		"status": "completed",
+		"model":  model,
+		"output": output,
+		"usage":  usage,
+	}, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
