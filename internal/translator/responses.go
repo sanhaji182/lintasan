@@ -275,14 +275,76 @@ func responsesFunctionCallOutputToOpenAI(item map[string]any) map[string]any {
 	}
 }
 
-// responsesToolsToOpenAI maps the Responses flat function-tool shape
-// ({type:"function", name, description, parameters}) to the chat nested shape
-// ({type:"function", function:{name, description, parameters}}).
+// responsesToolsToOpenAI maps the Responses tool array to chat tools.
+//
+// M5 (live Codex validation) taught us the Responses `tools` array is NOT
+// uniformly the flat function shape. A real Codex CLI request carries three
+// distinct kinds, and forcing them all into {type:"function", function:{...}}
+// produced tools with an EMPTY function.name — upstream rejected the whole
+// request with 400 "tools.N.function.name: Field required", so every Codex
+// session died at the first turn regardless of the prompt.
+//
+// The three kinds, and what we do with each:
+//
+//  1. function (flat)  {type:"function", name, description, parameters}
+//     → nest into the chat shape. The common case.
+//
+//  2. namespace        {type:"namespace", name, description, tools:[...]}
+//     → a GROUP of function tools (e.g. Codex's "multi_agent_v1"). Flatten its
+//     members into individual chat tools; the member names are what the model
+//     actually calls, so they are preserved verbatim. Nested namespaces are
+//     flattened recursively with a depth cap so a malformed/cyclic payload
+//     cannot blow the stack.
+//
+//  3. provider built-ins  {type:"web_search"|"file_search"|"computer_use"|...}
+//     → NOT expressible in chat-completions `tools` (no name, no schema; they
+//     are executed by the provider, not the caller). Dropped, counted, and
+//     never emitted as a nameless function. Dropping is the honest behavior:
+//     the model simply doesn't see that capability, instead of the request
+//     failing outright or a broken tool entry being sent upstream.
+//
+// Anything with a usable name still nests (forward-compatible with tool types
+// we haven't seen yet); only genuinely nameless entries are dropped.
+//
+// This function stays PURE (no I/O, no globals) like the rest of the file — the
+// drop count is exposed separately via ResponsesToolsStats so the handler, not
+// the translator, owns observability.
 func responsesToolsToOpenAI(tools []any) []map[string]any {
+	out, _ := responsesToolsFlatten(tools, 0)
+	return out
+}
+
+// ResponsesToolsStats reports how a Responses `tools` array translates: kept is
+// the number of chat tools produced, dropped is the number of entries that
+// could not be represented as chat functions (provider built-ins like
+// web_search, nameless entries, malformed namespaces). Pure; intended for the
+// handler's observability, so a silently-dropped capability is visible in
+// metrics instead of being invisible. Non-array or absent tools → 0, 0.
+func ResponsesToolsStats(raw map[string]any) (kept, dropped int) {
+	tools, ok := raw["tools"].([]any)
+	if !ok {
+		return 0, 0
+	}
+	out, d := responsesToolsFlatten(tools, 0)
+	return len(out), d
+}
+
+// responsesToolsMaxDepth bounds namespace recursion. Codex nests one level; the
+// cap only exists so a hostile or malformed payload can't recurse without end.
+const responsesToolsMaxDepth = 4
+
+// responsesToolsFlatten does the real work, returning the chat tools plus the
+// count of entries dropped as unrepresentable.
+func responsesToolsFlatten(tools []any, depth int) ([]map[string]any, int) {
 	var out []map[string]any
+	dropped := 0
+	if depth > responsesToolsMaxDepth {
+		return nil, len(tools)
+	}
 	for _, t := range tools {
 		tm, ok := t.(map[string]any)
 		if !ok {
+			dropped++
 			continue
 		}
 		// Already-nested chat shape → pass through unchanged.
@@ -290,14 +352,31 @@ func responsesToolsToOpenAI(tools []any) []map[string]any {
 			out = append(out, map[string]any{"type": "function", "function": fn})
 			continue
 		}
-		// Flat Responses shape → nest.
-		fn := map[string]any{}
-		copyIfPresent(tm, fn, "name")
+		// Namespace group → flatten its members.
+		if kind, _ := tm["type"].(string); kind == "namespace" {
+			nested, ok := tm["tools"].([]any)
+			if !ok {
+				dropped++
+				continue
+			}
+			sub, subDropped := responsesToolsFlatten(nested, depth+1)
+			out = append(out, sub...)
+			dropped += subDropped
+			continue
+		}
+		// Flat shape → nest, but ONLY when it carries a usable name. A tool
+		// without a name cannot be a chat function (upstream 400s on it).
+		name, _ := tm["name"].(string)
+		if name == "" {
+			dropped++
+			continue
+		}
+		fn := map[string]any{"name": name}
 		copyIfPresent(tm, fn, "description")
 		copyIfPresent(tm, fn, "parameters")
 		out = append(out, map[string]any{"type": "function", "function": fn})
 	}
-	return out
+	return out, dropped
 }
 
 // responsesToolChoiceToOpenAI normalizes tool_choice. Strings ("auto"/"none"/

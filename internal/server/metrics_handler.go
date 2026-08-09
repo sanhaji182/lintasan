@@ -86,6 +86,8 @@ func responsesCollector(w io.Writer) {
 		"function_call items emitted across all Responses streams.", float64(rs.ToolCalls))
 	metrics.WriteCounter(w, "lintasan_responses_text_streams_total",
 		"Responses streams that emitted at least one text delta.", float64(rs.TextStreams))
+	metrics.WriteCounter(w, "lintasan_responses_tools_dropped_total",
+		"Codex tools.N entries dropped as unrepresentable in chat (provider built-ins, nameless entries).", float64(rs.ToolsDropped))
 }
 
 // buildInfoCollector emits a single build_info gauge carrying the server

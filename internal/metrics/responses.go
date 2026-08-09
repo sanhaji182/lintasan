@@ -23,6 +23,7 @@ var (
 	responsesStreamsIncomplete atomic.Int64 // streams terminated by response.incomplete
 	responsesToolCalls         atomic.Int64 // function_call items emitted (cumulative)
 	responsesTextStreams       atomic.Int64 // streams that emitted at least one text delta
+	responsesToolsDropped      atomic.Int64 // tools.N entries dropped as unrepresentable in chat (M5)
 )
 
 // ResponsesTerminal is the terminal state a Responses stream ended in. It is the
@@ -63,6 +64,17 @@ func RecordResponsesStream(started bool, terminal ResponsesTerminal, toolCalls i
 	}
 }
 
+// RecordResponsesToolsDropped adds n unrepresentable tools.N entries (provider
+// built-ins like web_search, nameless/malformed tool entries) that were dropped
+// during a single request's tools translation. Called once per request from the
+// handler after ResponsesToolsStats, so a silently-shrunk tool list is visible
+// operationally instead of only in a debug log. No-op for n<=0.
+func RecordResponsesToolsDropped(n int) {
+	if n > 0 {
+		responsesToolsDropped.Add(int64(n))
+	}
+}
+
 // ResponsesStatsSnapshot is a point-in-time snapshot of the Responses counters.
 type ResponsesStatsSnapshot struct {
 	StreamsStarted    int64
@@ -71,6 +83,7 @@ type ResponsesStatsSnapshot struct {
 	StreamsIncomplete int64
 	ToolCalls         int64
 	TextStreams       int64
+	ToolsDropped      int64
 }
 
 // ResponsesStats returns a snapshot for the /metrics collector.
@@ -82,5 +95,6 @@ func ResponsesStats() ResponsesStatsSnapshot {
 		StreamsIncomplete: responsesStreamsIncomplete.Load(),
 		ToolCalls:         responsesToolCalls.Load(),
 		TextStreams:       responsesTextStreams.Load(),
+		ToolsDropped:      responsesToolsDropped.Load(),
 	}
 }
