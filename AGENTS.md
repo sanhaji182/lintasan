@@ -71,9 +71,28 @@ sudo systemctl is-active lintasan
 
 Deploy binary baru (downtime ~0.2–0.3 detik):
 ```bash
-make build                          # frontend → embed → ./lintasan
-sudo systemctl stop lintasan        # lepas file handle (hindari "text file busy")
-cp dist-bin/lintasan-linux-amd64 lintasan   # atau pakai ./lintasan hasil make build
+make build                          # frontend → embed → dist-bin/lintasan (TIDAK menyentuh prod)
+make deploy                         # stop → backup → cp ke ./lintasan → start → health check
+```
+
+> ⚠️ **`make build` TIDAK PERNAH menulis ke `./lintasan`.** Path itu yang
+> dieksekusi systemd (`ExecStart=/home/ubuntu/lintasan-go/lintasan start`).
+> Build yang menimpanya diam-diam men-stage kode ke produksi: restart
+> berikutnya — karena sebab apa pun (reboot, crash, `systemctl restart` agent
+> lain) — langsung menaikkannya tanpa langkah deploy dan tanpa persetujuan.
+> Ini sudah pernah terjadi. 9 Agustus 2026 pukul 16:31:49 prod menyajikan
+> `v0.29.3-17-g23bbc7c`; tujuh detik kemudian stop/start dari worktree lain
+> menaikkan `v0.29.3-16-g389ec80` — commit yang **lebih lama** — karena build
+> worktree itu meninggalkan binary-nya sendiri di path produksi. Tidak ada yang
+> deploy; prod mundur diam-diam selama 100 detik sampai restart berikutnya.
+> Semua build mendarat di `dist-bin/`; hanya `make deploy` yang boleh menyentuh
+> path produksi, dan ia menyimpan backup bertimestamp lebih dulu.
+
+Rollback (tanpa rebuild — backup dibuat otomatis oleh `make deploy`):
+```bash
+ls -t lintasan.bak-*                # pilih yang terakhir diketahui baik
+sudo systemctl stop lintasan
+cp lintasan.bak-<timestamp> lintasan
 sudo systemctl start lintasan
 curl -s localhost:20180/health      # verifikasi versi
 ```
@@ -377,7 +396,7 @@ cd ~/worktrees/<nama-agent>
   mkdir -p internal/web/dist && touch internal/web/dist/.gitkeep   # dist/ di-gitignore
   go build ./... && go test ./...
   ```
-- **`make build` mengompilasi working tree apa adanya** — termasuk perubahan agent lain yang belum di-commit. Selalu build dari worktree bersihmu sebelum deploy ke prod.
+- **`make build` mengompilasi working tree apa adanya** — termasuk perubahan agent lain yang belum di-commit. Selalu build dari worktree bersihmu sebelum deploy ke prod. Build-nya sendiri aman (mendarat di `dist-bin/`, bukan ke binary prod), tapi `make deploy` menerbitkan apa pun yang ada di tree saat build.
 
 **Kalau menemukan perubahan yang bukan milikmu di tree:** jangan commit, jangan revert, jangan `checkout --`. Tanya dulu. Pekerjaan setengah jadi milik agent lain kelihatan seperti kerusakan padahal bukan.
 
