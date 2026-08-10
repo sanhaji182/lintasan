@@ -66,7 +66,7 @@ cd lintasan
 make build
 
 # Start
-./lintasan start
+dist-bin/lintasan start
 ```
 
 **Tanpa Node.js?** Jika hanya butuh API proxy (tanpa dashboard UI):
@@ -195,7 +195,7 @@ curl -s localhost:20180/health
 git pull origin main
 make build
 sudo systemctl stop lintasan
-cp lintasan /opt/lintasan/lintasan
+cp dist-bin/lintasan /opt/lintasan/lintasan
 sudo systemctl start lintasan
 ```
 

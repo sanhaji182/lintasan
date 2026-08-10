@@ -349,8 +349,8 @@ Butuh **Go 1.22+** dan **Node 20+** (untuk build dashboard). `make build` meng-c
 ```bash
 git clone https://github.com/sanhaji182/lintasan.git
 cd lintasan
-make build       # frontend → embed → ./lintasan
-./lintasan start
+make build       # frontend → embed → dist-bin/lintasan
+dist-bin/lintasan start
 ```
 > Tanpa Node? `go build -o lintasan ./cmd/lintasan` tetap jalan, tapi menghasilkan server **API-only** (tanpa UI dashboard).
 
@@ -392,8 +392,8 @@ Requires **Go 1.22+** and **Node 20+** (to build the dashboard). `make build` co
 ```bash
 git clone https://github.com/sanhaji182/lintasan.git
 cd lintasan
-make build       # frontend → embed → ./lintasan
-./lintasan start
+make build       # frontend → embed → dist-bin/lintasan
+dist-bin/lintasan start
 ```
 > No Node? `go build -o lintasan ./cmd/lintasan` still works but produces an **API-only** server (no dashboard UI).
 
@@ -664,7 +664,7 @@ cd lintasan
 make build
 
 # Run
-./lintasan start               # UI + API on :20180
+dist-bin/lintasan start        # UI + API on :20180
 
 # Frontend dev (with HMR, requires Go backend running)
 cd frontend && npm run dev -- --port 5173
@@ -702,10 +702,10 @@ Lintasan deploy sebagai single binary. Dashboard embedded di dalamnya — tidak 
 
 ```bash
 # Build
-make build                     # frontend → embed → ./lintasan
+make build                     # frontend → embed → dist-bin/lintasan
 
 # Copy to server
-scp lintasan user@server:/opt/lintasan/
+scp dist-bin/lintasan user@server:/opt/lintasan/
 
 # Systemd service
 sudo tee /etc/systemd/system/lintasan.service << 'EOF'
@@ -754,10 +754,10 @@ Lintasan deploys as a single binary. The dashboard is embedded inside — no sep
 
 ```bash
 # Build
-make build                     # frontend → embed → ./lintasan
+make build                     # frontend → embed → dist-bin/lintasan
 
 # Copy to server
-scp lintasan user@server:/opt/lintasan/
+scp dist-bin/lintasan user@server:/opt/lintasan/
 
 # Systemd service
 sudo tee /etc/systemd/system/lintasan.service << 'EOF'
