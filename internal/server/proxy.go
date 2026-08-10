@@ -882,45 +882,77 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 
-		// On 401/403: failover to another connection serving this model. A
-		// 401/403 is an auth or quota failure — retrying the SAME connection
-		// knocks on a locked door, and passing it through hands the client a
-		// dead end (the "stuck here and stops" case). findConnectionForModel
-		// returns only ONE connection, so the loop's candidate list normally
-		// has no second entry for a plain model route. Look one up here, ONLY
-		// on auth failure, so 429/5xx routing and its single-candidate
-		// behaviour are completely untouched.
+		// On 401/403: try the rest of the pool, then fail over to another
+		// connection serving this model. A 401/403 is an auth or quota failure —
+		// retrying the SAME key knocks on a locked door, and passing it through
+		// hands the client a dead end (the "stuck here and stops" case).
+		// findConnectionForModel returns only ONE connection, so the loop's
+		// candidate list normally has no second entry for a plain model route.
+		// Look one up here, ONLY on auth failure, so 429/5xx routing and its
+		// single-candidate behaviour are completely untouched.
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
 			lastStatusCode = resp.StatusCode
 			resp.Body.Close()
-			breaker.Failure()
-			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
-			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-			if p.fb != nil {
-				p.fb.RecordEvent(resolvedModel, "", fallback.Reason401, resp.StatusCode)
+
+			// A pooled connection holds several keys. One key being rejected
+			// says nothing about the other four, so exhaust the pool BEFORE
+			// writing off the whole provider. The rejected key is taken out of
+			// rotation (a longer cooldown than a 429, since a bad key does not
+			// heal in 60s) so the round-robin cannot hand it back on the next
+			// pick and burn another request on the same locked door.
+			//
+			// Deliberately NOT inside retry.Do: that retries the same call with
+			// backoff, and waiting is pointless when the fix is simply "use a
+			// different key". Bounded by the account count, so a pool of dead
+			// keys cannot spin.
+			recovered := false
+			if conn.PoolID != "" && poolAccountID != "" {
+				p.markPoolAccountAuthFailed(conn.PoolID, poolAccountID)
+				p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+
+				if poolResp, poolAcct := p.retryPoolAccounts(r, conn, body, resolvedModel, start, taskClass, modeLabel, &lastErr, &lastStatusCode); poolResp != nil {
+					resp = poolResp
+					poolAccountID = poolAcct
+					w.Header().Set("X-Lintasan-Pool-Retry", conn.PoolID)
+					recovered = true
+				}
+			} else {
+				p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
+				p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			}
 
-			// If the loop still has candidates, just advance to the next one.
-			if i < len(candidates)-1 {
-				continue
-			}
+			if !recovered {
+				// Either not pooled, or every key in the pool was rejected. Now
+				// it IS the connection that is unusable.
+				breaker.Failure()
+				if p.fb != nil {
+					p.fb.RecordEvent(resolvedModel, "", fallback.Reason401, resp.StatusCode)
+				}
 
-			// Otherwise this was the last candidate. Try to widen it with
-			// another active connection that serves the same model and has not
-			// been tried yet. If there is none, the continue below exits the
-			// loop and the exhausted-routes path reports the auth/quota failure
-			// with its real status code.
-			tried := make([]string, 0, len(candidates))
-			for _, c := range candidates {
-				tried = append(tried, c.ID)
-			}
-			if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
-				candidates = append(candidates, alternates...)
+				// If the loop still has candidates, just advance to the next.
+				if i < len(candidates)-1 {
+					continue
+				}
+
+				// Otherwise this was the last candidate. Try to widen it with
+				// another active connection that serves the same model and has
+				// not been tried yet. If there is none, the continue below exits
+				// the loop and the exhausted-routes path reports the auth/quota
+				// failure with its real status code.
+				tried := make([]string, 0, len(candidates))
+				for _, c := range candidates {
+					tried = append(tried, c.ID)
+				}
+				if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
+					candidates = append(candidates, alternates...)
+				}
 				continue
 			}
-			continue
+			// recovered: fall through to the success path with the new response.
+			defer resp.Body.Close()
+			lastStatusCode = resp.StatusCode
 		}
 
 		// Success! Record to breaker
