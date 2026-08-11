@@ -145,7 +145,7 @@ export function logoPaths(brand: ProviderBrand): LogoPath[] {
 export function brandForProvider(id: string): ProviderBrand {
   return OAUTH_PROVIDER_BRANDS[id] ?? {
     color: 'var(--color-fg-2)',
-    bg: 'var(--color-bg-3)',
+    bg: 'var(--color-bg-hover)',
     border: 'var(--color-border)',
     company: id,
     tagline: '',

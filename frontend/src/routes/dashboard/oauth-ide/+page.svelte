@@ -85,7 +85,7 @@
   function implLabel(impl: string) {
     if (impl === 'ready') return { label: 'Ready', color: '#22c55e', bg: 'rgba(34,197,94,0.12)' };
     if (impl === 'import_only') return { label: 'Import', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' };
-    return { label: impl, color: 'var(--color-fg-3)', bg: 'var(--color-bg-3)' };
+    return { label: impl, color: 'var(--color-fg-3)', bg: 'var(--color-bg-hover)' };
   }
 
   async function load() {
@@ -670,7 +670,7 @@
     margin-right: 6px;
   }
   .step-arrow {
-    color: var(--color-fg-4);
+    color: var(--color-fg-3);
     flex-shrink: 0;
   }
   .error-banner {
@@ -801,7 +801,7 @@
     font-size: 10px;
     padding: 2px 6px;
     border-radius: 4px;
-    background: var(--color-bg-3);
+    background: var(--color-bg-hover);
   }
   .flow-chip {
     font-size: 10px;
@@ -861,7 +861,7 @@
     cursor: not-allowed;
   }
   .btn-secondary-sm {
-    background: var(--color-bg-3);
+    background: var(--color-bg-hover);
     color: var(--color-fg-1);
     border: 1px solid var(--color-border);
   }
@@ -982,7 +982,7 @@
     font-weight: 600;
     padding: 2px 8px;
     border-radius: 6px;
-    background: var(--color-bg-3);
+    background: var(--color-bg-hover);
     color: var(--color-fg-3);
   }
   .session-status.active {
@@ -991,7 +991,7 @@
   }
   .session-id {
     font-size: 10px;
-    color: var(--color-fg-4);
+    color: var(--color-fg-3);
   }
   .session-actions {
     display: flex;
@@ -1020,7 +1020,7 @@
     display: block;
     margin: 0.35rem 0;
     padding: 0.35rem 0.5rem;
-    background: var(--color-bg-3);
+    background: var(--color-bg-hover);
     border-radius: 6px;
     font-size: 0.8rem;
     font-family: var(--font-mono);

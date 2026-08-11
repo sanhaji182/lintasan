@@ -694,7 +694,7 @@
     background: transparent;
     color: var(--color-fg-2);
   }
-  .cancel-btn:hover:not(:disabled) { background: var(--color-bg-2); }
+  .cancel-btn:hover:not(:disabled) { background: var(--color-bg-hover); }
   .cancel-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .reset-overlay {
@@ -713,7 +713,7 @@
     max-width: 460px;
     padding: 24px;
     border-radius: 14px;
-    background: var(--color-bg-1);
+    background: var(--color-bg-card);
     border: 1px solid var(--color-border);
     box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
   }
