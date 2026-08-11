@@ -1,4 +1,11 @@
 <script lang="ts">
+  import TabNav from '$lib/components/TabNav.svelte';
+  const __tabs = [
+    { label: 'Requests', path: '/dashboard/analytics' },
+    { label: 'Usage & Quota', path: '/dashboard/usage' },
+    { label: 'Savings', path: '/dashboard/savings' },
+    { label: 'Logs', path: '/dashboard/logs' }
+  ];
   import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -140,6 +147,9 @@
 
   let hasActiveFilters = $derived(searchQuery.trim() !== '' || statusFilter !== 'all');
 </script>
+
+<TabNav tabs={__tabs} />
+
 
 <div style="display: flex; flex-direction: column; gap: 24px;">
   <!-- Filters Card -->

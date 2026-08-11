@@ -1,4 +1,11 @@
 <script lang="ts">
+  import TabNav from '$lib/components/TabNav.svelte';
+  const __tabs = [
+    { label: 'Requests', path: '/dashboard/analytics' },
+    { label: 'Usage & Quota', path: '/dashboard/usage' },
+    { label: 'Savings', path: '/dashboard/savings' },
+    { label: 'Logs', path: '/dashboard/logs' }
+  ];
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -57,6 +64,9 @@
     return (val || 0).toLocaleString();
   }
 </script>
+
+<TabNav tabs={__tabs} />
+
 
 <div style="animation: fadeInUp 0.4s ease-out;">
   <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 4px;">Cost Savings</h2>

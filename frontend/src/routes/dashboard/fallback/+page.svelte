@@ -1,4 +1,9 @@
 <script lang="ts">
+  import TabNav from '$lib/components/TabNav.svelte';
+  const __tabs = [
+    { label: 'Routing', path: '/dashboard/routing' },
+    { label: 'Fallback', path: '/dashboard/fallback' }
+  ];
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -115,6 +120,9 @@
     }
   }
 </script>
+
+<TabNav tabs={__tabs} />
+
 
 <div style="display: flex; flex-direction: column; gap: 24px;">
   <!-- Model Fallback Chains -->

@@ -1,4 +1,11 @@
 <script lang="ts">
+  import TabNav from '$lib/components/TabNav.svelte';
+  const __tabs = [
+    { label: 'Accounts', path: '/dashboard/connections' },
+    { label: 'Discover', path: '/dashboard/discover' },
+    { label: 'OAuth IDE', path: '/dashboard/oauth-ide', lab: true },
+    { label: 'Experimental', path: '/dashboard/experimental', lab: true }
+  ];
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -61,6 +68,9 @@
     }
   }
 </script>
+
+<TabNav tabs={__tabs} />
+
 
 <div style="animation: fadeInUp 0.4s ease-out;">
   <!-- Header -->

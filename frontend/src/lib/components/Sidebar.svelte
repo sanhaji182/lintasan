@@ -1,10 +1,10 @@
 <script lang="ts">
   import { page } from '$app/state';
   import {
-    LayoutDashboard, Link2, GitBranch, ShieldAlert, ScrollText,
-    BarChart3, TrendingUp, Key, Users, UserCircle, Webhook,
+    LayoutDashboard, Link2, GitBranch,
+    BarChart3, Key, Users, UserCircle, Webhook,
     Database, Settings, Puzzle, MessageSquare, BookOpen,
-    Brain, Globe, Server, Activity, Sun, Moon, FlaskConical, KeyRound, Upload
+    Brain, Globe, Server, Activity, Sun, Moon, Upload, Plug
   } from 'lucide-svelte';
   import { theme } from '$lib/stores/theme';
 
@@ -14,14 +14,8 @@
     { label: 'Overview', path: '/dashboard', icon: LayoutDashboard },
     { label: 'Accounts', path: '/dashboard/connections', icon: Link2 },
     { label: 'Providers', path: '/dashboard/providers', icon: Server },
-    { label: 'Experimental', path: '/dashboard/experimental', icon: FlaskConical },
-    { label: 'OAuth IDE', path: '/dashboard/oauth-ide', icon: KeyRound, experimental: true },
-    { label: 'Discover', path: '/dashboard/discover', icon: Globe },
     { label: 'Routing', path: '/dashboard/routing', icon: GitBranch },
-    { label: 'Fallback', path: '/dashboard/fallback', icon: ShieldAlert },
-    { label: 'Logs', path: '/dashboard/logs', icon: ScrollText },
-    { label: 'Usage', path: '/dashboard/usage', icon: BarChart3 },
-    { label: 'Analytics', path: '/dashboard/analytics', icon: TrendingUp },
+    { label: 'Analytics', path: '/dashboard/analytics', icon: BarChart3 },
     { label: 'Observability', path: '/dashboard/observability', icon: Activity },
     { label: 'Memory', path: '/dashboard/memory', icon: Brain },
   ];
@@ -37,8 +31,7 @@
   ];
 
   const toolItems = [
-    { label: 'MCP Server', path: '/dashboard/mcp', icon: Puzzle },
-    { label: 'Savings', path: '/dashboard/savings', icon: TrendingUp },
+    { label: 'MCP Server', path: '/dashboard/mcp', icon: Plug },
     { label: 'Translator', path: '/dashboard/translator', icon: Globe },
     { label: 'Plugins', path: '/dashboard/plugins', icon: Puzzle },
     { label: 'Playground', path: '/dashboard/playground', icon: MessageSquare },
