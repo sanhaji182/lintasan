@@ -4,7 +4,8 @@
     { label: 'Requests', path: '/dashboard/analytics' },
     { label: 'Usage & Quota', path: '/dashboard/usage' },
     { label: 'Savings', path: '/dashboard/savings' },
-    { label: 'Logs', path: '/dashboard/logs' }
+    { label: 'Logs', path: '/dashboard/logs' },
+    { label: 'Metrics', path: '/dashboard/observability' }
   ];
   import { onMount } from 'svelte';
   import { api } from '$lib/api';

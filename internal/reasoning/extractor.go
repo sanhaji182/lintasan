@@ -27,11 +27,35 @@ func ExtractReasoningContent(data []byte) []byte {
 
 	msg, ok := choice["message"].(map[string]interface{})
 	if !ok {
-		return data
+		msg, ok = choice["delta"].(map[string]interface{})
+		if !ok {
+			return data
+		}
 	}
 
 	content, _ := msg["content"].(string)
 	reasoningContent, _ := msg["reasoning_content"].(string)
+
+	// Check for <think>...</think> tags inside content (common in DeepSeek R1 / QwQ)
+	thinkRegex := regexp.MustCompile(`(?s)<think>(.*?)</think>`)
+	if thinkRegex.MatchString(content) {
+		var thinkParts []string
+		matches := thinkRegex.FindAllStringSubmatch(content, -1)
+		for _, m := range matches {
+			if len(m) > 1 && strings.TrimSpace(m[1]) != "" {
+				thinkParts = append(thinkParts, strings.TrimSpace(m[1]))
+			}
+		}
+		if len(thinkParts) > 0 {
+			if strings.TrimSpace(reasoningContent) == "" {
+				reasoningContent = strings.Join(thinkParts, "\n\n")
+				msg["reasoning_content"] = reasoningContent
+			}
+			content = strings.TrimSpace(thinkRegex.ReplaceAllString(content, ""))
+			msg["content"] = content
+			parsed["_reasoning_extracted"] = true
+		}
+	}
 
 	// If neither has data, passthrough
 	if strings.TrimSpace(content) == "" && strings.TrimSpace(reasoningContent) == "" {
@@ -42,8 +66,13 @@ func ExtractReasoningContent(data []byte) []byte {
 	hasContentCode := hasCodeBlock(content)
 	hasReasoningCode := strings.TrimSpace(reasoningContent) != "" && (hasCodeBlock(reasoningContent) || strings.TrimSpace(content) == "")
 
-	// Do nothing if content already has code — use as-is
+	// Do nothing if content already has code — use as-is (unless <think> was extracted)
 	if hasContentCode {
+		if parsed["_reasoning_extracted"] == true {
+			if fixed, err := json.Marshal(parsed); err == nil {
+				return fixed
+			}
+		}
 		return data
 	}
 
@@ -73,6 +102,12 @@ func ExtractReasoningContent(data []byte) []byte {
 			if err == nil {
 				return fixed
 			}
+		}
+	}
+
+	if parsed["_reasoning_extracted"] == true {
+		if fixed, err := json.Marshal(parsed); err == nil {
+			return fixed
 		}
 	}
 
@@ -274,5 +309,5 @@ func IsReasoningModel(data []byte) bool {
 	}
 	content, _ := msg["content"].(string)
 	reasoning, _ := msg["reasoning_content"].(string)
-	return strings.TrimSpace(content) == "" && strings.TrimSpace(reasoning) != ""
+	return (strings.TrimSpace(content) == "" && strings.TrimSpace(reasoning) != "") || strings.Contains(content, "<think>")
 }

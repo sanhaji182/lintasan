@@ -1,10 +1,8 @@
 # Rencana Konsolidasi Menu Dashboard Lintasan
 
-> **Status:** DRAFT untuk review. Tidak ada kode yang diubah. Prod read-only.
-> **Tanggal audit:** 11 Aug 2026
-> **Sumber bukti:** heading tiap `+page.svelte` + endpoint backend yang dipanggil.
-> **Kondisi awal:** 26 item nav (13 MENU / 7 MANAGE / 6 TOOLS).
-> **Target:** ~18 item, tanpa menghapus fungsi apa pun (semua jadi tab/sub-section).
+> **Status:** SELESAI (18 item nav). Prod read-only.
+> **Tanggal selesai:** 06 Sep 2026
+> **Hasil:** 18 item nav (6 MENU / 7 MANAGE / 5 TOOLS). Observability menjadi tab Metrics di Analytics. TabNav konsisten across all sections. Orphan guard 100% green.
 
 ---
 

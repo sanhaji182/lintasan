@@ -1,6 +1,8 @@
 package reasoning
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -195,3 +197,114 @@ func contains(s, substr string) bool {
 	}
 	return false
 }
+
+func TestExtractReasoningContent_ThinkTagExtraction(t *testing.T) {
+	input := []byte(`{
+		"choices": [{
+			"message": {
+				"content": "<think>\nLet me ponder the meaning of life and calculate 6 * 7.\n</think>\nThe answer is 42.",
+				"reasoning_content": ""
+			}
+		}]
+	}`)
+
+	got := ExtractReasoningContent(input)
+
+	var parsed map[string]any
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	choices := parsed["choices"].([]any)
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+
+	content := msg["content"].(string)
+	reasoning := msg["reasoning_content"].(string)
+
+	if content != "The answer is 42." {
+		t.Errorf("expected clean content 'The answer is 42.', got %q", content)
+	}
+	if !strings.Contains(reasoning, "Let me ponder the meaning of life") {
+		t.Errorf("expected extracted reasoning, got %q", reasoning)
+	}
+	if parsed["_reasoning_extracted"] != true {
+		t.Errorf("expected _reasoning_extracted=true")
+	}
+}
+
+func TestExtractReasoningContent_ThinkTagWithCode(t *testing.T) {
+	input := []byte("{\n" +
+		"  \"choices\": [{\n" +
+		"    \"message\": {\n" +
+		"      \"content\": \"<think>Drafting python snippet</think>\\n```python\\ndef solve():\\n    # Long enough comment to exceed fifty chars threshold\\n    return 42\\n```\",\n" +
+		"      \"reasoning_content\": \"\"\n" +
+		"    }\n" +
+		"  }]\n" +
+		"}")
+
+	got := ExtractReasoningContent(input)
+
+	var parsed map[string]any
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	choices := parsed["choices"].([]any)
+	msg := choices[0].(map[string]any)["message"].(map[string]any)
+
+	content := msg["content"].(string)
+	reasoning := msg["reasoning_content"].(string)
+
+	if strings.Contains(content, "<think>") {
+		t.Errorf("content should not contain <think>, got %q", content)
+	}
+	if !strings.Contains(content, "def solve():") {
+		t.Errorf("expected code in content, got %q", content)
+	}
+	if reasoning != "Drafting python snippet" {
+		t.Errorf("expected reasoning 'Drafting python snippet', got %q", reasoning)
+	}
+}
+
+func TestExtractReasoningContent_ThinkTagDelta(t *testing.T) {
+	input := []byte(`{
+		"choices": [{
+			"delta": {
+				"content": "<think>Deliberating</think>Hello world",
+				"reasoning_content": ""
+			}
+		}]
+	}`)
+
+	got := ExtractReasoningContent(input)
+
+	var parsed map[string]any
+	if err := json.Unmarshal(got, &parsed); err != nil {
+		t.Fatalf("unmarshal error: %v", err)
+	}
+
+	choices := parsed["choices"].([]any)
+	delta := choices[0].(map[string]any)["delta"].(map[string]any)
+
+	if delta["content"] != "Hello world" {
+		t.Errorf("expected clean delta content 'Hello world', got %q", delta["content"])
+	}
+	if delta["reasoning_content"] != "Deliberating" {
+		t.Errorf("expected delta reasoning_content 'Deliberating', got %q", delta["reasoning_content"])
+	}
+}
+
+func TestIsReasoningModel_ThinkTag(t *testing.T) {
+	data := []byte(`{
+		"choices": [{
+			"message": {
+				"content": "<think>considering options...</think>yes",
+				"reasoning_content": ""
+			}
+		}]
+	}`)
+	if !IsReasoningModel(data) {
+		t.Errorf("expected IsReasoningModel=true when content has <think>")
+	}
+}
+

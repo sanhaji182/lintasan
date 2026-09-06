@@ -4,7 +4,7 @@
     LayoutDashboard, Link2, GitBranch,
     BarChart3, Key, Users, UserCircle, Webhook,
     Database, Settings, Puzzle, MessageSquare, BookOpen,
-    Brain, Globe, Server, Activity, Sun, Moon, Upload, Plug
+    Brain, Globe, Server, Sun, Moon, Upload, Plug
   } from 'lucide-svelte';
   import { theme } from '$lib/stores/theme';
 
@@ -12,11 +12,10 @@
 
   const menuItems = [
     { label: 'Overview', path: '/dashboard', icon: LayoutDashboard },
-    { label: 'Accounts', path: '/dashboard/connections', icon: Link2 },
+    { label: 'Connections', path: '/dashboard/connections', icon: Link2 },
     { label: 'Providers', path: '/dashboard/providers', icon: Server },
     { label: 'Routing', path: '/dashboard/routing', icon: GitBranch },
     { label: 'Analytics', path: '/dashboard/analytics', icon: BarChart3 },
-    { label: 'Observability', path: '/dashboard/observability', icon: Activity },
     { label: 'Memory', path: '/dashboard/memory', icon: Brain },
   ];
 
@@ -40,6 +39,23 @@
 
   function isActive(path: string) {
     if (path === '/dashboard') return page.url.pathname === '/dashboard';
+    if (path === '/dashboard/analytics') {
+      return page.url.pathname.startsWith('/dashboard/analytics') ||
+             page.url.pathname.startsWith('/dashboard/usage') ||
+             page.url.pathname.startsWith('/dashboard/savings') ||
+             page.url.pathname.startsWith('/dashboard/logs') ||
+             page.url.pathname.startsWith('/dashboard/observability');
+    }
+    if (path === '/dashboard/connections') {
+      return page.url.pathname.startsWith('/dashboard/connections') ||
+             page.url.pathname.startsWith('/dashboard/discover') ||
+             page.url.pathname.startsWith('/dashboard/oauth-ide') ||
+             page.url.pathname.startsWith('/dashboard/experimental');
+    }
+    if (path === '/dashboard/routing') {
+      return page.url.pathname.startsWith('/dashboard/routing') ||
+             page.url.pathname.startsWith('/dashboard/fallback');
+    }
     return page.url.pathname.startsWith(path);
   }
 

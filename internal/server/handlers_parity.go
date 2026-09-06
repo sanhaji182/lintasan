@@ -641,7 +641,72 @@ func (s *Server) handleFeatures(w http.ResponseWriter,r *http.Request){ writeJSO
 func (s *Server) handleFeatureStats(w http.ResponseWriter,r *http.Request){ writeData(w,map[string]any{"enabled":7,"total":7}) }
 func (s *Server) handleAnalyticsRealtime(w http.ResponseWriter,r *http.Request){ s.handleAnalytics(w,r) }
 func (s *Server) handleAnalyticsCombos(w http.ResponseWriter,r *http.Request){ writeData(w,map[string]any{"combos":s.getJSONSetting("combos",[]any{}),"stats":[]any{}}) }
-func (s *Server) handleAnalyticsStream(w http.ResponseWriter,r *http.Request){ w.Header().Set("Content-Type","text/event-stream"); fmt.Fprintf(w,"data: {\"status\":\"connected\"}\n\n") }
+func (s *Server) handleAnalyticsStream(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	// Handshake for backward compatibility
+	fmt.Fprintf(w, "data: {\"status\":\"connected\"}\n\n")
+	flusher.Flush()
+
+	sendStats := func() error {
+		var totalRequests int
+		var avgLatency float64
+		var cachedHits int
+		if s.db != nil && s.db.Conn() != nil {
+			_ = s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs").Scan(&totalRequests)
+			_ = s.db.Conn().QueryRow("SELECT COALESCE(AVG(latency_ms),0) FROM request_logs WHERE status = 200").Scan(&avgLatency)
+			_ = s.db.Conn().QueryRow("SELECT COUNT(*) FROM request_logs WHERE cached = 1").Scan(&cachedHits)
+		}
+
+		payload, err := json.Marshal(map[string]any{
+			"type":           "analytics_update",
+			"total_requests": totalRequests,
+			"avg_latency":    avgLatency,
+			"cached_hits":    cachedHits,
+			"timestamp":      time.Now().UTC().Format(time.RFC3339),
+		})
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(w, "event: stats\ndata: %s\n\n", payload)
+		if err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	if err := sendStats(); err != nil {
+		return
+	}
+
+	if r.URL.Query().Get("once") == "true" {
+		return
+	}
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if err := sendStats(); err != nil {
+				return
+			}
+		}
+	}
+}
 func (s *Server) handleChatTest(w http.ResponseWriter,r *http.Request){ s.proxy.HandleChatCompletions(w,r) }
 func (s *Server) handlePromptRouting(w http.ResponseWriter,r *http.Request){
 	// This endpoint requires an active proxy routing engine to make a real

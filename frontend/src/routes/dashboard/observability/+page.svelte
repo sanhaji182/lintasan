@@ -1,4 +1,12 @@
 <script lang="ts">
+  import TabNav from '$lib/components/TabNav.svelte';
+  const __tabs = [
+    { label: 'Requests', path: '/dashboard/analytics' },
+    { label: 'Usage & Quota', path: '/dashboard/usage' },
+    { label: 'Savings', path: '/dashboard/savings' },
+    { label: 'Logs', path: '/dashboard/logs' },
+    { label: 'Metrics', path: '/dashboard/observability' }
+  ];
   import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -227,6 +235,8 @@
     return 'var(--color-fg-3)';
   }
 </script>
+
+<TabNav tabs={__tabs} />
 
 <div style="animation: fadeInUp 0.4s ease-out;">
   <div class="flex items-center justify-between" style="margin-bottom: 20px;">
