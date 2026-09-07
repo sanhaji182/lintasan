@@ -26,6 +26,7 @@ func (s *Server) registerParityRoutes() {
     s.mux.HandleFunc("POST /api/providers/presets/test", s.handlePresetTest)
     s.mux.HandleFunc("POST /api/providers/discover", s.handleProviderDiscover)
     s.mux.HandleFunc("POST /api/connections/test", s.handleConnectionTest)
+    s.mux.HandleFunc("POST /api/models/test", s.handleModelTest)
     s.mux.HandleFunc("GET /api/models/sync", s.handleModelsSync)
     s.mux.HandleFunc("POST /api/models/sync", s.handleModelsSync)
     s.mux.HandleFunc("POST /api/models/sync/{connection_id}", s.handleModelsSyncByID)
@@ -373,6 +374,157 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
     errfmt.Write(w, httpStatus, e, nil, map[string]any{
         "success": false, "latency_ms": latency, "hint": errfmt.HintForMessage(e.Message),
     })
+}
+
+// handleModelTest verifies a single discovered model is actually callable by
+// sending a minimal chat-completion request (max_tokens:1, "ping") with that
+// model to the upstream connection that serves it. This is distinct from
+// "is_active" (which only means the model was discovered and allowed for
+// routing) — a model can be active yet return 404/400 upstream if the id is
+// stale or the provider renamed it.
+//
+// Request: { "model_id": "anthropic/claude-opus-4.5", "connection_id": "..." (optional) }
+// Response: { success, status: ok|model_not_found|auth_error|rate_limited|upstream_error|no_route, latency_ms, http_status, message, body (truncated) }
+func (s *Server) handleModelTest(w http.ResponseWriter, r *http.Request) {
+    var in map[string]any
+    json.NewDecoder(r.Body).Decode(&in)
+    modelID, _ := in["model_id"].(string)
+    if modelID == "" {
+        modelID, _ = in["modelId"].(string)
+    }
+    modelID = strings.TrimSpace(modelID)
+    if modelID == "" {
+        writeJSON(w, map[string]any{"success": false, "status": "bad_request", "message": "model_id is required"})
+        return
+    }
+
+    // Resolve the connection that serves this model. Prefer an explicit
+    // connection_id (viewer knows it); otherwise fall back to proxy routing.
+    var conn *Connection
+    connID, _ := in["connection_id"].(string)
+    if connID == "" {
+        connID, _ = in["connectionId"].(string)
+    }
+    if connID != "" {
+        row := s.db.Conn().QueryRow(
+            "SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority, COALESCE(pool_id,'') FROM connections WHERE id=?",
+            connID)
+        c := &Connection{}
+        if err := row.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.ChatPath, &c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority, &c.PoolID); err == nil {
+            conn = c
+        }
+    }
+    if conn == nil {
+        var err error
+        conn, err = s.proxy.findConnectionForModel(modelID)
+        if err != nil {
+            writeJSON(w, map[string]any{
+                "success": false, "status": "no_route",
+                "message": "model is not routed to any active connection",
+            })
+            return
+        }
+    }
+    if conn.IsActive != 1 {
+        writeJSON(w, map[string]any{
+            "success": false, "status": "no_route",
+            "message": fmt.Sprintf("connection %q is not active", conn.Name),
+        })
+        return
+    }
+
+    // Determine auth header from the stored connection.
+    h := conn.AuthHeader
+    if h == "" { h = "Authorization" }
+    prefix := conn.AuthPrefix
+    if prefix == "" { prefix = "Bearer " }
+    key := conn.APIKey
+    oauthProv := conn.OAuthProvider
+    if oauthProv != "" {
+        tok, errTok := s.oauthMgr.GetActiveToken(oauthProv)
+        if errTok != nil {
+            writeJSON(w, map[string]any{
+                "success": false, "status": "auth_error",
+                "message": "no active OAuth session for " + oauthProv,
+            })
+            return
+        }
+        key = tok
+    }
+
+    // Build the chat URL. Some providers store chat_path already including
+    // /v1 (e.g. commandcode "/v1/chat/completions" with base https://api.commandcode.ai);
+    // others store "/chat/completions" with a base ending in /v1. JoinUpstreamPath
+    // handles both without double version segments.
+    chatPath := conn.ChatPath
+    if chatPath == "" { chatPath = "/v1/chat/completions" }
+    url := provider.JoinUpstreamPath(conn.BaseURL, chatPath)
+
+    body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}`, modelID)
+    req, err := http.NewRequest("POST", url, strings.NewReader(body))
+    if err != nil {
+        writeJSON(w, map[string]any{"success": false, "status": "upstream_error", "message": err.Error()})
+        return
+    }
+    if key != "" { req.Header.Set(h, prefix+key) }
+    req.Header.Set("Content-Type", "application/json")
+
+    start := time.Now()
+    c := &http.Client{Timeout: 25 * time.Second}
+    resp, err := c.Do(req)
+    latency := time.Since(start).Milliseconds()
+    if err != nil {
+        writeJSON(w, map[string]any{
+            "success": false, "status": "network_error",
+            "latency_ms": latency, "message": err.Error(),
+        })
+        return
+    }
+    defer resp.Body.Close()
+    b, _ := io.ReadAll(resp.Body)
+    bodyStr := truncateBody(b, 400)
+
+    status := classifyModelTestStatus(resp.StatusCode, bodyStr)
+    success := resp.StatusCode >= 200 && resp.StatusCode < 300
+    if !success {
+        // A 4xx/5xx with an actually-invalid model vs connection-level problem:
+        // pass through the raw status + short body so the UI can show why.
+        writeJSON(w, map[string]any{
+            "success": false, "status": status, "latency_ms": latency,
+            "http_status": resp.StatusCode, "message": fmt.Sprintf("upstream %s", resp.Status),
+            "body": bodyStr,
+        })
+        return
+    }
+
+    writeJSON(w, map[string]any{
+        "success": true, "status": "ok", "latency_ms": latency,
+        "http_status": resp.StatusCode, "message": "model responds",
+    })
+}
+
+// classifyModelTestStatus maps an upstream HTTP status + body onto a stable
+// machine-readable status the UI can render as a badge.
+func classifyModelTestStatus(code int, body string) string {
+    switch {
+    case code >= 200 && code < 300:
+        return "ok"
+    case code == 401 || code == 403:
+        return "auth_error"
+    case code == 404:
+        return "model_not_found"
+    case code == 429:
+        return "rate_limited"
+    case code >= 400 && code < 500:
+        // 400 with "model not found"-ish body is really a model problem
+        low := strings.ToLower(body)
+        if strings.Contains(low, "model not found") || strings.Contains(low, "does not exist") || strings.Contains(low, "not found") || strings.Contains(low, "unknown model") || strings.Contains(low, "invalid model") {
+            return "model_not_found"
+        }
+        return "bad_request"
+    default:
+        return "upstream_error"
+    }
 }
 
 func (s *Server) handleModelsSyncByID(w http.ResponseWriter, r *http.Request) {

@@ -59,6 +59,8 @@
   let modelsSearch = $state('');
   let modelSyncing = $state(false);
   let togglingModelId = $state<string | null>(null);
+  // Per-model test state: model_id -> { status: 'testing' | 'ok' | ... , latency_ms, message }
+  let modelTestState = $state<Record<string, any>>({});
 
   let oauthIdeEnabled = $state(false);
   let oauthSessions = $state<{ provider: string; status: string }[]>([]);
@@ -834,6 +836,7 @@
     viewingModelsOf = conn;
     modelsList = [];
     modelsSearch = '';
+    modelTestState = {};
     // If connection is part of a group, load models from ALL connections in the group
     const group = groupedConnections.find(g => g.connections.some(c => c.id === conn.id));
     if (group && group.connections.length > 1) {
@@ -848,6 +851,7 @@
     modelsList = [];
     modelsSearch = '';
     modelSyncing = false;
+    modelTestState = {};
   }
 
   async function loadModelsForGroup(connIds: string[]) {
@@ -982,6 +986,36 @@
       showToast(`Copied: ${modelId}`, 'success', 2000);
     } catch {
       showToast('Copy failed (browser blocked clipboard)', 'error');
+    }
+  }
+
+  // testModel sends a minimal chat-completion with this model to its upstream
+  // connection to verify the model is actually callable (not just "active").
+  async function testModel(connId: string, model: any) {
+    const mid = model.model_id;
+    modelTestState = { ...modelTestState, [mid]: { status: 'testing' } };
+    try {
+      const res = await api.post<any>('/api/models/test', {
+        model_id: mid,
+        connection_id: connId
+      });
+      const st = res.status || (res.success ? 'ok' : 'error');
+      const msg = res.message || '';
+      modelTestState = {
+        ...modelTestState,
+        [mid]: {
+          status: st,
+          latency_ms: res.latency_ms ?? null,
+          http_status: res.http_status ?? null,
+          message: msg,
+          body: res.body ?? ''
+        }
+      };
+    } catch (e: any) {
+      modelTestState = {
+        ...modelTestState,
+        [mid]: { status: 'error', message: e.message || 'request failed' }
+      };
     }
   }
 
@@ -2265,8 +2299,35 @@
                     {/if}
                   </div>
 
-                  <!-- Actions: toggle + copy -->
+                  <!-- Actions: test + toggle + copy -->
                   <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                    <!-- Per-model test button + status badge -->
+                    {#if modelTestState[model.model_id]?.status === 'testing'}
+                      <button disabled style="all: unset; display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 6px; font-size: 11px; color: var(--color-fg-2); background: var(--color-bg-3); cursor: default;">
+                        <RefreshCw size={12} class="animate-spin" /> Testing…
+                      </button>
+                    {:else if modelTestState[model.model_id]}
+                      <span
+                        style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 10px;
+                          {modelTestState[model.model_id].status === 'ok' ? 'color: var(--color-success); background: rgba(16,185,129,0.1);' : ''}
+                          {modelTestState[model.model_id].status === 'model_not_found' ? 'color: var(--color-error); background: rgba(239,68,68,0.1);' : ''}
+                          {modelTestState[model.model_id].status === 'auth_error' ? 'color: var(--color-warning); background: rgba(245,158,11,0.1);' : ''}
+                          {modelTestState[model.model_id].status === 'rate_limited' ? 'color: var(--color-warning); background: rgba(245,158,11,0.1);' : ''}
+                          {['ok','model_not_found','auth_error','rate_limited'].includes(modelTestState[model.model_id].status) ? '' : 'color: var(--color-fg-3); background: var(--color-bg-3);'}"
+                        title={modelTestState[model.model_id].message || modelTestState[model.model_id].status}
+                      >
+                        {modelTestState[model.model_id].status === 'ok' ? `✓ ${modelTestState[model.model_id].latency_ms ?? ''}ms` : (modelTestState[model.model_id].status === 'model_not_found' ? '✗ 404' : modelTestState[model.model_id].status === 'auth_error' ? '✗ auth' : modelTestState[model.model_id].status === 'rate_limited' ? '⏱ 429' : '✗')}
+                      </span>
+                    {/if}
+                    <button
+                      onclick={() => testModel(viewingModelsOf.id, model)}
+                      style="all: unset; display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 6px; cursor: pointer; font-size: 11px; color: var(--color-fg-2); background: var(--color-bg-3); transition: background 0.15s;"
+                      onmouseenter={(e) => { e.currentTarget.style.background = 'var(--color-bg-2)'; }}
+                      onmouseleave={(e) => { e.currentTarget.style.background = 'var(--color-bg-3)'; }}
+                      title="Send a minimal chat request to verify this model is actually callable"
+                    >
+                      <Zap size={12} /> Test
+                    </button>
                     {#if model.is_active === 1}
                       <span
                         style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; color: var(--color-success); background: rgba(16,185,129,0.1); padding: 2px 8px; border-radius: 10px;"
