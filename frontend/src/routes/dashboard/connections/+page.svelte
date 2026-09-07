@@ -61,6 +61,9 @@
   let togglingModelId = $state<string | null>(null);
   // Per-model test state: model_id -> { status: 'testing' | 'ok' | ... , latency_ms, message }
   let modelTestState = $state<Record<string, any>>({});
+  // Bulk test-all state
+  let bulkModelTesting = $state(false);
+  let bulkModelTestSummary = $state<string | null>(null);
 
   let oauthIdeEnabled = $state(false);
   let oauthSessions = $state<{ provider: string; status: string }[]>([]);
@@ -837,6 +840,8 @@
     modelsList = [];
     modelsSearch = '';
     modelTestState = {};
+    bulkModelTesting = false;
+    bulkModelTestSummary = null;
     // If connection is part of a group, load models from ALL connections in the group
     const group = groupedConnections.find(g => g.connections.some(c => c.id === conn.id));
     if (group && group.connections.length > 1) {
@@ -852,6 +857,8 @@
     modelsSearch = '';
     modelSyncing = false;
     modelTestState = {};
+    bulkModelTesting = false;
+    bulkModelTestSummary = null;
   }
 
   async function loadModelsForGroup(connIds: string[]) {
@@ -1016,6 +1023,42 @@
         ...modelTestState,
         [mid]: { status: 'error', message: e.message || 'request failed' }
       };
+    }
+  }
+
+  // testAllModels fires a bulk probe against every active discovered model of
+  // the currently-viewed connection, then fills each row's badge from results.
+  async function testAllModels(connId: string) {
+    if (bulkModelTesting) return;
+    bulkModelTesting = true;
+    bulkModelTestSummary = null;
+    // Mark every currently-visible model as testing so rows give feedback.
+    const pending: Record<string, any> = {};
+    for (const m of modelsList) pending[m.model_id] = { status: 'testing' };
+    modelTestState = { ...modelTestState, ...pending };
+    try {
+      const res = await api.post<any>('/api/models/test-bulk', { connection_id: connId });
+      const results: any[] = res.results || [];
+      const merged: Record<string, any> = {};
+      for (const r of results) {
+        merged[r.model_id] = {
+          status: r.status,
+          latency_ms: r.latency_ms ?? null,
+          http_status: r.http_status ?? null,
+          message: r.message || '',
+          body: r.body ?? ''
+        };
+      }
+      modelTestState = { ...modelTestState, ...merged };
+      const okCount = results.filter(r => r.status === 'ok').length;
+      const failed = results.length - okCount;
+      bulkModelTestSummary = `${results.length} tested · ${okCount} OK · ${failed} failed`;
+      showToast(bulkModelTestSummary, failed > 0 ? (okCount > 0 ? 'warning' : 'error') : 'success', 4000);
+    } catch (e: any) {
+      bulkModelTestSummary = 'Bulk test failed: ' + (e.message || 'unknown');
+      showToast(bulkModelTestSummary, 'error', 5000);
+    } finally {
+      bulkModelTesting = false;
     }
   }
 
@@ -2183,6 +2226,26 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
+            {#if bulkModelTestSummary}
+              <span style="font-size: 11px; color: var(--color-fg-2); background: var(--color-bg-3); padding: 3px 10px; border-radius: 10px;" title="Bulk test result">
+                {bulkModelTestSummary}
+              </span>
+            {/if}
+            <button
+              class="btn-secondary flex items-center gap-1"
+              style="padding: 6px 12px; font-size: 12px;"
+              onclick={() => testAllModels(viewingModelsOf.id)}
+              disabled={bulkModelTesting || modelsLoading || !viewingModelsOf.is_active || modelsList.length === 0}
+              title={modelsList.length === 0 ? 'No models to test' : 'Probe every model with a minimal chat request to find which actually respond'}
+            >
+              {#if bulkModelTesting}
+                <RefreshCw size={14} class="animate-spin" />
+                Testing {modelsList.length}…
+              {:else}
+                <Zap size={14} />
+                Test All
+              {/if}
+            </button>
             <button
               class="btn-secondary flex items-center gap-1"
               style="padding: 6px 12px; font-size: 12px;"

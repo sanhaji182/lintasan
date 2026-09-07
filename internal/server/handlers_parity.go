@@ -9,6 +9,7 @@ import (
     "net/http"
     "sort"
     "strings"
+    "sync"
     "time"
 
     "github.com/google/uuid"
@@ -27,6 +28,7 @@ func (s *Server) registerParityRoutes() {
     s.mux.HandleFunc("POST /api/providers/discover", s.handleProviderDiscover)
     s.mux.HandleFunc("POST /api/connections/test", s.handleConnectionTest)
     s.mux.HandleFunc("POST /api/models/test", s.handleModelTest)
+    s.mux.HandleFunc("POST /api/models/test-bulk", s.handleBulkModelTest)
     s.mux.HandleFunc("GET /api/models/sync", s.handleModelsSync)
     s.mux.HandleFunc("POST /api/models/sync", s.handleModelsSync)
     s.mux.HandleFunc("POST /api/models/sync/{connection_id}", s.handleModelsSyncByID)
@@ -502,6 +504,150 @@ func (s *Server) handleModelTest(w http.ResponseWriter, r *http.Request) {
         "http_status": resp.StatusCode, "message": "model responds",
     })
 }
+
+// testModelOnce performs the actual single-model chat probe against a resolved
+// connection and returns a stable result map. Shared by handleModelTest (single)
+// and handleBulkModelTest (worker pool).
+func (s *Server) testModelOnce(conn *Connection, modelID string) map[string]any {
+    // Determine auth header from the stored connection.
+    h := conn.AuthHeader
+    if h == "" { h = "Authorization" }
+    prefix := conn.AuthPrefix
+    if prefix == "" { prefix = "Bearer " }
+    key := conn.APIKey
+    oauthProv := conn.OAuthProvider
+    if oauthProv != "" {
+        tok, errTok := s.oauthMgr.GetActiveToken(oauthProv)
+        if errTok != nil {
+            return map[string]any{"success": false, "status": "auth_error", "message": "no active OAuth session for " + oauthProv}
+        }
+        key = tok
+    }
+
+    chatPath := conn.ChatPath
+    if chatPath == "" { chatPath = "/v1/chat/completions" }
+    url := provider.JoinUpstreamPath(conn.BaseURL, chatPath)
+
+    body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}`, modelID)
+    req, err := http.NewRequest("POST", url, strings.NewReader(body))
+    if err != nil {
+        return map[string]any{"success": false, "status": "upstream_error", "message": err.Error()}
+    }
+    if key != "" { req.Header.Set(h, prefix+key) }
+    req.Header.Set("Content-Type", "application/json")
+
+    start := time.Now()
+    c := &http.Client{Timeout: 25 * time.Second}
+    resp, err := c.Do(req)
+    latency := time.Since(start).Milliseconds()
+    if err != nil {
+        return map[string]any{"success": false, "status": "network_error", "latency_ms": latency, "message": err.Error()}
+    }
+    defer resp.Body.Close()
+    b, _ := io.ReadAll(resp.Body)
+    bodyStr := truncateBody(b, 400)
+
+    status := classifyModelTestStatus(resp.StatusCode, bodyStr)
+    success := resp.StatusCode >= 200 && resp.StatusCode < 300
+    if !success {
+        return map[string]any{
+            "success": false, "status": status, "latency_ms": latency,
+            "http_status": resp.StatusCode, "message": fmt.Sprintf("upstream %s", resp.Status),
+            "body": bodyStr,
+        }
+    }
+    return map[string]any{
+        "success": true, "status": "ok", "latency_ms": latency,
+        "http_status": resp.StatusCode, "message": "model responds",
+    }
+}
+
+// handleBulkModelTest tests every discovered model of one connection (or a
+// filtered subset) in parallel via a small worker pool. Request:
+// { "connection_id": "...", "models": ["a","b"] } — models optional; when
+// omitted, all active discovered models of the connection are tested.
+// Response mirrors the single-test shape per model under "results", plus
+// rollups (total / ok / failed / by_status).
+func (s *Server) handleBulkModelTest(w http.ResponseWriter, r *http.Request) {
+    var in map[string]any
+    json.NewDecoder(r.Body).Decode(&in)
+    connID, _ := in["connection_id"].(string)
+    if connID == "" { connID, _ = in["connectionId"].(string) }
+    if connID == "" {
+        writeJSON(w, map[string]any{"success": false, "message": "connection_id is required"})
+        return
+    }
+
+    // Resolve connection
+    row := s.db.Conn().QueryRow(
+        "SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority, COALESCE(pool_id,'') FROM connections WHERE id=?",
+        connID)
+    conn := &Connection{}
+    if err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID); err != nil {
+        writeJSON(w, map[string]any{"success": false, "message": "connection not found"})
+        return
+    }
+
+    // Gather model ids
+    var modelIDs []string
+    if ms, ok := in["models"].([]any); ok && len(ms) > 0 {
+        for _, m := range ms {
+            if s, ok := m.(string); ok && s != "" { modelIDs = append(modelIDs, s) }
+        }
+    }
+    if len(modelIDs) == 0 {
+        rows, err := s.db.Conn().Query("SELECT model_id FROM discovered_models WHERE connection_id=? AND is_active=1 ORDER BY model_id", connID)
+        if err != nil {
+            writeJSON(w, map[string]any{"success": false, "message": err.Error()})
+            return
+        }
+        defer rows.Close()
+        for rows.Next() {
+            var mid string
+            if rows.Scan(&mid) == nil { modelIDs = append(modelIDs, mid) }
+        }
+    }
+    if len(modelIDs) == 0 {
+        writeJSON(w, map[string]any{"success": true, "total": 0, "ok": 0, "failed": 0, "by_status": map[string]int{}, "results": []any{}})
+        return
+    }
+
+    // Worker pool
+    const workers = 8
+    var (
+        mu      sync.Mutex
+        results = make([]map[string]any, len(modelIDs))
+        wg      sync.WaitGroup
+    )
+    sem := make(chan struct{}, workers)
+    for i, mid := range modelIDs {
+        wg.Add(1)
+        go func(i int, mid string) {
+            defer wg.Done()
+            sem <- struct{}{}
+            defer func() { <-sem }()
+            res := s.testModelOnce(conn, mid)
+            res["model_id"] = mid
+            mu.Lock()
+            results[i] = res
+            mu.Unlock()
+        }(i, mid)
+    }
+    wg.Wait()
+
+    total, okCount, failed := len(results), 0, 0
+    byStatus := map[string]int{}
+    for _, res := range results {
+        st, _ := res["status"].(string)
+        byStatus[st]++
+        if st == "ok" { okCount++ } else { failed++ }
+    }
+    writeJSON(w, map[string]any{
+        "success": true, "total": total, "ok": okCount, "failed": failed,
+        "by_status": byStatus, "results": results,
+    })
+}
+
 
 // classifyModelTestStatus maps an upstream HTTP status + body onto a stable
 // machine-readable status the UI can render as a badge.
