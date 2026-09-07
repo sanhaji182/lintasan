@@ -1742,7 +1742,7 @@
     </div>
   {/if}
 
-  <!-- Pool Health Section -->
+  <!-- Pool Health Section (only when pools exist) -->
   {#if pools.length > 0}
     <div style="margin-bottom: 16px;">
       <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 10px; display: flex; align-items: center; gap: 6px;">
@@ -1785,21 +1785,6 @@
             </div>
           </button>
         {/each}
-      </div>
-    </div>
-  {:else if connections.length > 1}
-    <!-- No pools yet — show hint -->
-    <div style="margin-bottom: 16px; padding: 16px; border: 1px dashed var(--color-border); border-radius: 12px; background: var(--color-bg-body);">
-      <div style="display: flex; align-items: center; gap: 10px;">
-        <div style="width: 32px; height: 32px; border-radius: 8px; background: var(--color-primary-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-          <Layers size={16} style="color: var(--color-primary);" />
-        </div>
-        <div style="flex: 1;">
-          <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-0);">Create a pool to load balance</div>
-          <div style="font-size: 11px; color: var(--color-fg-3); margin-top: 2px;">
-            Click <code style="background: var(--color-border-light); padding: 1px 4px; border-radius: 3px;">+ pool</code> on any connection card below to group API keys for automatic round-robin and failover.
-          </div>
-        </div>
       </div>
     </div>
   {/if}
