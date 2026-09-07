@@ -121,20 +121,70 @@
     } catch { return url; }
   }
 
+  const KNOWN_PROVIDER_LABELS: Record<string, string> = {
+    'xiaomimimo': 'Xiaomi MiMo',
+    'mimo': 'Xiaomi MiMo',
+    'x': 'xAI',
+    'xai': 'xAI',
+    'openai': 'OpenAI',
+    'deepseek': 'DeepSeek',
+    'openrouter': 'OpenRouter',
+    'anthropic': 'Anthropic',
+    'gemini': 'Google Gemini',
+    'groq': 'Groq',
+    'cerebras': 'Cerebras',
+    'commandcode': 'CommandCode',
+    'sumopod': 'SumoPod',
+    'genfity': 'Genfity',
+    'nousresearch': 'Nous Research',
+    'poolside': 'Poolside',
+    'kilo': 'Kilo Gateway',
+    'tokenrouter': 'TokenRouter',
+    'srbyte': 'SRByte',
+    'octalabs': 'OctaLabs',
+    'yogathedev': 'YogaTheDev'
+  };
+
+  const GENERIC_PREFIXES = new Set(['key', 'account', 'token', 'secret', 'sk', 'default', 'api', 'custom', 'imported']);
+
   function providerDisplayName(key: string, conns: any[]): string {
-    // Try to get a clean name: if all names share a prefix, use that
+    const k = (key || '').toLowerCase();
+    if (KNOWN_PROVIDER_LABELS[k]) {
+      return KNOWN_PROVIDER_LABELS[k];
+    }
+
+    // Try to get a clean name: if all names share a non-generic prefix, use that
     const names = conns.map(c => c.name || '');
-    if (names.length === 1) return names[0];
-    // Find common prefix (e.g., "CommandCode" from "CommandCode (sanhaji)", "CommandCode (alex)")
-    const first = names[0];
-    let prefix = first;
-    for (const n of names) {
-      while (!n.startsWith(prefix) && prefix.length > 0) {
-        prefix = prefix.slice(0, -1);
+    if (names.length === 1 && names[0]) {
+      return names[0];
+    }
+
+    // Find common prefix
+    if (names.length > 0 && names[0]) {
+      const first = names[0];
+      let prefix = first;
+      for (const n of names) {
+        while (!n.startsWith(prefix) && prefix.length > 0) {
+          prefix = prefix.slice(0, -1);
+        }
+      }
+      prefix = prefix.replace(/[\s(-_—:]+$/, '').trim();
+      if (prefix && !GENERIC_PREFIXES.has(prefix.toLowerCase()) && prefix.length >= 3) {
+        return prefix;
       }
     }
-    prefix = prefix.replace(/[\s(-_]+$/, '').trim();
-    return prefix || key.charAt(0).toUpperCase() + key.slice(1);
+
+    // Check base_url domain if key is still unknown
+    if (conns.length > 0 && conns[0].base_url) {
+      try {
+        const host = new URL(conns[0].base_url).hostname.toLowerCase();
+        for (const [sub, label] of Object.entries(KNOWN_PROVIDER_LABELS)) {
+          if (host.includes(sub)) return label;
+        }
+      } catch {}
+    }
+
+    return key ? key.charAt(0).toUpperCase() + key.slice(1) : 'Custom Provider';
   }
 
   const groupedConnections = $derived.by(() => {
