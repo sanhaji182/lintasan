@@ -296,12 +296,15 @@
   }
 
   // Close dropdown menu on outside click
+  let openGroupMenuKey = $state<string | null>(null);
+
   $effect(() => {
-    if (!openMenuConnId) return;
+    if (!openMenuConnId && !openGroupMenuKey) return;
     function handleClick(e: MouseEvent) {
       const target = e.target as HTMLElement;
-      if (!target.closest('.kebab-menu-container')) {
+      if (!target.closest('.kebab-menu-container') && !target.closest('.group-actions-menu-container')) {
         openMenuConnId = null;
+        openGroupMenuKey = null;
       }
     }
     document.addEventListener('click', handleClick, true);
@@ -1120,21 +1123,30 @@
 
 <div style="animation: fadeInUp 0.4s ease-out;">
   <!-- Summary strip -->
-  <div class="card mb-5" style="padding: 0; overflow: hidden;">
-    <div class="grid grid-cols-4" style="gap: 1px; background: var(--color-border);">
-      {#each [
-        { label: 'TOTAL', value: summary.total },
-        { label: 'ACTIVE', value: summary.active },
-        { label: 'FORMATS', value: summary.formats },
-        { label: 'POOLS', value: summary.pools }
-      ] as stat}
-        <div class="text-center" style="padding: 16px 20px; background: var(--color-bg-card);">
-          <div style="font-size: 11px; font-weight: 500; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;">{stat.label}</div>
-          <div style="font-size: 20px; font-weight: 700; color: var(--color-fg-0); font-family: var(--font-mono);">{stat.value}</div>
-        </div>
-      {/each}
+  <div class="conn-stats-bar">
+    <div class="stat-pill">
+      <span class="stat-pill-label">Total</span>
+      <span class="stat-pill-val">{summary.total}</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-pill-label">Active</span>
+      <span class="stat-pill-val active">{summary.active}</span>
+    </div>
+    {#if summary.inactive > 0}
+      <div class="stat-pill">
+        <span class="stat-pill-label">Inactive</span>
+        <span class="stat-pill-val inactive">{summary.inactive}</span>
       </div>
-      </div>
+    {/if}
+    <div class="stat-pill">
+      <span class="stat-pill-label">Formats</span>
+      <span class="stat-pill-val">{summary.formats}</span>
+    </div>
+    <div class="stat-pill">
+      <span class="stat-pill-label">Pools</span>
+      <span class="stat-pill-val">{summary.pools}</span>
+    </div>
+  </div>
 
   <!-- Toolbar: Title + Search + Actions -->
   <div class="conn-toolbar">
@@ -1203,11 +1215,26 @@
         <Zap size={14} style="color: var(--color-primary);" />
         <span class="conn-toolbar-btn-label">Test All</span>
       </button>
+      <button 
+        class="btn-secondary conn-toolbar-btn flex items-center gap-1.5" 
+        class:active={presetsExpanded}
+        onclick={() => presetsExpanded = !presetsExpanded}
+        title="Toggle preset provider catalogue"
+      >
+        <Sparkles size={14} style="color: var(--color-primary);" />
+        <span class="conn-toolbar-btn-label">Presets</span>
+      </button>
+      <button 
+        class="btn-secondary conn-toolbar-btn flex items-center gap-1.5" 
+        class:active={showCurlImport}
+        onclick={() => { showCurlImport = !showCurlImport; curlResult = null; }} 
+        title="Import from curl"
+      >
+        <Copy size={14} />
+        <span class="conn-toolbar-btn-label">Curl</span>
+      </button>
       <button class="btn-secondary conn-toolbar-btn" onclick={() => { loading = true; fetchConnections(); fetchPools(); }} title="Refresh connections" aria-label="Refresh">
         <RefreshCw size={15} />
-      </button>
-      <button class="btn-secondary conn-toolbar-btn" onclick={() => { showCurlImport = !showCurlImport; curlResult = null; }} title="Import from curl">
-        <Copy size={15} />
       </button>
       <button class="btn-primary conn-toolbar-btn" onclick={() => showForm = !showForm}>
         {#if showForm}<X size={15} />{:else}<Plus size={15} />{/if}
@@ -1918,54 +1945,60 @@
           {@const isCollapsed = collapsedGroups.has(group.key)}
 
           {#if isSingle}
-            <!-- Single connection: render card directly without group wrapper -->
+            <!-- Single connection: clean standalone row card -->
             {@const conn = group.connections[0]}
             {@const dom = getProviderDomain(conn.name, conn.base_url)}
-            <div class="card conn-card" class:conn-inactive={!conn.is_active}>
-              <div class="conn-card-header">
-                <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
-                {#if dom}
-                  <img 
-                    src={faviconUrl(dom, 32)} 
-                    alt="" 
-                    class="conn-card-favicon" 
-                    onerror={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }}
-                  />
-                {/if}
-                <span class="conn-card-name" title={conn.name}>{conn.name}</span>
-                <span class="badge conn-format-badge">{conn.format}</span>
-                <span class="conn-card-priority" title="Priority">P{conn.priority}</span>
-              </div>
-              <div class="conn-card-meta">
-                {#if conn.api_key}
-                  <div class="conn-key-pill" title={conn.api_key}>
-                    <span class="conn-key-text">{maskKey(conn.api_key)}</span>
-                    <button 
-                      class="conn-key-copy-btn" 
-                      onclick={async (e) => { 
-                        e.stopPropagation(); 
-                        try { 
-                          await navigator.clipboard.writeText(conn.api_key || ''); 
-                          showToast('API key copied', 'success', 2000); 
-                        } catch { 
-                          showToast('Copy failed', 'error'); 
-                        } 
-                      }} 
-                      title="Copy API key"
-                    >
-                      <Copy size={11} />
-                    </button>
-                  </div>
-                {:else if conn.oauth_provider}
-                  <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
-                {/if}
-                <div class="conn-card-meta-row">
-                  <span class="conn-card-url" title={conn.base_url}>{conn.base_url}</span>
-                  {#if conn.pool_id}
-                    <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
+            <div class="conn-group conn-group-single">
+              <div class="conn-row" class:conn-inactive={!conn.is_active}>
+                <div class="conn-row-main">
+                  <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
+                  {#if dom}
+                    <img 
+                      src={faviconUrl(dom, 32)} 
+                      alt="" 
+                      class="provider-header-favicon" 
+                      onerror={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }}
+                    />
                   {/if}
+                  <div class="group-title-col">
+                    <div class="group-title-row">
+                      <span class="conn-row-name" title={conn.name}>{conn.name}</span>
+                      <span class="badge conn-format-badge">{conn.format}</span>
+                      <span class="badge conn-priority-badge" title="Priority">P{conn.priority}</span>
+                      {#if conn.pool_id}
+                        <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
+                      {/if}
+                    </div>
+                    <span class="conn-group-suburl" title={conn.base_url}>{conn.base_url}</span>
+                  </div>
+                </div>
+
+                <div class="conn-row-meta">
+                  {#if conn.api_key}
+                    <div class="conn-key-pill" title={conn.api_key}>
+                      <span class="conn-key-text">{maskKey(conn.api_key)}</span>
+                      <button 
+                        class="conn-key-copy-btn" 
+                        onclick={async (e) => { 
+                          e.stopPropagation(); 
+                          try { 
+                            await navigator.clipboard.writeText(conn.api_key || ''); 
+                            showToast('API key copied', 'success', 2000); 
+                          } catch { 
+                            showToast('Copy failed', 'error'); 
+                          } 
+                        }} 
+                        title="Copy API key"
+                      >
+                        <Copy size={11} />
+                      </button>
+                    </div>
+                  {:else if conn.oauth_provider}
+                    <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
+                  {/if}
+
                   {#if balances[conn.id]?.balance && !balances[conn.id]?.rate_windows?.length}
-                    <span class="badge conn-balance-badge" title="Credit: {balances[conn.id].balance}{balances[conn.id].rate_info ? ' · ' + balances[conn.id].rate_info : ''}">
+                    <span class="badge conn-balance-badge" title="Credit: {balances[conn.id].balance}">
                       💰 {balances[conn.id].balance}
                     </span>
                   {:else if balances[conn.id]?.rate_info && !balances[conn.id]?.rate_windows?.length}
@@ -1973,6 +2006,7 @@
                       ⚡ {balances[conn.id].rate_info}
                     </span>
                   {/if}
+
                   <button 
                     class="badge conn-card-models-btn" 
                     onclick={() => openModelsViewer(conn)}
@@ -1982,62 +2016,29 @@
                     <span>{conn.models_count || 0} models</span>
                   </button>
                 </div>
-                {#if balances[conn.id]?.rate_windows?.length}
-                  <div class="conn-balance-detail">
-                    <div class="conn-balance-detail-header">
-                      <span class="conn-balance-credit">💰 {balances[conn.id].balance}</span>
-                      <span class="conn-balance-plan">{balances[conn.id].plan_type}</span>
-                      {#if balances[conn.id].billing_reset}
-                        <span class="conn-balance-reset">📅 Resets {balances[conn.id].billing_reset}</span>
-                      {/if}
-                    </div>
-                    <div class="conn-balance-windows">
-                      {#each balances[conn.id].rate_windows as win}
-                        <div class="conn-balance-window" class:exceeded={win.exceeded}>
-                          <span class="conn-balance-window-label">{win.name === '5-hour' ? '🕐 5h' : '📅 Week'}</span>
-                          <div class="conn-balance-window-bar">
-                            <div class="conn-balance-window-fill" style="width: {win.cap > 0 ? Math.min(100, (win.used / win.cap) * 100) : 0}%"></div>
-                          </div>
-                          <span class="conn-balance-window-text">{Math.round(win.used)}/{Math.round(win.cap)}</span>
-                        </div>
-                      {/each}
-                    </div>
-                    {#if balances[conn.id].usage}
-                      <div class="conn-balance-usage">
-                        {balances[conn.id].usage.total_requests} req · {balances[conn.id].usage.total_tokens > 1000000 ? (balances[conn.id].usage.total_tokens / 1000000).toFixed(1) + 'M' : balances[conn.id].usage.total_tokens} tok · {balances[conn.id].usage.success_rate.toFixed(0)}% ok
+
+                <div class="conn-row-actions">
+                  <button class="btn-icon" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
+                    {#if testing === conn.id}<span class="conn-spinner"></span>{:else}<TestTube2 size={13} />{/if}
+                  </button>
+                  <button class="btn-icon" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
+                    {#if conn.is_active}<ToggleRight size={17} style="color: var(--color-success);" />{:else}<ToggleLeft size={17} style="color: var(--color-fg-3);" />{/if}
+                  </button>
+                  <div class="kebab-menu-container" style="position: relative;">
+                    <button class="btn-icon" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More actions">⋯</button>
+                    {#if openMenuConnId === conn.id}
+                      <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
+                        <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; syncModels(conn.id); }}><RefreshCw size={13} /> Sync Models</button>
+                        <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}><Cpu size={13} /> View Models</button>
+                        {#if !conn.pool_id}
+                          <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={13} /> Edit Pool</button>
+                        {/if}
+                        <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={13} /> Copy API Key</button>
+                        <div class="conn-dropdown-divider"></div>
+                        <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}><Trash2 size={13} /> Delete</button>
                       </div>
                     {/if}
                   </div>
-                {/if}
-              </div>
-              <div class="conn-card-actions">
-                <button class="btn-secondary conn-action-btn" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
-                  {#if testing === conn.id}<span class="conn-spinner"></span>{:else}<TestTube2 size={13} />{/if}
-                  <span>Test</span>
-                </button>
-                <button class="btn-secondary conn-action-btn" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
-                  {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
-                  <span>{conn.is_active ? 'On' : 'Off'}</span>
-                </button>
-                <button class="btn-secondary conn-action-btn" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync models">
-                  <RefreshCw size={13} class={syncing === conn.id ? 'animate-spin' : ''} />
-                  <span>Sync</span>
-                </button>
-                <button class="btn-secondary conn-action-btn" onclick={() => openModelsViewer(conn)} title="View models">
-                  <Cpu size={13} /><span>Models</span>
-                </button>
-                <div class="kebab-menu-container" style="position: relative;">
-                  <button class="btn-secondary conn-action-btn conn-kebab-btn" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More actions">⋯</button>
-                  {#if openMenuConnId === conn.id}
-                    <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
-                      {#if !conn.pool_id}
-                        <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={14} /> Edit Pool</button>
-                      {/if}
-                      <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={14} /> Copy API Key</button>
-                      <div class="conn-dropdown-divider"></div>
-                      <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}><Trash2 size={14} /> Delete</button>
-                    </div>
-                  {/if}
                 </div>
               </div>
             </div>
@@ -2064,15 +2065,18 @@
                       onerror={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }}
                     />
                   {/if}
-                  <span class="conn-group-label">{group.label}</span>
-                  {#each [...group.formats] as fmt}
-                    <span class="badge conn-format-badge">{fmt}</span>
-                  {/each}
-                  <span class="conn-group-count">{group.connections.length} accounts</span>
+                  <div class="group-title-col">
+                    <div class="group-title-row">
+                      <span class="conn-group-label">{group.label}</span>
+                      {#each [...group.formats] as fmt}
+                        <span class="badge conn-format-badge">{fmt}</span>
+                      {/each}
+                      <span class="conn-group-count">{group.connections.length} accounts</span>
+                    </div>
+                    <span class="conn-group-suburl" title={group.baseURL}>{group.baseURL}</span>
+                  </div>
                 </div>
                 <div class="conn-group-header-right">
-                  <span class="conn-group-url" title={group.baseURL}>{group.baseURL}</span>
-                  
                   <!-- Health Mini-Bar -->
                   <div class="conn-group-health-wrap" title="{group.active} active out of {group.connections.length} ({pctActive}%)">
                     <div class="conn-group-health-bar">
@@ -2094,7 +2098,7 @@
                   <div class="conn-group-header-actions" onclick={(e) => e.stopPropagation()}>
                     <button
                       class="btn-secondary conn-action-btn flex items-center gap-1"
-                      style="padding: 3px 8px; font-size: 11px;"
+                      style="padding: 4px 10px; font-size: 11px;"
                       onclick={() => startBulkTest(group.label, group.connections.map(c => c.id))}
                       disabled={bulkTesting}
                       title="Test all {group.connections.length} keys in {group.label}"
@@ -2102,26 +2106,38 @@
                       <Zap size={12} style="color: var(--color-primary);" />
                       <span>Test All</span>
                     </button>
-                    {#if group.active < group.connections.length}
+                    
+                    <div class="group-actions-menu-container" style="position: relative;">
                       <button
-                        class="btn-secondary conn-action-btn"
-                        style="padding: 3px 8px; font-size: 11px;"
-                        onclick={() => bulkEnableGroup(group.label, group.connections.filter(c => !c.is_active).map(c => c.id))}
-                        title="Enable all inactive accounts in {group.label}"
+                        class="btn-secondary conn-action-btn flex items-center gap-1"
+                        style="padding: 4px 8px; font-size: 11px;"
+                        onclick={(e) => { e.stopPropagation(); openGroupMenuKey = openGroupMenuKey === group.key ? null : group.key; }}
+                        aria-label="Group actions"
                       >
-                        <span>Enable All</span>
+                        <span>Actions</span>
+                        <ChevronRight size={11} style="transform: rotate(90deg);" />
                       </button>
-                    {/if}
-                    {#if group.active > 0}
-                      <button
-                        class="btn-secondary conn-action-btn"
-                        style="padding: 3px 8px; font-size: 11px;"
-                        onclick={() => bulkDisableGroup(group.label, group.connections.filter(c => c.is_active).map(c => c.id))}
-                        title="Disable all active accounts in {group.label}"
-                      >
-                        <span>Disable All</span>
-                      </button>
-                    {/if}
+                      {#if openGroupMenuKey === group.key}
+                        <div class="conn-dropdown" onclick={(e) => e.stopPropagation()} style="right: 0; min-width: 140px;">
+                          {#if group.active < group.connections.length}
+                            <button
+                              class="conn-dropdown-item"
+                              onclick={() => { openGroupMenuKey = null; bulkEnableGroup(group.label, group.connections.filter(c => !c.is_active).map(c => c.id)); }}
+                            >
+                              <CheckCircle2 size={13} style="color: var(--color-success);" /> Enable All ({group.connections.length - group.active})
+                            </button>
+                          {/if}
+                          {#if group.active > 0}
+                            <button
+                              class="conn-dropdown-item"
+                              onclick={() => { openGroupMenuKey = null; bulkDisableGroup(group.label, group.connections.filter(c => c.is_active).map(c => c.id)); }}
+                            >
+                              <ToggleLeft size={13} style="color: var(--color-fg-3);" /> Disable All ({group.active})
+                            </button>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2134,7 +2150,6 @@
                 {@const limit = getGroupLimit(group.key)}
                 {@const visibleConns = matchedConns.slice(0, limit)}
                 <div class="conn-group-body">
-
                   {#if group.connections.length > 15}
                     <div class="group-subtoolbar">
                       <div class="group-subsearch-wrap">
@@ -2157,14 +2172,17 @@
                   {/if}
 
                   {#each visibleConns as conn (conn.id)}
-                    <div class="card conn-card conn-card-nested" class:conn-inactive={!conn.is_active}>
-                      <div class="conn-card-header">
+                    <div class="conn-row" class:conn-inactive={!conn.is_active}>
+                      <div class="conn-row-main">
                         <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
-                        <span class="conn-card-name" title={conn.name}>{conn.name}</span>
-                        <span class="badge conn-format-badge">{conn.format}</span>
-                        <span class="conn-card-priority" title="Priority">P{conn.priority}</span>
+                        <span class="conn-row-name" title={conn.name}>{conn.name}</span>
+                        <span class="badge conn-priority-badge" title="Priority">P{conn.priority}</span>
+                        {#if conn.pool_id}
+                          <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
+                        {/if}
                       </div>
-                      <div class="conn-card-meta">
+
+                      <div class="conn-row-meta">
                         {#if conn.api_key}
                           <div class="conn-key-pill" title={conn.api_key}>
                             <span class="conn-key-text">{maskKey(conn.api_key)}</span>
@@ -2187,82 +2205,46 @@
                         {:else if conn.oauth_provider}
                           <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
                         {/if}
-                        <div class="conn-card-meta-row">
-                          {#if conn.pool_id}
-                            <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
-                          {/if}
-                          {#if balances[conn.id]?.balance && !balances[conn.id]?.rate_windows?.length}
-                            <span class="badge conn-balance-badge" title="Credit: {balances[conn.id].balance}">
-                              💰 {balances[conn.id].balance}
-                            </span>
-                          {:else if balances[conn.id]?.rate_info && !balances[conn.id]?.rate_windows?.length}
-                            <span class="badge conn-rate-badge" title={balances[conn.id].rate_info}>
-                              ⚡ {balances[conn.id].rate_info}
-                            </span>
-                          {/if}
-                          <button 
-                            class="badge conn-card-models-btn" 
-                            onclick={() => openModelsViewer(conn)}
-                            title="Click to view {conn.models_count || 0} models"
-                          >
-                            <Cpu size={11} />
-                            <span>{conn.models_count || 0} models</span>
-                          </button>
-                        </div>
-                        {#if balances[conn.id]?.rate_windows?.length}
-                          <div class="conn-balance-detail">
-                            <div class="conn-balance-detail-header">
-                              <span class="conn-balance-credit">💰 {balances[conn.id].balance}</span>
-                              <span class="conn-balance-plan">{balances[conn.id].plan_type}</span>
-                              {#if balances[conn.id].billing_reset}
-                                <span class="conn-balance-reset">📅 Resets {balances[conn.id].billing_reset}</span>
-                              {/if}
-                            </div>
-                            <div class="conn-balance-windows">
-                              {#each balances[conn.id].rate_windows as win}
-                                <div class="conn-balance-window" class:exceeded={win.exceeded}>
-                                  <span class="conn-balance-window-label">{win.name === '5-hour' ? '🕐 5h' : '📅 Week'}</span>
-                                  <div class="conn-balance-window-bar">
-                                    <div class="conn-balance-window-fill" style="width: {win.cap > 0 ? Math.min(100, (win.used / win.cap) * 100) : 0}%"></div>
-                                  </div>
-                                  <span class="conn-balance-window-text">{Math.round(win.used)}/{Math.round(win.cap)}</span>
-                                </div>
-                              {/each}
-                            </div>
-                            {#if balances[conn.id].usage}
-                              <div class="conn-balance-usage">
-                                {balances[conn.id].usage.total_requests} req · {balances[conn.id].usage.total_tokens > 1000000 ? (balances[conn.id].usage.total_tokens / 1000000).toFixed(1) + 'M' : balances[conn.id].usage.total_tokens} tok · {balances[conn.id].usage.success_rate.toFixed(0)}% ok
-                              </div>
-                            {/if}
-                          </div>
+
+                        {#if balances[conn.id]?.balance && !balances[conn.id]?.rate_windows?.length}
+                          <span class="badge conn-balance-badge" title="Credit: {balances[conn.id].balance}">
+                            💰 {balances[conn.id].balance}
+                          </span>
+                        {:else if balances[conn.id]?.rate_info && !balances[conn.id]?.rate_windows?.length}
+                          <span class="badge conn-rate-badge" title={balances[conn.id].rate_info}>
+                            ⚡ {balances[conn.id].rate_info}
+                          </span>
                         {/if}
+
+                        <button 
+                          class="badge conn-card-models-btn" 
+                          onclick={() => openModelsViewer(conn)}
+                          title="Click to view {conn.models_count || 0} models"
+                        >
+                          <Cpu size={11} />
+                          <span>{conn.models_count || 0} models</span>
+                        </button>
                       </div>
-                      <div class="conn-card-actions">
-                        <button class="btn-secondary conn-action-btn" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test">
+
+                      <div class="conn-row-actions">
+                        <button class="btn-icon" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
                           {#if testing === conn.id}<span class="conn-spinner"></span>{:else}<TestTube2 size={13} />{/if}
-                          <span>Test</span>
                         </button>
-                        <button class="btn-secondary conn-action-btn" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
-                          {#if conn.is_active}<ToggleRight size={15} style="color: var(--color-success);" />{:else}<ToggleLeft size={15} />{/if}
-                          <span>{conn.is_active ? 'On' : 'Off'}</span>
-                        </button>
-                        <button class="btn-secondary conn-action-btn" onclick={() => syncModels(conn.id)} disabled={syncing === conn.id} title="Sync">
-                          <RefreshCw size={13} class={syncing === conn.id ? 'animate-spin' : ''} />
-                          <span>Sync</span>
-                        </button>
-                        <button class="btn-secondary conn-action-btn" onclick={() => openModelsViewer(conn)} title="Models">
-                          <Cpu size={13} /><span>Models</span>
+                        <button class="btn-icon" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
+                          {#if conn.is_active}<ToggleRight size={17} style="color: var(--color-success);" />{:else}<ToggleLeft size={17} style="color: var(--color-fg-3);" />{/if}
                         </button>
                         <div class="kebab-menu-container" style="position: relative;">
-                          <button class="btn-secondary conn-action-btn conn-kebab-btn" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More">⋯</button>
+                          <button class="btn-icon" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More">⋯</button>
                           {#if openMenuConnId === conn.id}
                             <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
+                              <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; syncModels(conn.id); }}><RefreshCw size={13} /> Sync Models</button>
+                              <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}><Cpu size={13} /> View Models</button>
                               {#if !conn.pool_id}
-                                <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={14} /> Edit Pool</button>
+                                <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={13} /> Edit Pool</button>
                               {/if}
-                              <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={14} /> Copy API Key</button>
+                              <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={13} /> Copy Full Key</button>
                               <div class="conn-dropdown-divider"></div>
-                              <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}><Trash2 size={14} /> Delete</button>
+                              <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}><Trash2 size={13} /> Delete</button>
                             </div>
                           {/if}
                         </div>
@@ -2847,6 +2829,146 @@
     flex-direction: column;
     gap: 16px;
   }
+  .conn-group-single {
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .conn-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border-light);
+    transition: background 0.1s ease;
+    flex-wrap: wrap;
+  }
+  .conn-row:last-child {
+    border-bottom: none;
+  }
+  .conn-row:hover {
+    background: var(--color-bg-sidebar-hover);
+  }
+  .conn-row.conn-inactive {
+    opacity: 0.65;
+  }
+  .conn-row.conn-inactive:hover {
+    opacity: 1;
+  }
+  .conn-row-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 180px;
+    flex: 1;
+  }
+  .conn-row-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-fg-0);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .conn-priority-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--color-bg-body);
+    border: 1px solid var(--color-border);
+    color: var(--color-fg-3);
+  }
+  .conn-row-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .conn-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .btn-icon {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: var(--color-bg-body);
+    border: 1px solid var(--color-border);
+    color: var(--color-fg-2);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .btn-icon:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-fg-0);
+    border-color: var(--color-border-hover);
+  }
+  .group-title-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .group-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .conn-group-suburl {
+    font-size: 11px;
+    color: var(--color-fg-3);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 320px;
+  }
+  .group-actions-menu-container {
+    position: relative;
+  }
+  .conn-stats-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+  .stat-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 8px 16px;
+    white-space: nowrap;
+  }
+  .stat-pill-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--color-fg-3);
+    font-weight: 600;
+  }
+  .stat-pill-val {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--color-fg-0);
+    font-family: var(--font-mono);
+  }
+  .stat-pill-val.active { color: var(--color-success); }
+  .stat-pill-val.inactive { color: var(--color-error); }
   .conn-grid {
     display: grid;
     grid-template-columns: 1fr;
