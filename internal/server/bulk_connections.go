@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/sanhaji182/lintasan-go/internal/provider"
 )
 
 type BulkTestRequest struct {
@@ -242,7 +244,8 @@ func fetchModelsWithContext(ctx context.Context, base, path, key, h, prefix stri
 	if base == "" {
 		return nil, 0, nil, fmt.Errorf("base_url required")
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", strings.TrimRight(base, "/")+path, nil)
+	url := provider.JoinUpstreamPath(base, path)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, 0, nil, err
 	}

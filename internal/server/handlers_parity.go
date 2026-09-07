@@ -15,6 +15,7 @@ import (
     "github.com/sanhaji182/lintasan-go/internal/cost"
     "github.com/sanhaji182/lintasan-go/internal/discover"
     "github.com/sanhaji182/lintasan-go/internal/errfmt"
+    "github.com/sanhaji182/lintasan-go/internal/provider"
 )
 
 func (s *Server) registerParityRoutes() {
@@ -240,7 +241,8 @@ func (s *Server) handlePresetTest(w http.ResponseWriter, r *http.Request){
 
 func fetchModels(base, path, key, h, prefix string)([]any,int,[]byte,error){
     if base=="" { return nil,0,nil,fmt.Errorf("base_url required") }
-    req,_:=http.NewRequest("GET", strings.TrimRight(base,"/")+path, nil)
+    url := provider.JoinUpstreamPath(base, path)
+    req,_:=http.NewRequest("GET", url, nil)
     if key!=""{ if h==""{h="Authorization"}; req.Header.Set(h,prefix+key) }
     c:=&http.Client{Timeout:20*time.Second}; resp,err:=c.Do(req); if err!=nil{return nil,0,nil,err}; defer resp.Body.Close()
     b,_:=io.ReadAll(resp.Body)
@@ -259,7 +261,8 @@ func fetchModels(base, path, key, h, prefix string)([]any,int,[]byte,error){
 func pingChat(base, key, h, prefix string)(int,[]byte,error){
     if base=="" { return 0,nil,fmt.Errorf("base_url required") }
     body:=`{"model":"__lintasan_ping__","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}`
-    req,_:=http.NewRequest("POST", strings.TrimRight(base,"/")+"/v1/chat/completions", strings.NewReader(body))
+    url := provider.JoinUpstreamPath(base, "/v1/chat/completions")
+    req,_:=http.NewRequest("POST", url, strings.NewReader(body))
     if key!=""{ if h==""{h="Authorization"}; req.Header.Set(h,prefix+key) }
     req.Header.Set("Content-Type","application/json")
     c:=&http.Client{Timeout:20*time.Second}; resp,err:=c.Do(req); if err!=nil{return 0,nil,err}
@@ -282,12 +285,18 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
     // connection from the DB so we can re-test it without re-typing the key.
     if base=="" {
         if id,_:=in["id"].(string); id!="" {
-            var dbBase, dbKey, dbOAuth string
-            err:=s.db.Conn().QueryRow("SELECT base_url, api_key, COALESCE(oauth_provider,'') FROM connections WHERE id=?", id).Scan(&dbBase, &dbKey, &dbOAuth)
+            var dbBase, dbKey, dbOAuth, dbModelsPath string
+            err:=s.db.Conn().QueryRow("SELECT base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'') FROM connections WHERE id=?", id).Scan(&dbBase, &dbKey, &dbOAuth, &dbModelsPath)
             if err==nil {
                 base=dbBase
                 oauthProv=strings.TrimSpace(dbOAuth)
                 if key=="" && oauthProv=="" { key=dbKey }
+                // Use the connection's stored models_path when the caller did
+                // not pass one — the default /v1/models double-version-segments
+                // bases that already end in /v1 (e.g. NVIDIA) into /v1/v1/models.
+                if strings.TrimSpace(dbModelsPath)!="" {
+                    path=strings.TrimSpace(dbModelsPath)
+                }
             }
         }
     }
