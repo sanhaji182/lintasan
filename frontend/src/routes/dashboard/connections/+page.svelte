@@ -2231,65 +2231,81 @@
               <button class="btn-secondary" style="margin-top: 10px; font-size: 11px; padding: 4px 10px;" onclick={() => modelsSearch = ''}>Clear search</button>
             </div>
           {:else}
-            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-              <thead style="position: sticky; top: 0; background: var(--color-bg-card); z-index: 1;">
-                <tr style="border-bottom: 1px solid var(--color-border);">
-                  <th style="text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 600; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px;">Model ID</th>
-                  <th style="text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 600; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px;">Owner</th>
-                  <th style="text-align: left; padding: 8px 12px; font-size: 10px; font-weight: 600; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px;">Discovered</th>
-                  <th style="text-align: center; padding: 8px 12px; font-size: 10px; font-weight: 600; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px;">Status</th>
-                  <th style="text-align: right; padding: 8px 12px; font-size: 10px; font-weight: 600; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px;">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each filteredModels as model (model.id)}
-                  <tr style="border-bottom: 1px solid var(--color-border-light); transition: background 0.1s;" onmouseenter={(e) => (e.currentTarget.style.background = 'var(--color-bg-3)')} onmouseleave={(e) => (e.currentTarget.style.background = 'transparent')}>
-                    <td style="padding: 8px 12px; max-width: 0;">
-                      <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
-                        <code
-                          style="font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-0); background: var(--color-bg-3); padding: 2px 6px; border-radius: 4px; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.5;"
-                          title={model.model_id}
-                        >{model.model_id}</code>
-                        <button onclick={(e) => { e.stopPropagation(); copyModelId(model.model_id); }} style="all: unset; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 4px; cursor: pointer; color: var(--color-fg-3); flex-shrink: 0; align-self: flex-start; margin-top: 1px;" title="Copy model ID">
-                          <Copy size={11} />
-                        </button>
-                      </div>
-                    </td>
-                    <td style="padding: 8px 12px;">
-                      <span style="font-size: 10px; color: var(--color-fg-2); background: var(--color-bg-3); padding: 2px 6px; border-radius: 4px; text-transform: lowercase;">{model.owned_by || '—'}</span>
-                    </td>
-                    <td style="padding: 8px 12px; color: var(--color-fg-3); font-size: 11px; white-space: nowrap;">{model.discovered_at || '—'}</td>
-                    <td style="padding: 8px 12px; text-align: center;">
-                      {#if model.is_active === 1}
-                        <span style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; color: var(--color-success); background: rgba(16,185,129,0.1); padding: 2px 8px; border-radius: 10px;">
-                          <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--color-success);"></span>
-                          active
-                        </span>
-                      {:else}
-                        <span style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; color: var(--color-fg-3); background: var(--color-bg-3); padding: 2px 8px; border-radius: 10px;">
-                          <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--color-fg-3);"></span>
-                          inactive
-                        </span>
+            <div style="display: flex; flex-direction: column;">
+              {#each filteredModels as model (model.id)}
+                <div
+                  style="display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--color-border-light); transition: background 0.1s;"
+                  onmouseenter={(e) => (e.currentTarget.style.background = 'var(--color-bg-3)')}
+                  onmouseleave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <!-- Status dot -->
+                  <div
+                    style="width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: {model.is_active === 1 ? 'var(--color-success)' : 'var(--color-fg-3)'}; box-shadow: {model.is_active === 1 ? '0 0 6px rgba(16,185,129,0.5)' : 'none'};"
+                    title={model.is_active === 1 ? 'Active' : 'Inactive'}
+                  ></div>
+
+                  <!-- Main: model id + meta -->
+                  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                    <div
+                      style="display: flex; align-items: center; gap: 6px; min-width: 0;"
+                    >
+                      <span
+                        style="font-family: var(--font-mono); font-size: 12px; color: var(--color-fg-0); font-weight: 500; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.4;"
+                        title={model.model_id}
+                      >{model.model_id}</span>
+                      {#if model.owned_by}
+                        <span
+                          style="flex-shrink: 0; font-size: 10px; color: var(--color-fg-2); background: var(--color-bg-3); padding: 1px 6px; border-radius: 4px; text-transform: lowercase;"
+                          title="Owner"
+                        >{model.owned_by}</span>
                       {/if}
-                    </td>
-                    <td style="padding: 8px 12px; text-align: right;">
-                      <button
-                        onclick={() => toggleModelActive(viewingModelsOf.id, model.model_id, model.is_active)}
-                        disabled={togglingModelId === model.model_id}
-                        style="all: unset; display: inline-flex; align-items: center; gap: 4px; padding: 4px 8px; border-radius: 5px; cursor: pointer; font-size: 11px; color: {model.is_active === 1 ? 'var(--color-fg-2)' : 'var(--color-success)'}; background: {model.is_active === 1 ? 'var(--color-bg-3)' : 'rgba(16,185,129,0.1)'}; opacity: {togglingModelId === model.model_id ? 0.5 : 1};"
-                        title={model.is_active === 1 ? 'Deactivate this model' : 'Activate this model'}
+                    </div>
+                    {#if model.discovered_at}
+                      <div style="font-size: 10px; color: var(--color-fg-3);">{model.discovered_at}</div>
+                    {/if}
+                  </div>
+
+                  <!-- Actions: toggle + copy -->
+                  <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                    {#if model.is_active === 1}
+                      <span
+                        style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; color: var(--color-success); background: rgba(16,185,129,0.1); padding: 2px 8px; border-radius: 10px;"
                       >
-                        {#if model.is_active === 1}
-                          <EyeOff size={11} /> Off
-                        {:else}
-                          <Eye size={11} /> On
-                        {/if}
-                      </button>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
+                        <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--color-success);"></span>
+                        active
+                      </span>
+                    {:else}
+                      <span
+                        style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; color: var(--color-fg-3); background: var(--color-bg-3); padding: 2px 8px; border-radius: 10px;"
+                      >
+                        inactive
+                      </span>
+                    {/if}
+                    <button
+                      onclick={() => toggleModelActive(viewingModelsOf.id, model.model_id, model.is_active)}
+                      disabled={togglingModelId === model.model_id}
+                      style="all: unset; display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 6px; cursor: pointer; font-size: 11px; color: {model.is_active === 1 ? 'var(--color-fg-2)' : 'var(--color-success)'}; background: {model.is_active === 1 ? 'var(--color-bg-3)' : 'rgba(16,185,129,0.1)'}; opacity: {togglingModelId === model.model_id ? 0.5 : 1}; transition: background 0.15s;"
+                      title={model.is_active === 1 ? 'Deactivate this model' : 'Activate this model'}
+                    >
+                      {#if model.is_active === 1}
+                        <EyeOff size={12} /> Off
+                      {:else}
+                        <Eye size={12} /> On
+                      {/if}
+                    </button>
+                    <button
+                      onclick={(e) => { e.stopPropagation(); copyModelId(model.model_id); }}
+                      style="all: unset; display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 6px; cursor: pointer; color: var(--color-fg-3); transition: all 0.15s;"
+                      onmouseenter={(e) => { e.currentTarget.style.background = 'var(--color-bg-3)'; e.currentTarget.style.color = 'var(--color-fg-0)'; }}
+                      onmouseleave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-fg-3)'; }}
+                      title="Copy model ID"
+                    >
+                      <Copy size={12} />
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            </div>
           {/if}
         </div>
 
