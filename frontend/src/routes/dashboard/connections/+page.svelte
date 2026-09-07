@@ -14,7 +14,7 @@
   import { showToast } from '$lib/toast';
   import { OAUTH_IDE_PRESETS, type OAuthIdePreset } from '$lib/oauthIdePresets';
   import { brandForProvider, logoPaths } from '$lib/oauthIdeBrands';
-  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers, ChevronRight } from 'lucide-svelte';
+  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers, ChevronRight, Zap, CheckCircle2, AlertCircle, TriangleAlert } from 'lucide-svelte';
 
   let connections = $state<any[]>([]);
   let loading = $state(true);
@@ -655,6 +655,69 @@
     } finally { testing = null; }
   }
 
+  // --- Bulk Test & Purge ---
+  let bulkTesting = $state(false);
+  let bulkTargetName = $state('');
+  let bulkResult = $state<any | null>(null);
+  let showBulkModal = $state(false);
+  let bulkActing = $state(false);
+
+  async function startBulkTest(targetName: string, ids?: string[], baseUrl?: string) {
+    bulkTesting = true;
+    bulkTargetName = targetName;
+    bulkResult = null;
+    showBulkModal = true;
+    try {
+      const payload: any = {};
+      if (ids && ids.length > 0) {
+        payload.ids = ids;
+      } else if (baseUrl) {
+        payload.base_url = baseUrl;
+      } else {
+        payload.all = true;
+      }
+      const res = await api.post<any>('/api/connections/bulk-test', payload);
+      bulkResult = res;
+    } catch (e: any) {
+      showToast('Bulk test failed: ' + (e.message || 'network error'), 'error');
+      showBulkModal = false;
+    } finally {
+      bulkTesting = false;
+    }
+  }
+
+  async function purgeFailedConnections() {
+    if (!bulkResult?.failed_ids?.length) return;
+    bulkActing = true;
+    try {
+      const res = await api.post<any>('/api/connections/bulk-delete', { ids: bulkResult.failed_ids });
+      showToast(`Deleted ${res.deleted_count ?? bulkResult.failed_ids.length} failed connection(s)`, 'success', 4000);
+      showBulkModal = false;
+      bulkResult = null;
+      await fetchConnections();
+    } catch (e: any) {
+      showToast('Delete failed: ' + (e.message || 'error'), 'error');
+    } finally {
+      bulkActing = false;
+    }
+  }
+
+  async function disableFailedConnections() {
+    if (!bulkResult?.failed_ids?.length) return;
+    bulkActing = true;
+    try {
+      const res = await api.post<any>('/api/connections/bulk-disable', { ids: bulkResult.failed_ids });
+      showToast(`Disabled ${res.disabled_count ?? bulkResult.failed_ids.length} connection(s)`, 'success', 4000);
+      showBulkModal = false;
+      bulkResult = null;
+      await fetchConnections();
+    } catch (e: any) {
+      showToast('Disable failed: ' + (e.message || 'error'), 'error');
+    } finally {
+      bulkActing = false;
+    }
+  }
+
   async function syncModels(id: string) {
     syncing = id;
     try {
@@ -1013,6 +1076,15 @@
       </div>
     </div>
     <div class="conn-toolbar-right">
+      <button 
+        class="btn-secondary conn-toolbar-btn flex items-center gap-1.5" 
+        onclick={() => startBulkTest('All Connections')} 
+        disabled={bulkTesting}
+        title="Test all connections"
+      >
+        <Zap size={14} style="color: var(--color-primary);" />
+        <span class="conn-toolbar-btn-label">Test All</span>
+      </button>
       <button class="btn-secondary conn-toolbar-btn" onclick={() => { loading = true; fetchConnections(); fetchPools(); }} title="Refresh connections" aria-label="Refresh">
         <RefreshCw size={15} />
       </button>
@@ -1822,7 +1894,13 @@
           {:else}
             <!-- Multi-connection group -->
             <div class="conn-group" class:collapsed={isCollapsed}>
-              <button class="conn-group-header" onclick={() => toggleGroup(group.key)}>
+              <div 
+                class="conn-group-header" 
+                role="button" 
+                tabindex="0" 
+                onclick={() => toggleGroup(group.key)}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleGroup(group.key); } }}
+              >
                 <div class="conn-group-header-left">
                   <span class="conn-group-chevron" class:rotated={!isCollapsed}><ChevronRight size={16} /></span>
                   <span class="conn-group-label">{group.label}</span>
@@ -1843,8 +1921,18 @@
                       {group.totalModels} models
                     </span>
                   {/if}
+                  <button
+                    class="btn-secondary conn-action-btn flex items-center gap-1"
+                    style="padding: 3px 8px; font-size: 11px; margin-left: 6px;"
+                    onclick={(e) => { e.stopPropagation(); startBulkTest(group.label, group.connections.map(c => c.id)); }}
+                    disabled={bulkTesting}
+                    title="Test all {group.connections.length} keys in {group.label}"
+                  >
+                    <Zap size={12} style="color: var(--color-primary);" />
+                    <span>Test All</span>
+                  </button>
                 </div>
-              </button>
+              </div>
 
               {#if !isCollapsed}
                 <div class="conn-group-body">
@@ -2161,6 +2249,147 @@
           </div>
           <button class="btn-secondary" style="padding: 5px 12px; font-size: 11px;" onclick={closeModelsViewer}>Close</button>
         </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Bulk Test Results & Action Modal -->
+  {#if showBulkModal}
+    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 1100; backdrop-filter: blur(2px);" onclick={() => { if (!bulkTesting && !bulkActing) showBulkModal = false; }}>
+      <div class="card" style="width: 92%; max-width: 680px; max-height: 85vh; padding: 0; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);" onclick={(e) => e.stopPropagation()}>
+        
+        <!-- Header -->
+        <div style="padding: 16px 20px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <Zap size={18} style="color: var(--color-primary);" />
+            <h3 style="font-size: 15px; font-weight: 600; color: var(--color-fg-0); margin: 0;">
+              Bulk Test: {bulkTargetName}
+            </h3>
+          </div>
+          {#if !bulkTesting && !bulkActing}
+            <button onclick={() => showBulkModal = false} style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 4px;" title="Close">
+              <X size={18} />
+            </button>
+          {/if}
+        </div>
+
+        <!-- Body -->
+        <div style="padding: 20px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 16px;">
+          {#if bulkTesting}
+            <div style="text-align: center; padding: 40px 20px;">
+              <Spinner />
+              <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-top: 14px;">
+                Testing {bulkTargetName}...
+              </div>
+              <div style="font-size: 12px; color: var(--color-fg-3); margin-top: 4px;">
+                Verifying accounts in parallel via Go worker pool.
+              </div>
+            </div>
+          {:else if bulkResult}
+            <!-- Summary Stats Cards -->
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+              <div class="card" style="padding: 12px; text-align: center; border-left: 3px solid var(--color-primary);">
+                <div style="font-size: 22px; font-weight: 700; color: var(--color-fg-0);">{bulkResult.total}</div>
+                <div style="font-size: 11px; color: var(--color-fg-3);">Total Tested</div>
+              </div>
+              <div class="card" style="padding: 12px; text-align: center; border-left: 3px solid var(--color-success);">
+                <div style="font-size: 22px; font-weight: 700; color: var(--color-success);">{bulkResult.healthy}</div>
+                <div style="font-size: 11px; color: var(--color-fg-3);">Healthy (OK)</div>
+              </div>
+              <div class="card" style="padding: 12px; text-align: center; border-left: 3px solid {bulkResult.failed > 0 ? 'var(--color-error)' : 'var(--color-border)'};">
+                <div style="font-size: 22px; font-weight: 700; color: {bulkResult.failed > 0 ? 'var(--color-error)' : 'var(--color-fg-2)'};">{bulkResult.failed}</div>
+                <div style="font-size: 11px; color: var(--color-fg-3);">Failed</div>
+              </div>
+            </div>
+
+            <!-- Action Banner if Failed > 0 -->
+            {#if bulkResult.failed > 0}
+              <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+                <div style="display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: var(--color-error);">
+                  <TriangleAlert size={18} style="flex-shrink: 0; margin-top: 2px;" />
+                  <div>
+                    <strong>{bulkResult.failed} connection(s) failed verification.</strong>
+                    <div style="font-size: 12px; color: var(--color-fg-2); margin-top: 2px;">
+                      Pilih tindakan untuk akun/kunci yang bermasalah:
+                    </div>
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px;">
+                  <button 
+                    class="btn-danger flex items-center gap-1.5" 
+                    style="padding: 6px 14px; font-size: 12px; background: var(--color-error); color: white; border: none; border-radius: 6px; cursor: pointer;"
+                    onclick={purgeFailedConnections} 
+                    disabled={bulkActing}
+                  >
+                    {#if bulkActing}<Spinner />{:else}<Trash2 size={14} /> Hapus Akun Error ({bulkResult.failed}){/if}
+                  </button>
+                  <button 
+                    class="btn-secondary flex items-center gap-1.5" 
+                    style="padding: 6px 14px; font-size: 12px;"
+                    onclick={disableFailedConnections} 
+                    disabled={bulkActing}
+                  >
+                    {#if bulkActing}<Spinner />{:else}<ToggleLeft size={14} /> Nonaktifkan Akun Error ({bulkResult.failed}){/if}
+                  </button>
+                </div>
+              </div>
+            {:else}
+              <div style="background: rgba(34, 197, 94, 0.08); border: 1px solid rgba(34, 197, 94, 0.25); border-radius: 8px; padding: 14px; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--color-success);">
+                <CheckCircle2 size={18} />
+                <span>Semua {bulkResult.total} koneksi terverifikasi sehat dan aktif!</span>
+              </div>
+            {/if}
+
+            <!-- Details List -->
+            {#if bulkResult.results?.length > 0}
+              <div style="font-size: 12px; font-weight: 600; color: var(--color-fg-1); margin-top: 4px;">
+                Hasil Detail:
+              </div>
+              <div style="border: 1px solid var(--color-border); border-radius: 8px; max-height: 250px; overflow-y: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+                  <thead style="background: var(--color-bg-body); position: sticky; top: 0; z-index: 2;">
+                    <tr>
+                      <th style="padding: 6px 10px; text-align: left;">Name</th>
+                      <th style="padding: 6px 10px; text-align: left;">Status</th>
+                      <th style="padding: 6px 10px; text-align: left;">Latency</th>
+                      <th style="padding: 6px 10px; text-align: left;">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each bulkResult.results as r}
+                      <tr style="border-top: 1px solid var(--color-border); background: {r.status === 'error' ? 'rgba(239, 68, 68, 0.04)' : 'transparent'};">
+                        <td style="padding: 6px 10px; font-weight: 500;">{r.name}</td>
+                        <td style="padding: 6px 10px;">
+                          <span class="badge" style="background: {r.status === 'ok' ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)'}; color: {r.status === 'ok' ? 'var(--color-success)' : 'var(--color-error)'}; font-size: 10px;">
+                            {r.status === 'ok' ? 'OK' : (r.error_code ? 'HTTP ' + r.error_code : 'FAIL')}
+                          </span>
+                        </td>
+                        <td style="padding: 6px 10px; color: var(--color-fg-3); font-family: var(--font-mono);">{r.latency_ms}ms</td>
+                        <td style="padding: 6px 10px; color: {r.status === 'ok' ? 'var(--color-fg-2)' : 'var(--color-error)'}; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                          {r.status === 'ok' ? (r.models_count ? r.models_count + ' models' : 'reachable') : (r.error || 'failed')}
+                        </td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {/if}
+          {/if}
+        </div>
+
+        <!-- Footer -->
+        <div style="padding: 12px 20px; border-top: 1px solid var(--color-border); display: flex; justify-content: flex-end;">
+          <button 
+            class="btn-secondary" 
+            style="padding: 6px 16px; font-size: 12px;"
+            onclick={() => showBulkModal = false} 
+            disabled={bulkTesting || bulkActing}
+          >
+            Tutup
+          </button>
+        </div>
+
       </div>
     </div>
   {/if}
