@@ -702,11 +702,14 @@
     } catch (e: any) { error = e.message; }
   }
 
+  let connTestStatus = $state<Record<string, { ok: boolean; latency?: number; error?: string }>>({});
+
   async function testConn(id: string) {
     testing = id;
     try {
       const res = await api.post<any>('/api/connections/test', { id });
       if (res.success) {
+        connTestStatus[id] = { ok: true, latency: res.latency_ms ?? 0 };
         const msg = res.models_count != null
           ? `Connection OK · ${res.models_count} model(s) · ${res.latency_ms ?? 0}ms`
           : (res.message || 'Connection OK');
@@ -714,6 +717,7 @@
       } else {
         // Pass the full envelope to the rich toast renderer
         const err = res.error && typeof res.error === 'object' ? res.error : { message: String(res.error || 'unknown'), type: 'unknown', code: 'unknown' };
+        connTestStatus[id] = { ok: false, error: err.message || err.code || 'failed' };
         showToast('Connection test failed', 'error', 6000, {
           code: err.code,
           type: err.type,
@@ -729,11 +733,13 @@
       const env = e?.envelope;
       if (env && env.error) {
         const err = (typeof env.error === 'object') ? env.error : { message: String(env.error), type: 'unknown', code: 'unknown' };
+        connTestStatus[id] = { ok: false, error: err.message || err.code || 'failed' };
         showToast('Connection test failed', 'error', 6000, {
           code: err.code, type: err.type, param: err.param,
           message: err.message, hint: env.hint,
         });
       } else {
+        connTestStatus[id] = { ok: false, error: e.message || 'network error' };
         showToast('Test request failed', 'error', 6000, {
           code: 'request_failed', type: 'network_error',
           message: e.message || 'unknown',
@@ -765,6 +771,15 @@
       }
       const res = await api.post<any>('/api/connections/bulk-test', payload);
       bulkResult = res;
+      if (res?.results && Array.isArray(res.results)) {
+        for (const item of res.results) {
+          connTestStatus[item.id] = {
+            ok: item.status === 'ok',
+            latency: item.latency_ms,
+            error: item.error
+          };
+        }
+      }
     } catch (e: any) {
       showToast('Bulk test failed: ' + (e.message || 'network error'), 'error');
       showBulkModal = false;
@@ -2018,12 +2033,52 @@
                 </div>
 
                 <div class="conn-row-actions">
-                  <button class="btn-icon" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
-                    {#if testing === conn.id}<span class="conn-spinner"></span>{:else}<TestTube2 size={13} />{/if}
+                  {#if connTestStatus[conn.id]}
+                    {@const st = connTestStatus[conn.id]}
+                    <span 
+                      class="badge test-status-badge" 
+                      class:test-ok={st.ok} 
+                      class:test-err={!st.ok}
+                      title={st.ok ? `Latency: ${st.latency}ms` : st.error}
+                    >
+                      {#if st.ok}
+                        <Check size={11} /> {st.latency ?? 0}ms
+                      {:else}
+                        <X size={11} /> FAIL
+                      {/if}
+                    </span>
+                  {/if}
+
+                  <button 
+                    class="btn-secondary conn-action-btn conn-test-btn" 
+                    onclick={() => testConn(conn.id)} 
+                    disabled={testing === conn.id} 
+                    title="Test connection"
+                  >
+                    {#if testing === conn.id}
+                      <span class="conn-spinner"></span>
+                      <span>Testing...</span>
+                    {:else}
+                      <TestTube2 size={13} style="color: var(--color-primary);" />
+                      <span>Test</span>
+                    {/if}
                   </button>
-                  <button class="btn-icon" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
-                    {#if conn.is_active}<ToggleRight size={17} style="color: var(--color-success);" />{:else}<ToggleLeft size={17} style="color: var(--color-fg-3);" />{/if}
+
+                  <button 
+                    class="btn-secondary conn-action-btn conn-toggle-btn" 
+                    class:active={conn.is_active}
+                    onclick={() => toggleActive(conn)} 
+                    title={conn.is_active ? 'Click to deactivate' : 'Click to activate'}
+                  >
+                    {#if conn.is_active}
+                      <ToggleRight size={16} style="color: var(--color-success);" />
+                      <span style="color: var(--color-success); font-weight: 600;">Active</span>
+                    {:else}
+                      <ToggleLeft size={16} style="color: var(--color-fg-3);" />
+                      <span style="color: var(--color-fg-3);">Off</span>
+                    {/if}
                   </button>
+
                   <div class="kebab-menu-container" style="position: relative;">
                     <button class="btn-icon" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More actions">⋯</button>
                     {#if openMenuConnId === conn.id}
@@ -2097,14 +2152,14 @@
 
                   <div class="conn-group-header-actions" onclick={(e) => e.stopPropagation()}>
                     <button
-                      class="btn-secondary conn-action-btn flex items-center gap-1"
-                      style="padding: 4px 10px; font-size: 11px;"
+                      class="btn-secondary conn-action-btn flex items-center gap-1.5"
+                      style="padding: 4px 10px; font-size: 11px; font-weight: 600; border-color: rgba(59,130,246,0.35); background: rgba(59,130,246,0.06);"
                       onclick={() => startBulkTest(group.label, group.connections.map(c => c.id))}
                       disabled={bulkTesting}
                       title="Test all {group.connections.length} keys in {group.label}"
                     >
-                      <Zap size={12} style="color: var(--color-primary);" />
-                      <span>Test All</span>
+                      <Zap size={13} style="color: var(--color-primary);" />
+                      <span>Test Provider ({group.connections.length})</span>
                     </button>
                     
                     <div class="group-actions-menu-container" style="position: relative;">
@@ -2227,12 +2282,52 @@
                       </div>
 
                       <div class="conn-row-actions">
-                        <button class="btn-icon" onclick={() => testConn(conn.id)} disabled={testing === conn.id} title="Test connection">
-                          {#if testing === conn.id}<span class="conn-spinner"></span>{:else}<TestTube2 size={13} />{/if}
+                        {#if connTestStatus[conn.id]}
+                          {@const st = connTestStatus[conn.id]}
+                          <span 
+                            class="badge test-status-badge" 
+                            class:test-ok={st.ok} 
+                            class:test-err={!st.ok}
+                            title={st.ok ? `Latency: ${st.latency}ms` : st.error}
+                          >
+                            {#if st.ok}
+                              <Check size={11} /> {st.latency ?? 0}ms
+                            {:else}
+                              <X size={11} /> FAIL
+                            {/if}
+                          </span>
+                        {/if}
+
+                        <button 
+                          class="btn-secondary conn-action-btn conn-test-btn" 
+                          onclick={() => testConn(conn.id)} 
+                          disabled={testing === conn.id} 
+                          title="Test this API key"
+                        >
+                          {#if testing === conn.id}
+                            <span class="conn-spinner"></span>
+                            <span>Testing...</span>
+                          {:else}
+                            <TestTube2 size={13} style="color: var(--color-primary);" />
+                            <span>Test</span>
+                          {/if}
                         </button>
-                        <button class="btn-icon" onclick={() => toggleActive(conn)} title={conn.is_active ? 'Deactivate' : 'Activate'}>
-                          {#if conn.is_active}<ToggleRight size={17} style="color: var(--color-success);" />{:else}<ToggleLeft size={17} style="color: var(--color-fg-3);" />{/if}
+
+                        <button 
+                          class="btn-secondary conn-action-btn conn-toggle-btn" 
+                          class:active={conn.is_active}
+                          onclick={() => toggleActive(conn)} 
+                          title={conn.is_active ? 'Click to deactivate' : 'Click to activate'}
+                        >
+                          {#if conn.is_active}
+                            <ToggleRight size={16} style="color: var(--color-success);" />
+                            <span style="color: var(--color-success); font-weight: 600;">Active</span>
+                          {:else}
+                            <ToggleLeft size={16} style="color: var(--color-fg-3);" />
+                            <span style="color: var(--color-fg-3);">Off</span>
+                          {/if}
                         </button>
+
                         <div class="kebab-menu-container" style="position: relative;">
                           <button class="btn-icon" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More">⋯</button>
                           {#if openMenuConnId === conn.id}
@@ -2911,6 +3006,44 @@
     background: var(--color-bg-hover);
     color: var(--color-fg-0);
     border-color: var(--color-border-hover);
+  }
+  .conn-test-btn {
+    padding: 3px 8px !important;
+    font-size: 11px !important;
+    font-weight: 500;
+    gap: 4px;
+    height: 26px;
+  }
+  .conn-toggle-btn {
+    padding: 2px 7px !important;
+    font-size: 11px !important;
+    gap: 4px;
+    height: 26px;
+    background: var(--color-bg-body) !important;
+  }
+  .test-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .test-status-badge.test-ok {
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--color-success);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+  }
+  .test-status-badge.test-err {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--color-error);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    max-width: 140px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .group-title-col {
     display: flex;
