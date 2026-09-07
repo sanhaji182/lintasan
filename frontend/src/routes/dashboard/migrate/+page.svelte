@@ -3,7 +3,8 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import {
     Upload, ArrowRight, CircleCheck, CircleAlert, Ban,
-    HeartCrack, Layers, KeyRound, Info, RotateCcw
+    HeartCrack, Layers, KeyRound, Info, RotateCcw,
+    Server, TriangleAlert, Filter, X, Search
   } from 'lucide-svelte/icons';
 
   // Mirrors internal/migrate.Connection / .Combo / .Summary.
@@ -62,6 +63,9 @@
   let includeUnusable = $state(false);
   let importCombos = $state(true);
   let dragging = $state(false);
+  let selectedProvider = $state<string>('');
+  let searchQuery = $state<string>('');
+  let visibleCount = $state<number>(50);
 
   // Recomputed client-side so toggling "include unusable" updates the count
   // without a round trip. The server recomputes the same thing on import, so
@@ -69,6 +73,33 @@
   const willImport = $derived(
     preview ? (includeUnusable ? preview.healthy.length + preview.unusable.length : preview.healthy.length) : 0
   );
+
+  const rawList = $derived(
+    preview ? (includeUnusable ? [...preview.healthy, ...preview.unusable] : preview.healthy) : []
+  );
+
+  const filteredList = $derived.by(() => {
+    let list = rawList;
+    if (selectedProvider) {
+      const sp = selectedProvider.toLowerCase();
+      list = list.filter(c =>
+        (c.source_provider && c.source_provider.toLowerCase() === sp) ||
+        (c.name && c.name.toLowerCase().includes(sp)) ||
+        (c.base_url && c.base_url.toLowerCase().includes(sp))
+      );
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter(c =>
+        c.name.toLowerCase().includes(q) ||
+        c.base_url.toLowerCase().includes(q) ||
+        (c.source_provider && c.source_provider.toLowerCase().includes(q))
+      );
+    }
+    return list;
+  });
+
+  const displayedList = $derived(filteredList.slice(0, visibleCount));
 
   async function runPreview(f: File) {
     busy = true;
@@ -137,6 +168,16 @@
 
   function reset() {
     file = null; preview = null; result = null; error = ''; includeUnusable = false;
+    selectedProvider = ''; searchQuery = ''; visibleCount = 50;
+  }
+
+  function toggleFilterProvider(target: string) {
+    if (selectedProvider.toLowerCase() === target.toLowerCase()) {
+      selectedProvider = '';
+    } else {
+      selectedProvider = target;
+      visibleCount = 50;
+    }
   }
 
   function portLabel(p: string): string {
@@ -222,23 +263,146 @@
       <div class="alert info"><Info size={15} /> {w}</div>
     {/each}
 
+    {#if preview.providers?.length}
+      <section class="panel">
+        <h2><Server size={17} /> Provider Overview ({preview.providers.length} endpoint{preview.providers.length === 1 ? '' : 's'})</h2>
+        <p class="explain">
+          Distinct upstream AI providers detected in your export. Accounts (API keys) are grouped under each provider endpoint.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Endpoint URL</th>
+                <th>Total Keys</th>
+                <th>Health Status</th>
+                <th>Filter</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each preview.providers as p}
+                {@const dead = p.accounts - p.healthy}
+                {@const isFiltered = selectedProvider.toLowerCase() === (p.name || '').toLowerCase() || selectedProvider.toLowerCase() === (p.base_url || '').toLowerCase()}
+                <tr class:active-row={isFiltered}>
+                  <td>
+                    <div class="p-name-cell">
+                      <strong>{p.name || 'Custom Endpoint'}</strong>
+                      {#if p.prefix}
+                        <span class="prefix-tag">{p.prefix}</span>
+                      {/if}
+                    </div>
+                  </td>
+                  <td><code>{p.base_url}</code></td>
+                  <td>
+                    <span class="count-pill">{p.accounts} {p.accounts === 1 ? 'key' : 'keys'}</span>
+                    {#if p.accounts >= 50}
+                      <span class="badge-bulk">Bulk</span>
+                    {/if}
+                  </td>
+                  <td>
+                    <div class="health-flex">
+                      <span class="health-badge ok">{p.healthy} ok</span>
+                      {#if dead > 0}
+                        <span class="health-badge dead">{dead} dead</span>
+                      {/if}
+                    </div>
+                  </td>
+                  <td>
+                    <button 
+                      class="btn ghost filter-btn"
+                      class:active={isFiltered}
+                      onclick={() => toggleFilterProvider(p.name || p.base_url)}
+                    >
+                      {#if isFiltered}
+                        <X size={13} /> Reset
+                      {:else}
+                        <Filter size={13} /> View keys
+                      {/if}
+                    </button>
+                  </td>
+                </tr>
+                {#if p.accounts >= 20 && dead > p.healthy}
+                  <tr class="bulk-warning-row">
+                    <td colspan="5">
+                      <div class="bulk-warning-box">
+                        <TriangleAlert size={15} />
+                        <span>
+                          <strong>Notice for {p.name}:</strong> {dead} of {p.accounts} accounts ({Math.round((dead / p.accounts) * 100)}%) are already dead or failing in 9router. Importing all of them will create {dead} inactive connections. Consider unchecking <em>"Also import failing connections"</em> or click <em>"Import provider(s) only"</em> below.
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {/if}
+
     <section class="panel">
-      <h2>Will be imported ({willImport})</h2>
-      <table>
-        <thead>
-          <tr><th>Name</th><th>Endpoint</th><th>Source</th><th>Key</th></tr>
-        </thead>
-        <tbody>
-          {#each (includeUnusable ? [...preview.healthy, ...preview.unusable] : preview.healthy) as c}
-            <tr class:dim={c.health !== 'ok'}>
-              <td>{c.name}</td>
-              <td><code>{c.base_url}</code></td>
-              <td><span class="tag">{portLabel(c.portability)}</span></td>
-              <td>{c.has_key ? '✓' : '—'}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+      <div class="panel-header-row">
+        <div>
+          <h2>Will be imported ({willImport})</h2>
+          {#if selectedProvider}
+            <div class="active-filter-badge">
+              <span>Filtered by: <strong>{selectedProvider}</strong> ({filteredList.length} matching)</span>
+              <button class="ghost-link" onclick={() => selectedProvider = ''}><X size={12} /> Clear</button>
+            </div>
+          {/if}
+        </div>
+        <div class="search-input-wrap">
+          <Search size={14} />
+          <input 
+            type="text" 
+            placeholder="Search keys by name, url..." 
+            bind:value={searchQuery} 
+            class="search-input"
+          />
+        </div>
+      </div>
+
+      {#if filteredList.length === 0}
+        <p class="empty-hint">No connections match the current filter or search.</p>
+      {:else}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Name</th><th>Endpoint</th><th>Source Provider</th><th>Key</th></tr>
+            </thead>
+            <tbody>
+              {#each displayedList as c}
+                <tr class:dim={c.health !== 'ok'}>
+                  <td>{c.name}</td>
+                  <td><code>{c.base_url}</code></td>
+                  <td>
+                    <span class="tag">{portLabel(c.portability)}</span>
+                    {#if c.source_provider}
+                      <span class="source-tag">{c.source_provider}</span>
+                    {/if}
+                  </td>
+                  <td>{c.has_key ? '✓' : '—'}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+
+        {#if filteredList.length > displayedList.length}
+          <div class="load-more-bar">
+            <span>Showing {displayedList.length} of {filteredList.length} accounts</span>
+            <div class="load-buttons">
+              <button class="btn ghost-load" onclick={() => visibleCount += 100}>
+                Load 100 more
+              </button>
+              <button class="btn ghost-load" onclick={() => visibleCount = filteredList.length}>
+                Show all ({filteredList.length})
+              </button>
+            </div>
+          </div>
+        {/if}
+      {/if}
     </section>
 
     {#if preview.blocked.length}
@@ -421,4 +585,29 @@
 
   .done h2 { color: #22c55e; }
   .result { list-style: none; padding: 0; margin: 0 0 .8rem; display: flex; flex-direction: column; gap: .3rem; font-size: .88rem; }
+
+  .table-wrap { overflow-x: auto; max-height: 480px; overflow-y: auto; }
+  .p-name-cell { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; }
+  .prefix-tag { font-size: .72rem; padding: .1rem .4rem; border-radius: 4px; background: rgba(59, 130, 246, .15); color: #93c5fd; }
+  .count-pill { font-size: .8rem; font-weight: 500; }
+  .badge-bulk { font-size: .7rem; padding: .1rem .35rem; border-radius: 4px; background: rgba(245, 158, 11, .15); color: #fbbf24; margin-left: .35rem; font-weight: 600; }
+  .health-flex { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
+  .health-badge { font-size: .72rem; padding: .12rem .4rem; border-radius: 4px; font-weight: 500; }
+  .health-badge.ok { background: rgba(34, 197, 94, .12); color: #4ade80; }
+  .health-badge.dead { background: rgba(239, 68, 68, .12); color: #f87171; }
+  .filter-btn { font-size: .75rem; padding: .2rem .5rem; border: 1px solid var(--border, #334155); border-radius: 6px; }
+  .filter-btn.active { background: var(--accent, #8b5cf6); color: #fff; border-color: transparent; }
+  .active-row { background: rgba(139, 92, 246, .08); }
+  .bulk-warning-row td { padding: .4rem .5rem; background: rgba(245, 158, 11, .06); border-top: none; }
+  .bulk-warning-box { display: flex; align-items: flex-start; gap: .5rem; font-size: .78rem; color: #fbbf24; line-height: 1.4; }
+  .panel-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: .6rem; flex-wrap: wrap; }
+  .active-filter-badge { display: inline-flex; align-items: center; gap: .4rem; font-size: .78rem; background: rgba(139, 92, 246, .12); color: #c4b5fd; padding: .2rem .5rem; border-radius: 6px; margin-top: .2rem; }
+  .ghost-link { background: none; border: none; color: inherit; cursor: pointer; display: inline-flex; align-items: center; gap: .2rem; font-size: .75rem; text-decoration: underline; padding: 0; }
+  .search-input-wrap { display: flex; align-items: center; gap: .4rem; border: 1px solid var(--border, #334155); border-radius: 8px; padding: .3rem .6rem; background: rgba(15, 23, 42, .4); }
+  .search-input { background: transparent; border: none; outline: none; font-size: .82rem; color: inherit; width: 160px; }
+  .source-tag { font-size: .72rem; padding: .12rem .45rem; border-radius: 5px; background: rgba(100, 116, 139, .15); color: var(--text-muted, #94a3b8); margin-left: .3rem; }
+  .empty-hint { font-size: .84rem; color: var(--text-muted, #94a3b8); padding: 1rem 0; text-align: center; }
+  .load-more-bar { display: flex; justify-content: space-between; align-items: center; padding: .6rem .5rem; font-size: .8rem; color: var(--text-muted, #94a3b8); border-top: 1px solid var(--border, #1e293b); margin-top: .4rem; }
+  .load-buttons { display: flex; gap: .4rem; }
+  .ghost-load { background: none; border: 1px solid var(--border, #334155); border-radius: 6px; padding: .2rem .5rem; font-size: .78rem; cursor: pointer; color: inherit; }
 </style>
