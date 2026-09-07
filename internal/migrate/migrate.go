@@ -347,6 +347,10 @@ func providerDisplayName(c Connection) string {
 	if n := strings.TrimSpace(c.SourceProvider); n != "" && !isOpaqueProviderID(n) {
 		return n
 	}
+	// If Name is "NodeName — Key N", the NodeName is the most descriptive provider title
+	if idx := strings.Index(c.Name, " — "); idx > 0 {
+		return strings.TrimSpace(c.Name[:idx])
+	}
 	if n := strings.TrimSpace(c.Prefix); n != "" {
 		return n
 	}
