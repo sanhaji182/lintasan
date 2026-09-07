@@ -2246,8 +2246,11 @@
                   <tr style="border-bottom: 1px solid var(--color-border-light); transition: background 0.1s;" onmouseenter={(e) => (e.currentTarget.style.background = 'var(--color-bg-3)')} onmouseleave={(e) => (e.currentTarget.style.background = 'transparent')}>
                     <td style="padding: 8px 12px; max-width: 0;">
                       <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
-                        <code style="font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-0); background: var(--color-bg-3); padding: 2px 6px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px;" title={model.model_id}>{model.model_id}</code>
-                        <button onclick={(e) => { e.stopPropagation(); copyModelId(model.model_id); }} style="all: unset; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 4px; cursor: pointer; color: var(--color-fg-3); flex-shrink: 0;" title="Copy model ID">
+                        <code
+                          style="font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-0); background: var(--color-bg-3); padding: 2px 6px; border-radius: 4px; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.5;"
+                          title={model.model_id}
+                        >{model.model_id}</code>
+                        <button onclick={(e) => { e.stopPropagation(); copyModelId(model.model_id); }} style="all: unset; display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 4px; cursor: pointer; color: var(--color-fg-3); flex-shrink: 0; align-self: flex-start; margin-top: 1px;" title="Copy model ID">
                           <Copy size={11} />
                         </button>
                       </div>
