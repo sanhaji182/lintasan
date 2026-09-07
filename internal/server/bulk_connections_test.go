@@ -144,3 +144,41 @@ func TestBulkDisableConnections(t *testing.T) {
 		t.Errorf("expected is_active=0 for dis-1, got %d", isActive)
 	}
 }
+
+func TestBulkEnableConnections(t *testing.T) {
+	s := newRESTTestServer(t)
+
+	_, err := s.db.Conn().Exec(`
+		INSERT INTO connections (id, name, base_url, api_key, format, is_active, priority)
+		VALUES 
+			('ena-1', 'Conn 1', 'http://example.com', 'k1', 'openai', 0, 1),
+			('keep-2', 'Conn 2', 'http://example.com', 'k2', 'openai', 0, 1)
+	`)
+	if err != nil {
+		t.Fatalf("seed connections: %v", err)
+	}
+
+	body, _ := json.Marshal(BulkActionRequest{
+		IDs: []string{"ena-1"},
+	})
+	req := httptest.NewRequest("POST", "/api/connections/bulk-enable", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	s.handleBulkEnableConnections(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var out map[string]any
+	json.Unmarshal(rec.Body.Bytes(), &out)
+	if out["enabled_count"] != float64(1) {
+		t.Errorf("expected enabled_count 1, got %v", out["enabled_count"])
+	}
+
+	var isActive int
+	s.db.Conn().QueryRow("SELECT is_active FROM connections WHERE id = 'ena-1'").Scan(&isActive)
+	if isActive != 1 {
+		t.Errorf("expected is_active=1 for ena-1, got %d", isActive)
+	}
+}

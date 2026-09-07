@@ -70,16 +70,98 @@
   let searchQuery = $state('');
   let openMenuConnId = $state<string | null>(null);
 
+  type StatusFilter = 'all' | 'active' | 'inactive' | 'pooled';
+  let statusFilter = $state<StatusFilter>('all');
+  let groupSearch = $state<Record<string, string>>({});
+  let groupLimit = $state<Record<string, number>>({});
+
+  function getGroupLimit(key: string): number {
+    return groupLimit[key] ?? 20;
+  }
+  function loadMoreGroup(key: string, delta = 50) {
+    groupLimit[key] = (groupLimit[key] ?? 20) + delta;
+  }
+  function showAllGroup(key: string, total: number) {
+    groupLimit[key] = total;
+  }
+
+  function maskKey(key: string): string {
+    if (!key) return '';
+    const clean = key.trim();
+    if (clean.length <= 14) return '••••••••';
+    return clean.slice(0, 7) + '...' + clean.slice(-4);
+  }
+
+  function getProviderDomain(key: string, baseURL: string): string {
+    const k = (key || '').toLowerCase();
+    if (k.includes('xai') || k === 'x') return 'x.ai';
+    if (k.includes('mimo') || k.includes('xiaomi')) return 'xiaomimimo.com';
+    if (k.includes('openai')) return 'openai.com';
+    if (k.includes('deepseek')) return 'deepseek.com';
+    if (k.includes('openrouter')) return 'openrouter.ai';
+    if (k.includes('anthropic')) return 'anthropic.com';
+    if (k.includes('gemini') || k.includes('google')) return 'google.com';
+    if (k.includes('groq')) return 'groq.com';
+    if (k.includes('cerebras')) return 'cerebras.ai';
+    if (k.includes('commandcode')) return 'commandcode.ai';
+    if (k.includes('kilo')) return 'kilo.ai';
+    if (k.includes('nvidia')) return 'nvidia.com';
+    if (k.includes('cline')) return 'cline.bot';
+    if (k.includes('qoder')) return 'qoder.com';
+    if (k.includes('nous')) return 'nousresearch.com';
+    if (k.includes('sumopod')) return 'sumopod.com';
+    if (k.includes('srbyte')) return 'srbyte.dev';
+    if (k.includes('octalabs')) return 'octalabs.id';
+    if (baseURL) {
+      try {
+        const u = new URL(baseURL);
+        return u.hostname.replace(/^www\./, '').replace(/^api\./, '');
+      } catch {}
+    }
+    return '';
+  }
+
+  async function bulkEnableGroup(groupLabel: string, ids: string[]) {
+    if (!ids.length) return;
+    try {
+      const res = await api.post<any>('/api/connections/bulk-enable', { ids });
+      showToast(`Activated ${res.enabled_count ?? ids.length} accounts in ${groupLabel}`, 'success', 3000);
+      await fetchConnections();
+    } catch (e: any) {
+      showToast('Failed to activate: ' + e.message, 'error');
+    }
+  }
+
+  async function bulkDisableGroup(groupLabel: string, ids: string[]) {
+    if (!ids.length) return;
+    try {
+      const res = await api.post<any>('/api/connections/bulk-disable', { ids });
+      showToast(`Disabled ${res.disabled_count ?? ids.length} accounts in ${groupLabel}`, 'success', 3000);
+      await fetchConnections();
+    } catch (e: any) {
+      showToast('Failed to disable: ' + e.message, 'error');
+    }
+  }
+
   // Pool editing state
   let poolEditText = $state('');
 
   const filteredConnections = $derived.by(() => {
-    if (!searchQuery.trim()) return connections;
+    let list = connections;
+    if (statusFilter === 'active') {
+      list = list.filter(c => c.is_active);
+    } else if (statusFilter === 'inactive') {
+      list = list.filter(c => !c.is_active);
+    } else if (statusFilter === 'pooled') {
+      list = list.filter(c => !!c.pool_id);
+    }
+    if (!searchQuery.trim()) return list;
     const q = searchQuery.toLowerCase();
-    return connections.filter(c =>
+    return list.filter(c =>
       c.name?.toLowerCase().includes(q) ||
       c.format?.toLowerCase().includes(q) ||
-      c.pool_id?.toLowerCase().includes(q)
+      c.pool_id?.toLowerCase().includes(q) ||
+      c.base_url?.toLowerCase().includes(q)
     );
   });
   // Sort state for connections table
@@ -258,6 +340,8 @@
   const summary = $derived({
     total: connections.length,
     active: connections.filter(c => c.is_active).length,
+    inactive: connections.filter(c => !c.is_active).length,
+    pooled: connections.filter(c => !!c.pool_id).length,
     formats: [...new Set(connections.map(c => c.format))].length,
     pools: pools.length
   });
@@ -1056,16 +1140,50 @@
   <div class="conn-toolbar">
     <div class="conn-toolbar-left">
       <h2 class="conn-toolbar-title">Connections</h2>
-      {#if searchQuery.trim()}
-        <span class="conn-toolbar-count">{filteredConnections.length}/{connections.length}</span>
-      {/if}
+      <div class="conn-filter-chips">
+        <button 
+          class="filter-chip" 
+          class:active={statusFilter === 'all'} 
+          onclick={() => statusFilter = 'all'}
+        >
+          All <span class="chip-count">{summary.total}</span>
+        </button>
+        <button 
+          class="filter-chip chip-active" 
+          class:active={statusFilter === 'active'} 
+          onclick={() => statusFilter = 'active'}
+        >
+          <span class="status-dot-sm active"></span>
+          Active <span class="chip-count">{summary.active}</span>
+        </button>
+        {#if summary.inactive > 0}
+          <button 
+            class="filter-chip chip-inactive" 
+            class:active={statusFilter === 'inactive'} 
+            onclick={() => statusFilter = 'inactive'}
+          >
+            <span class="status-dot-sm inactive"></span>
+            Inactive <span class="chip-count">{summary.inactive}</span>
+          </button>
+        {/if}
+        {#if summary.pooled > 0}
+          <button 
+            class="filter-chip chip-pooled" 
+            class:active={statusFilter === 'pooled'} 
+            onclick={() => statusFilter = 'pooled'}
+          >
+            <Layers size={11} />
+            Pooled <span class="chip-count">{summary.pooled}</span>
+          </button>
+        {/if}
+      </div>
     </div>
     <div class="conn-toolbar-center">
       <div class="conn-search-wrap">
         <Search size={14} class="conn-search-icon" />
         <input
           class="input-field conn-search-input"
-          placeholder="Search connections..."
+          placeholder="Search name, key, url, pool..."
           bind:value={searchQuery}
         />
         {#if searchQuery}
@@ -1802,16 +1920,42 @@
           {#if isSingle}
             <!-- Single connection: render card directly without group wrapper -->
             {@const conn = group.connections[0]}
+            {@const dom = getProviderDomain(conn.name, conn.base_url)}
             <div class="card conn-card" class:conn-inactive={!conn.is_active}>
               <div class="conn-card-header">
                 <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
+                {#if dom}
+                  <img 
+                    src={faviconUrl(dom, 32)} 
+                    alt="" 
+                    class="conn-card-favicon" 
+                    onerror={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }}
+                  />
+                {/if}
                 <span class="conn-card-name" title={conn.name}>{conn.name}</span>
                 <span class="badge conn-format-badge">{conn.format}</span>
                 <span class="conn-card-priority" title="Priority">P{conn.priority}</span>
               </div>
               <div class="conn-card-meta">
                 {#if conn.api_key}
-                  <span class="conn-card-key" title={conn.api_key}>{conn.api_key}</span>
+                  <div class="conn-key-pill" title={conn.api_key}>
+                    <span class="conn-key-text">{maskKey(conn.api_key)}</span>
+                    <button 
+                      class="conn-key-copy-btn" 
+                      onclick={async (e) => { 
+                        e.stopPropagation(); 
+                        try { 
+                          await navigator.clipboard.writeText(conn.api_key || ''); 
+                          showToast('API key copied', 'success', 2000); 
+                        } catch { 
+                          showToast('Copy failed', 'error'); 
+                        } 
+                      }} 
+                      title="Copy API key"
+                    >
+                      <Copy size={11} />
+                    </button>
+                  </div>
                 {:else if conn.oauth_provider}
                   <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
                 {/if}
@@ -1829,7 +1973,14 @@
                       ⚡ {balances[conn.id].rate_info}
                     </span>
                   {/if}
-                  <span class="conn-card-models" title="Models">{conn.models_count || 0} models</span>
+                  <button 
+                    class="badge conn-card-models-btn" 
+                    onclick={() => openModelsViewer(conn)}
+                    title="Click to view {conn.models_count || 0} models"
+                  >
+                    <Cpu size={11} />
+                    <span>{conn.models_count || 0} models</span>
+                  </button>
                 </div>
                 {#if balances[conn.id]?.rate_windows?.length}
                   <div class="conn-balance-detail">
@@ -1893,6 +2044,8 @@
 
           {:else}
             <!-- Multi-connection group -->
+            {@const dom = getProviderDomain(group.label, group.baseURL)}
+            {@const pctActive = group.connections.length > 0 ? Math.round((group.active / group.connections.length) * 100) : 0}
             <div class="conn-group" class:collapsed={isCollapsed}>
               <div 
                 class="conn-group-header" 
@@ -1903,6 +2056,14 @@
               >
                 <div class="conn-group-header-left">
                   <span class="conn-group-chevron" class:rotated={!isCollapsed}><ChevronRight size={16} /></span>
+                  {#if dom}
+                    <img 
+                      src={faviconUrl(dom, 32)} 
+                      alt="" 
+                      class="provider-header-favicon" 
+                      onerror={(e) => { (e.currentTarget as HTMLElement).style.display = 'none'; }}
+                    />
+                  {/if}
                   <span class="conn-group-label">{group.label}</span>
                   {#each [...group.formats] as fmt}
                     <span class="badge conn-format-badge">{fmt}</span>
@@ -1911,32 +2072,91 @@
                 </div>
                 <div class="conn-group-header-right">
                   <span class="conn-group-url" title={group.baseURL}>{group.baseURL}</span>
-                  <span class="conn-group-stat">
-                    <span class="conn-group-stat-dot active"></span>
-                    {group.active}/{group.connections.length}
-                  </span>
+                  
+                  <!-- Health Mini-Bar -->
+                  <div class="conn-group-health-wrap" title="{group.active} active out of {group.connections.length} ({pctActive}%)">
+                    <div class="conn-group-health-bar">
+                      <div 
+                        class="conn-group-health-fill" 
+                        style="width: {pctActive}%; background: {pctActive === 100 ? 'var(--color-success)' : pctActive === 0 ? 'var(--color-error)' : 'var(--color-warning)'};"
+                      ></div>
+                    </div>
+                    <span class="conn-group-health-text">{group.active}/{group.connections.length}</span>
+                  </div>
+
                   {#if group.totalModels > 0}
                     <span class="conn-group-stat">
                       <Cpu size={12} />
                       {group.totalModels} models
                     </span>
                   {/if}
-                  <button
-                    class="btn-secondary conn-action-btn flex items-center gap-1"
-                    style="padding: 3px 8px; font-size: 11px; margin-left: 6px;"
-                    onclick={(e) => { e.stopPropagation(); startBulkTest(group.label, group.connections.map(c => c.id)); }}
-                    disabled={bulkTesting}
-                    title="Test all {group.connections.length} keys in {group.label}"
-                  >
-                    <Zap size={12} style="color: var(--color-primary);" />
-                    <span>Test All</span>
-                  </button>
+
+                  <div class="conn-group-header-actions" onclick={(e) => e.stopPropagation()}>
+                    <button
+                      class="btn-secondary conn-action-btn flex items-center gap-1"
+                      style="padding: 3px 8px; font-size: 11px;"
+                      onclick={() => startBulkTest(group.label, group.connections.map(c => c.id))}
+                      disabled={bulkTesting}
+                      title="Test all {group.connections.length} keys in {group.label}"
+                    >
+                      <Zap size={12} style="color: var(--color-primary);" />
+                      <span>Test All</span>
+                    </button>
+                    {#if group.active < group.connections.length}
+                      <button
+                        class="btn-secondary conn-action-btn"
+                        style="padding: 3px 8px; font-size: 11px;"
+                        onclick={() => bulkEnableGroup(group.label, group.connections.filter(c => !c.is_active).map(c => c.id))}
+                        title="Enable all inactive accounts in {group.label}"
+                      >
+                        <span>Enable All</span>
+                      </button>
+                    {/if}
+                    {#if group.active > 0}
+                      <button
+                        class="btn-secondary conn-action-btn"
+                        style="padding: 3px 8px; font-size: 11px;"
+                        onclick={() => bulkDisableGroup(group.label, group.connections.filter(c => c.is_active).map(c => c.id))}
+                        title="Disable all active accounts in {group.label}"
+                      >
+                        <span>Disable All</span>
+                      </button>
+                    {/if}
+                  </div>
                 </div>
               </div>
 
               {#if !isCollapsed}
+                {@const subQ = (groupSearch[group.key] || '').toLowerCase().trim()}
+                {@const matchedConns = subQ 
+                  ? group.connections.filter(c => (c.name || '').toLowerCase().includes(subQ) || (c.api_key || '').toLowerCase().includes(subQ) || (c.pool_id || '').toLowerCase().includes(subQ))
+                  : group.connections}
+                {@const limit = getGroupLimit(group.key)}
+                {@const visibleConns = matchedConns.slice(0, limit)}
                 <div class="conn-group-body">
-                  {#each group.connections as conn (conn.id)}
+
+                  {#if group.connections.length > 15}
+                    <div class="group-subtoolbar">
+                      <div class="group-subsearch-wrap">
+                        <Search size={13} class="conn-search-icon" />
+                        <input
+                          class="input-field group-subsearch-input"
+                          placeholder="Filter keys in {group.label} (name, key, pool)..."
+                          bind:value={groupSearch[group.key]}
+                        />
+                        {#if groupSearch[group.key]}
+                          <button class="conn-search-clear" onclick={() => groupSearch[group.key] = ''} aria-label="Clear">
+                            <X size={11} />
+                          </button>
+                        {/if}
+                      </div>
+                      <span class="group-subtoolbar-count">
+                        {matchedConns.length} of {group.connections.length} accounts
+                      </span>
+                    </div>
+                  {/if}
+
+                  {#each visibleConns as conn (conn.id)}
                     <div class="card conn-card conn-card-nested" class:conn-inactive={!conn.is_active}>
                       <div class="conn-card-header">
                         <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
@@ -1946,7 +2166,24 @@
                       </div>
                       <div class="conn-card-meta">
                         {#if conn.api_key}
-                          <span class="conn-card-key" title={conn.api_key}>{conn.api_key}</span>
+                          <div class="conn-key-pill" title={conn.api_key}>
+                            <span class="conn-key-text">{maskKey(conn.api_key)}</span>
+                            <button 
+                              class="conn-key-copy-btn" 
+                              onclick={async (e) => { 
+                                e.stopPropagation(); 
+                                try { 
+                                  await navigator.clipboard.writeText(conn.api_key || ''); 
+                                  showToast('API key copied', 'success', 2000); 
+                                } catch { 
+                                  showToast('Copy failed', 'error'); 
+                                } 
+                              }} 
+                              title="Copy API key"
+                            >
+                              <Copy size={11} />
+                            </button>
+                          </div>
                         {:else if conn.oauth_provider}
                           <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
                         {/if}
@@ -1963,6 +2200,14 @@
                               ⚡ {balances[conn.id].rate_info}
                             </span>
                           {/if}
+                          <button 
+                            class="badge conn-card-models-btn" 
+                            onclick={() => openModelsViewer(conn)}
+                            title="Click to view {conn.models_count || 0} models"
+                          >
+                            <Cpu size={11} />
+                            <span>{conn.models_count || 0} models</span>
+                          </button>
                         </div>
                         {#if balances[conn.id]?.rate_windows?.length}
                           <div class="conn-balance-detail">
@@ -2024,6 +2269,20 @@
                       </div>
                     </div>
                   {/each}
+
+                  {#if matchedConns.length > visibleConns.length}
+                    <div class="group-pagination-bar">
+                      <span>Showing {visibleConns.length} of {matchedConns.length} accounts in {group.label}</span>
+                      <div class="group-pagination-actions">
+                        <button class="btn-secondary" style="font-size: 11px; padding: 4px 12px;" onclick={() => loadMoreGroup(group.key, 50)}>
+                          Load 50 More
+                        </button>
+                        <button class="btn-secondary" style="font-size: 11px; padding: 4px 12px;" onclick={() => showAllGroup(group.key, matchedConns.length)}>
+                          Show All ({matchedConns.length})
+                        </button>
+                      </div>
+                    </div>
+                  {/if}
                 </div>
               {/if}
             </div>
@@ -2455,8 +2714,58 @@
   .conn-toolbar-left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 12px;
     flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .conn-filter-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .filter-chip {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--color-fg-2);
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-body);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .filter-chip:hover {
+    border-color: var(--color-border-hover);
+    color: var(--color-fg-0);
+  }
+  .filter-chip.active {
+    background: var(--color-primary-light);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+    font-weight: 600;
+  }
+  .status-dot-sm {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    display: inline-block;
+  }
+  .status-dot-sm.active {
+    background: var(--color-success);
+    box-shadow: 0 0 6px rgba(34,197,94,0.4);
+  }
+  .status-dot-sm.inactive {
+    background: var(--color-fg-3);
+  }
+  .chip-count {
+    font-size: 10px;
+    opacity: 0.8;
+    font-family: var(--font-mono);
   }
   .conn-toolbar-title {
     font-size: 17px;
@@ -2593,6 +2902,152 @@
     padding: 2px 8px;
     border-radius: 10px;
     border: 1px solid var(--color-border);
+  }
+  .provider-header-favicon {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    object-fit: contain;
+    flex-shrink: 0;
+  }
+  .conn-card-favicon {
+    width: 15px;
+    height: 15px;
+    border-radius: 3px;
+    object-fit: contain;
+    flex-shrink: 0;
+    margin-right: 2px;
+  }
+  .conn-group-health-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--color-bg-card);
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--color-border);
+  }
+  .conn-group-health-bar {
+    width: 48px;
+    height: 5px;
+    background: var(--color-bg-body);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .conn-group-health-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+  }
+  .conn-group-health-text {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    color: var(--color-fg-2);
+    font-weight: 600;
+  }
+  .conn-group-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: 4px;
+  }
+  .group-subtoolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 12px;
+    background: var(--color-bg-card);
+    border-bottom: 1px solid var(--color-border);
+  }
+  .group-subsearch-wrap {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 1;
+    max-width: 340px;
+  }
+  .group-subsearch-wrap :global(.conn-search-icon) {
+    position: absolute;
+    left: 8px;
+    color: var(--color-fg-3);
+    pointer-events: none;
+  }
+  .group-subsearch-input {
+    padding-left: 28px !important;
+    padding-right: 24px !important;
+    padding-top: 4px !important;
+    padding-bottom: 4px !important;
+    font-size: 11px !important;
+    height: 28px !important;
+    width: 100%;
+  }
+  .group-subtoolbar-count {
+    font-size: 11px;
+    color: var(--color-fg-3);
+    font-family: var(--font-mono);
+  }
+  .group-pagination-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--color-bg-card);
+    border-top: 1px solid var(--color-border);
+    font-size: 11px;
+    color: var(--color-fg-3);
+  }
+  .group-pagination-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .conn-key-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--color-bg-body);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 2px 6px;
+    max-width: fit-content;
+  }
+  .conn-key-text {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--color-fg-2);
+  }
+  .conn-key-copy-btn {
+    all: unset;
+    cursor: pointer;
+    color: var(--color-fg-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1px;
+    border-radius: 3px;
+    transition: color 0.15s;
+  }
+  .conn-key-copy-btn:hover {
+    color: var(--color-primary);
+  }
+  .conn-card-models-btn {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 2px 7px;
+    border-radius: 5px;
+    background: var(--color-bg-body);
+    border: 1px solid var(--color-border);
+    color: var(--color-fg-2);
+    transition: all 0.15s ease;
+  }
+  .conn-card-models-btn:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
   }
   .conn-group-stat {
     display: inline-flex;

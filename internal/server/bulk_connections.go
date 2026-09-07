@@ -413,3 +413,69 @@ func (s *Server) handleBulkDisableConnections(w http.ResponseWriter, r *http.Req
 		"disabled_count": disabledCount,
 	})
 }
+
+func (s *Server) handleBulkEnableConnections(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, `{"error":"use POST"}`, http.StatusMethodNotAllowed)
+		return
+	}
+	if s.db == nil {
+		http.Error(w, `{"error":"database unavailable"}`, http.StatusServiceUnavailable)
+		return
+	}
+
+	var req BulkActionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+
+	if len(req.IDs) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"success": true, "enabled_count": 0})
+		return
+	}
+
+	tx, err := s.db.Conn().Begin()
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"tx begin: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare("UPDATE connections SET is_active = 1 WHERE id = ?")
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"prepare: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	defer stmt.Close()
+
+	enabledCount := 0
+	for _, id := range req.IDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		res, err := stmt.Exec(id)
+		if err == nil {
+			if n, _ := res.RowsAffected(); n > 0 {
+				enabledCount += int(n)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"tx commit: %s"}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+
+	if s.proxy != nil {
+		s.proxy.RefreshMultiAccountPools()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"success":       true,
+		"enabled_count": enabledCount,
+	})
+}
