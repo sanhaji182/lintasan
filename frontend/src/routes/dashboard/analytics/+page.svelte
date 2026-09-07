@@ -7,7 +7,7 @@
     { label: 'Logs', path: '/dashboard/logs' },
     { label: 'Metrics', path: '/dashboard/observability' }
   ];
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -36,6 +36,9 @@
   let logs = $state<LogEntry[]>([]);
   let loading = $state(true);
   let error = $state('');
+  let eventSource: EventSource | null = null;
+  let sseConnected = $state(false);
+  let lastSseUpdate = $state<string | null>(null);
 
   const COLORS = ['#3c50e0', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316'];
 
@@ -55,7 +58,41 @@
     loading = false;
   }
 
-  onMount(loadAnalytics);
+  onMount(() => {
+    loadAnalytics();
+
+    if (typeof window !== 'undefined' && 'EventSource' in window) {
+      try {
+        eventSource = new EventSource('/api/analytics/stream');
+        eventSource.onopen = () => {
+          sseConnected = true;
+        };
+        eventSource.addEventListener('stats', (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data && stats) {
+              if (data.total_requests != null) stats.total_requests = data.total_requests;
+              if (data.avg_latency != null) stats.avg_latency = data.avg_latency;
+              if (data.cached_hits != null && stats.total_requests > 0) {
+                stats.cache_hit_rate = Math.round((data.cached_hits / stats.total_requests) * 100);
+              }
+              lastSseUpdate = new Date().toLocaleTimeString();
+            }
+          } catch {}
+        });
+        eventSource.onerror = () => {
+          sseConnected = false;
+        };
+      } catch {}
+    }
+  });
+
+  onDestroy(() => {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+  });
 
   let providerBreakdown = $derived.by(() => {
     const map = new Map<string, { requests: number; tokens: number; totalLatency: number }>();
@@ -113,7 +150,19 @@
 
 
 <div style="animation: fadeInUp 0.4s ease-out;">
-  <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 20px;">Analytics</h2>
+  <div class="flex items-center justify-between" style="margin-bottom: 20px;">
+    <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Analytics</h2>
+    <div class="flex items-center gap-2">
+      <div class="live-stream-badge" class:connected={sseConnected} title={sseConnected ? `Connected to SSE stream (last: ${lastSseUpdate || 'just now'})` : 'Connecting to live stream...'}>
+        <span class="live-pulse-dot" class:active={sseConnected}></span>
+        <span>{sseConnected ? 'Live Stream' : 'Connecting'}</span>
+      </div>
+      <button class="btn-secondary flex items-center gap-1.5" style="padding: 5px 12px; font-size: 12px;" onclick={loadAnalytics} title="Reload analytics">
+        <Clock size={13} />
+        <span>Reload</span>
+      </button>
+    </div>
+  </div>
 
   {#if loading}
     <Spinner />
@@ -231,3 +280,38 @@
     {/if}
   {/if}
 </div>
+
+<style>
+  .live-stream-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-fg-3);
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    padding: 3px 9px;
+    border-radius: 12px;
+  }
+  .live-stream-badge.connected {
+    color: var(--color-success);
+    border-color: rgba(34,197,94,0.3);
+    background: rgba(34,197,94,0.06);
+  }
+  .live-pulse-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-fg-3);
+  }
+  .live-pulse-dot.active {
+    background: var(--color-success);
+    box-shadow: 0 0 8px rgba(34,197,94,0.8);
+    animation: livePulse 2s infinite;
+  }
+  @keyframes livePulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(1.15); }
+  }
+</style>

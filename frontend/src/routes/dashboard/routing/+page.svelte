@@ -20,6 +20,8 @@
     provider: string;
     strategy: string;
     keys: string[];
+    models?: string[];
+    description?: string;
     order: number;
   }
 
@@ -130,9 +132,11 @@
       const raw = res?.data || res?.combos || [];
       combos = Array.isArray(raw) ? raw.map((c: any, i: number) => ({
         id: c.id || `combo-${i}`,
-        provider: c.provider || c.name || 'Unknown',
+        provider: c.name || c.provider || 'Unknown',
         strategy: c.strategy || 'priority',
         keys: Array.isArray(c.keys) ? c.keys : [],
+        models: Array.isArray(c.models) ? c.models : [],
+        description: c.description || '',
         order: c.order ?? i
       })) : [];
     } catch {
@@ -469,19 +473,43 @@
 
               <!-- Combo Info -->
               <div style="flex: 1; min-width: 0;">
-                <div class="flex items-center gap-2" style="margin-bottom: 4px;">
+                <div class="flex items-center gap-2" style="margin-bottom: 6px; flex-wrap: wrap;">
                   <div class="flex items-center gap-1.5">
-                    <Server size={14} style="color: var(--color-fg-2);" />
-                    <span style="font-size: 13px; font-weight: 600; color: var(--color-fg-0);">{combo.provider}</span>
+                    <Server size={14} style="color: var(--color-primary);" />
+                    <span style="font-size: 14px; font-weight: 600; color: var(--color-fg-0);">{combo.provider}</span>
                   </div>
+                  {#if combo.description}
+                    <span style="font-size: 11px; color: var(--color-fg-3);">({combo.description})</span>
+                  {/if}
                 </div>
-                <div class="flex items-center gap-2 flex-wrap">
-                  {#each combo.keys as key}
-                    <span class="badge" style="background: var(--color-border-light); color: var(--color-fg-2); font-size: 10px;">
-                      {key.slice(0, 8)}...
-                    </span>
-                  {/each}
-                </div>
+
+                <!-- Visual Failover Chain -->
+                {#if combo.models && combo.models.length > 0}
+                  <div class="flex items-center gap-1.5 flex-wrap" style="margin-top: 4px;">
+                    {#each combo.models as model, mIdx}
+                      <span class="chain-chip" class:primary-target={mIdx === 0}>
+                        <span class="chain-step-num">{mIdx + 1}</span>
+                        <span class="chain-model-name">{model}</span>
+                        {#if mIdx === 0}
+                          <span class="chain-badge primary">primary</span>
+                        {:else}
+                          <span class="chain-badge fallback">fallback</span>
+                        {/if}
+                      </span>
+                      {#if mIdx < combo.models.length - 1}
+                        <span class="chain-arrow">&rarr;</span>
+                      {/if}
+                    {/each}
+                  </div>
+                {:else if combo.keys && combo.keys.length > 0}
+                  <div class="flex items-center gap-2 flex-wrap">
+                    {#each combo.keys as key}
+                      <span class="badge" style="background: var(--color-border-light); color: var(--color-fg-2); font-size: 10px;">
+                        {key.slice(0, 8)}...
+                      </span>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             </div>
 
@@ -707,5 +735,50 @@
       flex-direction: column;
       align-items: flex-start;
     }
+  }
+
+  .chain-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--color-bg-body);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 2px 7px;
+    font-size: 11px;
+    font-family: var(--font-mono);
+  }
+  .chain-chip.primary-target {
+    border-color: rgba(59, 130, 246, 0.4);
+    background: rgba(59, 130, 246, 0.05);
+  }
+  .chain-step-num {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--color-fg-3);
+  }
+  .chain-model-name {
+    color: var(--color-fg-1);
+  }
+  .chain-badge {
+    font-size: 9px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    font-weight: 600;
+  }
+  .chain-badge.primary {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+  .chain-badge.fallback {
+    background: rgba(245, 158, 11, 0.12);
+    color: #f59e0b;
+  }
+  .chain-arrow {
+    color: var(--color-fg-3);
+    font-size: 13px;
+    font-weight: 600;
   }
 </style>

@@ -268,6 +268,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/connections/bulk-delete", s.handleBulkDeleteConnections)
 	s.mux.HandleFunc("POST /api/connections/bulk-disable", s.handleBulkDisableConnections)
 	s.mux.HandleFunc("POST /api/connections/bulk-enable", s.handleBulkEnableConnections)
+	s.mux.HandleFunc("GET /api/connections/watchdog", s.handleWatchdogStatus)
+	s.mux.HandleFunc("POST /api/connections/watchdog/run", s.handleWatchdogRun)
 
 	// Provider Preset Management (CRUD)
 	s.mux.HandleFunc("GET /api/presets", s.handleGetPresets)

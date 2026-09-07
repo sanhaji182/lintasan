@@ -3,12 +3,13 @@
   import { api } from '$lib/api';
   import {
     Send, Bot, User, Settings2, Thermometer, Hash,
-    Copy, Trash2, ChevronDown, ChevronUp
+    Copy, Trash2, ChevronDown, ChevronUp, Brain, Sparkles
   } from 'lucide-svelte';
 
   interface ChatMessage {
     role: 'user' | 'assistant' | 'system';
     content: string;
+    reasoning?: string;
     timestamp: number;
     tokens?: number;
   }
@@ -24,11 +25,39 @@
   let temperature = $state(0.7);
   let systemPrompt = $state('You are a helpful assistant.');
 
-  const availableModels = [
-    'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-3.5-turbo',
-    'claude-3.5-sonnet', 'claude-3-haiku', 'gemini-pro',
-    'llama-3.1-70b', 'mixtral-8x7b',
-  ];
+  let availableModels = $state<string[]>([
+    'gpt-4o', 'gpt-4o-mini', 'claude-3.5-sonnet', 'deepseek-chat', 'gemini-2.5-flash'
+  ]);
+
+  async function loadModelsAndCombos() {
+    try {
+      const [modelsRes, combosRes] = await Promise.all([
+        api.get<any>('/v1/models').catch(() => null),
+        api.get<any>('/api/combos').catch(() => null),
+      ]);
+      const set = new Set<string>();
+      if (combosRes) {
+        const cList = combosRes.data || combosRes.combos || (Array.isArray(combosRes) ? combosRes : []);
+        for (const c of cList) {
+          if (c.name) set.add(c.name);
+          if (c.provider) set.add(c.provider);
+        }
+      }
+      if (modelsRes?.data && Array.isArray(modelsRes.data)) {
+        for (const m of modelsRes.data) {
+          if (m.id) set.add(m.id);
+        }
+      }
+      if (set.size > 0) {
+        availableModels = Array.from(set).sort();
+        if (!availableModels.includes(selectedModel)) {
+          selectedModel = availableModels[0];
+        }
+      }
+    } catch {}
+  }
+
+  onMount(loadModelsAndCombos);
 
   let totalTokens = $derived(
     messages.reduce((sum, m) => sum + (m.tokens || 0), 0)
@@ -132,6 +161,7 @@
       const decoder = new TextDecoder();
       let buffer = '';
       let fullContent = '';
+      let fullReasoning = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -149,18 +179,33 @@
 
           try {
             const parsed = JSON.parse(data);
-            const delta = parsed.choices?.[0]?.delta?.content;
+            const delta = parsed.choices?.[0]?.delta?.content || '';
+            const rDelta = parsed.choices?.[0]?.delta?.reasoning_content || '';
+            if (rDelta) {
+              fullReasoning += rDelta;
+            }
             if (delta) {
               fullContent += delta;
-              const lastIdx = messages.length - 1;
-              messages[lastIdx] = {
-                ...messages[lastIdx],
-                content: fullContent,
-                tokens: estimateTokens(fullContent),
-              };
-              messages = [...messages];
-              scrollToBottom();
             }
+
+            // Extract <think> if embedded inside content
+            let displayContent = fullContent;
+            let displayReasoning = fullReasoning;
+            const thinkMatch = fullContent.match(/<think>([\s\S]*?)<\/think>/);
+            if (thinkMatch) {
+              if (!displayReasoning) displayReasoning = thinkMatch[1].trim();
+              displayContent = fullContent.replace(/<think>[\s\S]*?<\/think>/, '').trim();
+            }
+
+            const lastIdx = messages.length - 1;
+            messages[lastIdx] = {
+              ...messages[lastIdx],
+              content: displayContent,
+              reasoning: displayReasoning,
+              tokens: estimateTokens(displayContent + displayReasoning),
+            };
+            messages = [...messages];
+            scrollToBottom();
           } catch {
             // Skip malformed JSON
           }
@@ -365,6 +410,18 @@
                 </div>
 
                 <div class="message-bubble" class:user-bubble={msg.role === 'user'} class:assistant-bubble={msg.role === 'assistant'}>
+                  {#if msg.reasoning}
+                    <details class="reasoning-block" open={streaming && i === messages.length - 1}>
+                      <summary class="reasoning-summary">
+                        <Brain size={13} style="color: var(--color-purple);" />
+                        <span>Thinking Process</span>
+                      </summary>
+                      <div class="reasoning-text">
+                        {msg.reasoning}
+                      </div>
+                    </details>
+                  {/if}
+
                   {#if msg.content}
                     {@html renderMessage(msg.content)}
                   {:else if streaming && i === messages.length - 1}
@@ -504,6 +561,34 @@
   .user-bubble :global(.inline-code) {
     background: rgba(255, 255, 255, 0.15);
     color: #fff;
+  }
+
+  .reasoning-block {
+    margin-bottom: 10px;
+    padding: 8px 12px;
+    background: rgba(139, 92, 246, 0.06);
+    border: 1px solid rgba(139, 92, 246, 0.2);
+    border-radius: 8px;
+    font-size: 12px;
+  }
+  .reasoning-summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--color-purple);
+    user-select: none;
+  }
+  .reasoning-text {
+    margin-top: 8px;
+    color: var(--color-fg-2);
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    font-family: var(--font-mono);
+    max-height: 220px;
+    overflow-y: auto;
   }
 
   .copy-btn {
