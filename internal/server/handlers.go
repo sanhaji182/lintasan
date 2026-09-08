@@ -142,7 +142,7 @@ func (s *Server) handleModelsCatalog(w http.ResponseWriter, r *http.Request) {
 
 // Connections CRUD
 func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Conn().Query(`SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, is_active, priority, models_count, created_at, COALESCE(pool_id,'') FROM connections ORDER BY priority DESC, created_at DESC`)
+	rows, err := s.db.Conn().Query(`SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, is_active, priority, models_count, created_at, COALESCE(pool_id,''), COALESCE(chat_path,'') FROM connections ORDER BY priority DESC, created_at DESC`)
 	if err != nil {
 		http.Error(w, `{"error":"failed to query connections"}`, http.StatusInternalServerError)
 		return
@@ -161,12 +161,13 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 		ModelsCount   int    `json:"models_count"`
 		CreatedAt     string `json:"created_at"`
 		PoolID        string `json:"pool_id,omitempty"`
+		ChatPath      string `json:"chat_path,omitempty"`
 	}
 
 	var conns []ConnResponse
 	for rows.Next() {
 		var c ConnResponse
-		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.IsActive, &c.Priority, &c.ModelsCount, &c.CreatedAt, &c.PoolID); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.IsActive, &c.Priority, &c.ModelsCount, &c.CreatedAt, &c.PoolID, &c.ChatPath); err != nil {
 			continue
 		}
 		// Mask API key
