@@ -55,6 +55,12 @@ type connToTest struct {
 	format     string
 }
 
+// ccAlphaTestMu serializes CommandCode Alpha probes. Upstream WAF returns a
+// 403 HTML challenge when several /alpha/generate requests from the same IP
+// land near-simultaneously (seen when bulk-testing 5 CC accounts with the
+// default 15-worker pool). Alpha probes are cheap; serializing them is fine.
+var ccAlphaTestMu sync.Mutex
+
 func (s *Server) handleBulkTestConnections(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, `{"error":"use POST"}`, http.StatusMethodNotAllowed)
@@ -200,7 +206,9 @@ func (s *Server) executeSingleConnTest(c connToTest) BulkTestItemResult {
 	// CommandCode Alpha (format=commandcode) has no OpenAI /v1/models endpoint —
 	// probe /alpha/generate with the translated body instead.
 	if c.format == "commandcode" {
+		ccAlphaTestMu.Lock()
 		alphaStatus, alphaBody, alphaErr := pingChatAlpha(c.baseURL, key)
+		ccAlphaTestMu.Unlock()
 		latencyMs := time.Since(start).Milliseconds()
 		if alphaErr == nil && alphaStatus >= 200 && alphaStatus < 300 {
 			return BulkTestItemResult{
