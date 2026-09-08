@@ -28,6 +28,7 @@ type BulkTestItemResult struct {
 	LatencyMs   int64  `json:"latency_ms"`
 	Error       string `json:"error,omitempty"`
 	ErrorCode   int    `json:"error_code,omitempty"`
+	Format      string `json:"format,omitempty"` // connection wire format; watchdog skips auto-disable for commandcode
 }
 
 type BulkTestResponse struct {
@@ -217,6 +218,7 @@ func (s *Server) executeSingleConnTest(c connToTest) BulkTestItemResult {
 				BaseURL:   c.baseURL,
 				Status:    "ok",
 				LatencyMs: latencyMs,
+				Format:    c.format,
 			}
 		}
 		errMsg := "CommandCode Alpha unreachable"
@@ -232,6 +234,7 @@ func (s *Server) executeSingleConnTest(c connToTest) BulkTestItemResult {
 			Status:    "fail",
 			LatencyMs: latencyMs,
 			Error:     errMsg,
+			Format:    c.format,
 		}
 	}
 
@@ -246,6 +249,7 @@ func (s *Server) executeSingleConnTest(c connToTest) BulkTestItemResult {
 			Status:      "ok",
 			ModelsCount: len(models),
 			LatencyMs:   latency,
+			Format:      c.format,
 		}
 	}
 
@@ -259,6 +263,7 @@ func (s *Server) executeSingleConnTest(c connToTest) BulkTestItemResult {
 				BaseURL:   c.baseURL,
 				Status:    "ok",
 				LatencyMs: time.Since(start).Milliseconds(),
+				Format:    c.format,
 			}
 		}
 	}
@@ -276,6 +281,7 @@ func (s *Server) executeSingleConnTest(c connToTest) BulkTestItemResult {
 		LatencyMs: latency,
 		Error:     errMsg,
 		ErrorCode: status,
+		Format:    c.format,
 	}
 }
 

@@ -42,7 +42,7 @@ func (s *Server) RunKeyHealthWatchdog(autoDisableFatal bool) WatchdogReport {
 
 	// Query all active connections
 	rows, err := s.db.Conn().Query(
-		"SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'/v1/models'), COALESCE(auth_header,'Authorization'), COALESCE(auth_prefix,'Bearer ') FROM connections WHERE is_active = 1",
+		"SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'/v1/models'), COALESCE(auth_header,'Authorization'), COALESCE(auth_prefix,'Bearer '), COALESCE(format,'') FROM connections WHERE is_active = 1",
 	)
 	if err != nil {
 		return WatchdogReport{LastRunAt: time.Now().UTC().Format(time.RFC3339), Running: false}
@@ -52,7 +52,7 @@ func (s *Server) RunKeyHealthWatchdog(autoDisableFatal bool) WatchdogReport {
 	var targets []connToTest
 	for rows.Next() {
 		var c connToTest
-		if err := rows.Scan(&c.id, &c.name, &c.baseURL, &c.apiKey, &c.oauthProv, &c.modelsPath, &c.authHeader, &c.authPrefix); err == nil {
+		if err := rows.Scan(&c.id, &c.name, &c.baseURL, &c.apiKey, &c.oauthProv, &c.modelsPath, &c.authHeader, &c.authPrefix, &c.format); err == nil {
 			targets = append(targets, c)
 		}
 	}
@@ -103,7 +103,12 @@ func (s *Server) RunKeyHealthWatchdog(autoDisableFatal bool) WatchdogReport {
 			report.HealthyCount++
 		} else {
 			report.FailedCount++
-			if autoDisableFatal && (res.ErrorCode == 401 || res.ErrorCode == 402 || res.ErrorCode == 403 || res.ErrorCode == 404) {
+			// Auto-disable only for definitively fatal auth/route errors on
+			// OpenAI-style endpoints. CommandCode Alpha (format=commandcode)
+			// returns 403/404 for WAF / missing-route conditions that are NOT
+			// fatal — those accounts must not be disabled. Its CC branch in
+			// executeSingleConnTest leaves ErrorCode=0 for that reason.
+			if autoDisableFatal && res.Format != "commandcode" && (res.ErrorCode == 401 || res.ErrorCode == 402 || res.ErrorCode == 403 || res.ErrorCode == 404) {
 				report.DisabledIDs = append(report.DisabledIDs, res.ID)
 			}
 		}
