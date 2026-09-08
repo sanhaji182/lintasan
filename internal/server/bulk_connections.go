@@ -52,6 +52,7 @@ type connToTest struct {
 	modelsPath string
 	authHeader string
 	authPrefix string
+	format     string
 }
 
 func (s *Server) handleBulkTestConnections(w http.ResponseWriter, r *http.Request) {
@@ -74,13 +75,13 @@ func (s *Server) handleBulkTestConnections(w http.ResponseWriter, r *http.Reques
 	var args []any
 
 	if len(req.IDs) > 0 {
-		query = "SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'/v1/models'), COALESCE(auth_header,'Authorization'), COALESCE(auth_prefix,'Bearer ') FROM connections WHERE id = ?"
+		query = "SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'/v1/models'), COALESCE(auth_header,'Authorization'), COALESCE(auth_prefix,'Bearer '), COALESCE(format,'') FROM connections WHERE id = ?"
 	} else if strings.TrimSpace(req.BaseURL) != "" {
-		query = "SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'/v1/models'), COALESCE(auth_header,'Authorization'), COALESCE(auth_prefix,'Bearer ') FROM connections WHERE base_url = ?"
+		query = "SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'/v1/models'), COALESCE(auth_header,'Authorization'), COALESCE(auth_prefix,'Bearer '), COALESCE(format,'') FROM connections WHERE base_url = ?"
 		args = append(args, strings.TrimSpace(req.BaseURL))
 	} else {
 		// All connections
-		query = "SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'/v1/models'), COALESCE(auth_header,'Authorization'), COALESCE(auth_prefix,'Bearer ') FROM connections"
+		query = "SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'/v1/models'), COALESCE(auth_header,'Authorization'), COALESCE(auth_prefix,'Bearer '), COALESCE(format,'') FROM connections"
 	}
 
 	var targets []connToTest
@@ -97,7 +98,7 @@ func (s *Server) handleBulkTestConnections(w http.ResponseWriter, r *http.Reques
 				continue
 			}
 			var c connToTest
-			if err := stmt.QueryRow(id).Scan(&c.id, &c.name, &c.baseURL, &c.apiKey, &c.oauthProv, &c.modelsPath, &c.authHeader, &c.authPrefix); err == nil {
+			if err := stmt.QueryRow(id).Scan(&c.id, &c.name, &c.baseURL, &c.apiKey, &c.oauthProv, &c.modelsPath, &c.authHeader, &c.authPrefix, &c.format); err == nil {
 				targets = append(targets, c)
 			}
 		}
@@ -110,7 +111,7 @@ func (s *Server) handleBulkTestConnections(w http.ResponseWriter, r *http.Reques
 		defer rows.Close()
 		for rows.Next() {
 			var c connToTest
-			if err := rows.Scan(&c.id, &c.name, &c.baseURL, &c.apiKey, &c.oauthProv, &c.modelsPath, &c.authHeader, &c.authPrefix); err == nil {
+			if err := rows.Scan(&c.id, &c.name, &c.baseURL, &c.apiKey, &c.oauthProv, &c.modelsPath, &c.authHeader, &c.authPrefix, &c.format); err == nil {
 				targets = append(targets, c)
 			}
 		}
@@ -195,6 +196,36 @@ func (s *Server) executeSingleConnTest(c connToTest) BulkTestItemResult {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 7*time.Second)
 	defer cancel()
+
+	// CommandCode Alpha (format=commandcode) has no OpenAI /v1/models endpoint —
+	// probe /alpha/generate with the translated body instead.
+	if c.format == "commandcode" {
+		alphaStatus, alphaBody, alphaErr := pingChatAlpha(c.baseURL, key)
+		latencyMs := time.Since(start).Milliseconds()
+		if alphaErr == nil && alphaStatus >= 200 && alphaStatus < 300 {
+			return BulkTestItemResult{
+				ID:        c.id,
+				Name:      c.name,
+				BaseURL:   c.baseURL,
+				Status:    "ok",
+				LatencyMs: latencyMs,
+			}
+		}
+		errMsg := "CommandCode Alpha unreachable"
+		if alphaErr != nil {
+			errMsg = alphaErr.Error()
+		} else if alphaStatus > 0 {
+			errMsg = fmt.Sprintf("HTTP %d: %s", alphaStatus, truncateBody(alphaBody, 200))
+		}
+		return BulkTestItemResult{
+			ID:        c.id,
+			Name:      c.name,
+			BaseURL:   c.baseURL,
+			Status:    "fail",
+			LatencyMs: latencyMs,
+			Error:     errMsg,
+		}
+	}
 
 	models, status, _, err := fetchModelsWithContext(ctx, c.baseURL, path, key, c.authHeader, c.authPrefix)
 	latency := time.Since(start).Milliseconds()

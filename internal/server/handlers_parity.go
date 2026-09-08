@@ -1,6 +1,7 @@
 package server
 
 import (
+    "bytes"
     "database/sql"
     "encoding/json"
     "fmt"
@@ -274,6 +275,36 @@ func pingChat(base, key, h, prefix string)(int,[]byte,error){
     return resp.StatusCode,b,nil
 }
 
+// pingChatAlpha tests a CommandCode Alpha connection by sending a minimal
+// chat request to /alpha/generate (format=commandcode). Alpha only supports
+// streaming SSE and needs a valid UUID threadId plus the version header, so a
+// plain OpenAI chat ping would 404/400. Returns (status, firstSSEEvents, err).
+func pingChatAlpha(base, key string) (int, []byte, error) {
+    if base == "" { return 0, nil, fmt.Errorf("base_url required") }
+    url := provider.JoinUpstreamPath(base, "/alpha/generate")
+
+    // Reuse the existing proxy translator to build a valid CC Alpha body from
+    // an OpenAI-style ping payload.
+    openaiBody := []byte(`{"model":"deepseek/deepseek-v4-pro","messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}`)
+    alphaBody := transformForCommandCode(openaiBody, "disabled")
+
+    req, err := http.NewRequest("POST", url, bytes.NewReader(alphaBody))
+    if err != nil { return 0, nil, err }
+    if key != "" { req.Header.Set("Authorization", "Bearer "+key) }
+    req.Header.Set("Content-Type", "application/json")
+    req.Header.Set("x-command-code-version", "0.26.25")
+
+    c := &http.Client{Timeout: 30 * time.Second}
+    resp, err := c.Do(req)
+    if err != nil { return 0, nil, err }
+    defer resp.Body.Close()
+    // Read enough of the SSE stream to confirm the request is accepted (start
+    // event) and capture any immediate error. Alpha streams until completion;
+    // we cap the read so tests don't hang on long generations.
+    b, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+    return resp.StatusCode, b, nil
+}
+
 func truncateBody(b []byte, n int) string { if len(b)<=n { return string(b) }; return string(b[:n])+"..." }
 
 func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
@@ -284,16 +315,20 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
     oauthFromIn,_:=in["oauth_provider"].(string)
     if strings.TrimSpace(oauthFromIn)!="" { oauthProv=strings.TrimSpace(oauthFromIn) }
     path,_:=in["models_path"].(string); if path==""{path,_=in["modelsPath"].(string)}; if path==""{path="/v1/models"}
+    // Connection metadata recovered from DB when only an id is supplied; used
+    // to route format=commandcode (CC Alpha) tests through /alpha/generate.
+    var formatFromDB string
     // If only an id was supplied (list-view Test button), look up the saved
     // connection from the DB so we can re-test it without re-typing the key.
     if base=="" {
         if id,_:=in["id"].(string); id!="" {
-            var dbBase, dbKey, dbOAuth, dbModelsPath string
-            err:=s.db.Conn().QueryRow("SELECT base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,'') FROM connections WHERE id=?", id).Scan(&dbBase, &dbKey, &dbOAuth, &dbModelsPath)
+            var dbBase, dbKey, dbOAuth, dbModelsPath, dbFormat string
+            err:=s.db.Conn().QueryRow("SELECT base_url, api_key, COALESCE(oauth_provider,''), COALESCE(models_path,''), COALESCE(format,'') FROM connections WHERE id=?", id).Scan(&dbBase, &dbKey, &dbOAuth, &dbModelsPath, &dbFormat)
             if err==nil {
                 base=dbBase
                 oauthProv=strings.TrimSpace(dbOAuth)
                 if key=="" && oauthProv=="" { key=dbKey }
+                formatFromDB = strings.TrimSpace(dbFormat)
                 // Use the connection's stored models_path when the caller did
                 // not pass one — the default /v1/models double-version-segments
                 // bases that already end in /v1 (e.g. NVIDIA) into /v1/v1/models.
@@ -318,6 +353,34 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
         return
     }
     start:=time.Now()
+
+    // CommandCode Alpha (format=commandcode) has no /v1/models and rejects
+    // OpenAI-style chat on /v1/chat/completions — probe /alpha/generate with
+    // the translated body instead of the generic fetchModels path.
+    if formatFromDB == "commandcode" {
+        alphaStatus, alphaBody, alphaErr := pingChatAlpha(base, key)
+        latency := time.Since(start).Milliseconds()
+        if alphaErr != nil {
+            e := errfmt.FromNetworkError(alphaErr)
+            errfmt.Write(w, http.StatusBadGateway, e, nil, map[string]any{
+                "success": false, "latency_ms": latency, "hint": errfmt.HintForMessage(e.Message),
+            })
+            return
+        }
+        alphaStatusOK := alphaStatus >= 200 && alphaStatus < 300
+        if alphaStatusOK {
+            msg := fmt.Sprintf("CommandCode Alpha reachable · %dms", latency)
+            errfmt.Write(w, http.StatusOK, nil, nil, map[string]any{
+                "success": true, "message": msg, "latency_ms": latency, "models_count": 0, "fallback": "cc_alpha",
+            })
+            return
+        }
+        e := errfmt.FromStatus(alphaStatus, alphaBody, fmt.Sprintf("CommandCode Alpha status %d", alphaStatus))
+        errfmt.Write(w, http.StatusBadGateway, e, nil, map[string]any{
+            "success": false, "latency_ms": latency, "hint": errfmt.HintForMessage(e.Message),
+        })
+        return
+    }
 
     models,status,body,err:=fetchModels(base,path,key,"Authorization","Bearer ")
     latency:=time.Since(start).Milliseconds()
