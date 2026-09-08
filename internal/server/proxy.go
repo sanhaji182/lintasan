@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"database/sql"
@@ -734,7 +735,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 					b = transformedResp
 				}
 			}
-			if hedgeConn.Format == "commandcode" {
+			if hedgeConn.Format == "commandcode" && hedgeResp.StatusCode >= 200 && hedgeResp.StatusCode < 300 {
 				b = translateCCAlphaToOpenAI(b)
 			}
 			b = reasoning.ExtractReasoningContent(b)
@@ -1013,7 +1014,9 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			flusher, ok := w.(http.Flusher)
 
 			var streamBuffer []byte
-			if !ok {
+			if conn.Format == "commandcode" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				streamBuffer, tokensOut = p.pipeCCAlphaStreamToOpenAI(resp.Body, w, flusher, resolvedModel)
+			} else if !ok {
 				b, _ := io.ReadAll(resp.Body)
 				w.Write(b)
 				streamBuffer = b
@@ -1080,8 +1083,8 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			}
 		}
 
-		// Translate CC Alpha SSE → OpenAI JSON
-		if conn.Format == "commandcode" {
+		// Translate CC Alpha SSE → OpenAI JSON (only for successful responses)
+		if conn.Format == "commandcode" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			b = translateCCAlphaToOpenAI(b)
 		}
 
@@ -1222,9 +1225,11 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 	if xcc := r.Header.Get("X-Command-Code-Version"); xcc != "" {
 		upReq.Header.Set("X-Command-Code-Version", xcc)
 	}
-	// CommandCode Alpha requires version header
+	// CommandCode Alpha requires version and CLI headers
 	if conn.Format == "commandcode" {
 		upReq.Header.Set("x-command-code-version", "0.26.25")
+		upReq.Header.Set("x-cli-environment", "cli")
+		upReq.Header.Set("User-Agent", "command-code/0.26.25 linux-x64")
 	}
 	return p.client.Do(upReq)
 }
@@ -1328,6 +1333,25 @@ func transformForCommandCode(body []byte, thinkingMode string) []byte {
 // JSON chat completion response. CC Alpha streams line-delimited JSON events with
 // types like "text-delta", "reasoning-delta", "finish", "provider-metadata", etc.
 func translateCCAlphaToOpenAI(raw []byte) []byte {
+	var errCheck struct {
+		Success *bool `json:"success"`
+		Error   *struct {
+			Message string `json:"message"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &errCheck); err == nil && errCheck.Error != nil {
+		errResp := map[string]any{
+			"error": map[string]any{
+				"message": errCheck.Error.Message,
+				"type":    "upstream_error",
+				"code":    errCheck.Error.Code,
+			},
+		}
+		out, _ := json.Marshal(errResp)
+		return out
+	}
+
 	lines := strings.Split(string(raw), "\n")
 	var contentText, reasoningText strings.Builder
 	var finishReason string
@@ -1401,6 +1425,10 @@ func translateCCAlphaToOpenAI(raw []byte) []byte {
 	content := strings.TrimSpace(contentText.String())
 	reasoning := strings.TrimSpace(reasoningText.String())
 
+	if content == "" && reasoning == "" && finishReason == "" {
+		return raw
+	}
+
 	if modelUsed == "" {
 		modelUsed = "deepseek-v4-pro"
 	}
@@ -1435,6 +1463,119 @@ func translateCCAlphaToOpenAI(raw []byte) []byte {
 
 	out, _ := json.Marshal(resp)
 	return out
+}
+
+// pipeCCAlphaStreamToOpenAI reads raw line-delimited NDJSON events from CommandCode Alpha
+// and streams them as standard OpenAI SSE chunks (data: {...}\n\n) to the client writer.
+func (p *ProxyHandler) pipeCCAlphaStreamToOpenAI(body io.Reader, w http.ResponseWriter, flusher http.Flusher, model string) ([]byte, int) {
+	scanner := bufio.NewScanner(body)
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 256*1024)
+
+	var streamBuffer bytes.Buffer
+	reqID := "chatcmpl-" + uuid.New().String()[:12]
+	created := time.Now().Unix()
+	tokensOut := 0
+
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 || bytes.Equal(line, []byte("null")) || line[0] != '{' {
+			continue
+		}
+
+		var event map[string]any
+		if err := json.Unmarshal(line, &event); err != nil {
+			continue
+		}
+
+		typ, _ := event["type"].(string)
+		switch typ {
+		case "text-delta":
+			if t, ok := event["text"].(string); ok && t != "" {
+				chunk := map[string]any{
+					"id":      reqID,
+					"object":  "chat.completion.chunk",
+					"created": created,
+					"model":   model,
+					"choices": []map[string]any{
+						{
+							"index":         0,
+							"delta":         map[string]any{"content": t},
+							"finish_reason": nil,
+						},
+					},
+				}
+				if chunkBytes, err := json.Marshal(chunk); err == nil {
+					w.Write([]byte("data: "))
+					w.Write(chunkBytes)
+					w.Write([]byte("\n\n"))
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
+				streamBuffer.WriteString(t)
+				tokensOut++
+			}
+		case "reasoning-delta":
+			if t, ok := event["text"].(string); ok && t != "" {
+				chunk := map[string]any{
+					"id":      reqID,
+					"object":  "chat.completion.chunk",
+					"created": created,
+					"model":   model,
+					"choices": []map[string]any{
+						{
+							"index":         0,
+							"delta":         map[string]any{"reasoning_content": t},
+							"finish_reason": nil,
+						},
+					},
+				}
+				if chunkBytes, err := json.Marshal(chunk); err == nil {
+					w.Write([]byte("data: "))
+					w.Write(chunkBytes)
+					w.Write([]byte("\n\n"))
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
+				tokensOut++
+			}
+		case "finish", "finish-step":
+			fr := "stop"
+			if rfr, ok := event["finishReason"].(string); ok && rfr != "" {
+				fr = rfr
+			}
+			chunk := map[string]any{
+				"id":      reqID,
+				"object":  "chat.completion.chunk",
+				"created": created,
+				"model":   model,
+				"choices": []map[string]any{
+					{
+						"index":         0,
+						"delta":         map[string]any{},
+						"finish_reason": fr,
+					},
+				},
+			}
+			if chunkBytes, err := json.Marshal(chunk); err == nil {
+				w.Write([]byte("data: "))
+				w.Write(chunkBytes)
+				w.Write([]byte("\n\n"))
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+		}
+	}
+
+	w.Write([]byte("data: [DONE]\n\n"))
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	return streamBuffer.Bytes(), tokensOut
 }
 
 func (p *ProxyHandler) resolveRoute(model string) ([]*Connection, string, string, error) {
