@@ -368,3 +368,75 @@ func TestWebhookCreate_NoActionField(t *testing.T) {
 		t.Fatalf("expected new webhook active=true, got %v", hooks[0])
 	}
 }
+
+func TestHandlePatchConnection_IsActiveTypes(t *testing.T) {
+	s := newRESTTestServer(t)
+
+	// Insert test connection with is_active = 0
+	connID := "test-patch-conn-1"
+	_, err := s.db.Conn().Exec(
+		"INSERT INTO connections (id, name, base_url, api_key, format, is_active) VALUES (?, ?, ?, ?, ?, ?)",
+		connID, "test-conn", "https://api.example.com", "sk-12345678", "openai", 0,
+	)
+	if err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+
+	// 1. Test patching with boolean `true`
+	rec := httptest.NewRecorder()
+	s.handlePatchConnection(rec, reqWithPath("PATCH", "/api/connections", map[string]any{
+		"id":        connID,
+		"is_active": true,
+	}, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch is_active true: got %d, want 200", rec.Code)
+	}
+
+	var isActive int
+	s.db.Conn().QueryRow("SELECT is_active FROM connections WHERE id = ?", connID).Scan(&isActive)
+	if isActive != 1 {
+		t.Fatalf("expected is_active=1 after patching with bool true, got %d", isActive)
+	}
+
+	// 2. Test patching with boolean `false`
+	rec = httptest.NewRecorder()
+	s.handlePatchConnection(rec, reqWithPath("PATCH", "/api/connections", map[string]any{
+		"id":        connID,
+		"is_active": false,
+	}, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch is_active false: got %d, want 200", rec.Code)
+	}
+	s.db.Conn().QueryRow("SELECT is_active FROM connections WHERE id = ?", connID).Scan(&isActive)
+	if isActive != 0 {
+		t.Fatalf("expected is_active=0 after patching with bool false, got %d", isActive)
+	}
+
+	// 3. Test patching with integer 1
+	rec = httptest.NewRecorder()
+	s.handlePatchConnection(rec, reqWithPath("PATCH", "/api/connections", map[string]any{
+		"id":        connID,
+		"is_active": 1,
+	}, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch is_active int 1: got %d, want 200", rec.Code)
+	}
+	s.db.Conn().QueryRow("SELECT is_active FROM connections WHERE id = ?", connID).Scan(&isActive)
+	if isActive != 1 {
+		t.Fatalf("expected is_active=1 after patching with int 1, got %d", isActive)
+	}
+
+	// 4. Test patching with integer 0
+	rec = httptest.NewRecorder()
+	s.handlePatchConnection(rec, reqWithPath("PATCH", "/api/connections", map[string]any{
+		"id":        connID,
+		"is_active": 0,
+	}, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch is_active int 0: got %d, want 200", rec.Code)
+	}
+	s.db.Conn().QueryRow("SELECT is_active FROM connections WHERE id = ?", connID).Scan(&isActive)
+	if isActive != 0 {
+		t.Fatalf("expected is_active=0 after patching with int 0, got %d", isActive)
+	}
+}

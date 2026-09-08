@@ -709,10 +709,14 @@
   }
 
   async function toggleActive(conn: any) {
+    const nextActive = conn.is_active ? 0 : 1;
     try {
-      await api.patch('/api/connections', { id: conn.id, is_active: !conn.is_active });
-      connections = connections.map(c => c.id === conn.id ? { ...c, is_active: !c.is_active } : c);
-    } catch (e: any) { error = e.message; }
+      await api.patch('/api/connections', { id: conn.id, is_active: nextActive });
+      connections = connections.map(c => c.id === conn.id ? { ...c, is_active: nextActive } : c);
+    } catch (e: any) {
+      error = e.message;
+      showToast('Gagal mengubah status koneksi: ' + e.message, 'error');
+    }
   }
 
   let connTestStatus = $state<Record<string, { ok: boolean; latency?: number; error?: string }>>({});

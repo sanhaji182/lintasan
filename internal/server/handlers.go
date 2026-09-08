@@ -354,69 +354,96 @@ func (s *Server) handleGetConnectionPools(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		ID            string  `json:"id"`
-		Name          *string `json:"name"`
-		BaseURL       *string `json:"base_url"`
-		APIKey        *string `json:"api_key"`
-		OAuthProvider *string `json:"oauth_provider"`
-		IsActive      *int    `json:"is_active"`
-		PoolID        *string `json:"pool_id"`
+	var raw map[string]any
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&raw)
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		// Body may be empty (frontend sends id as query param). Use zero values.
+	if raw == nil {
+		raw = make(map[string]any)
 	}
-	// Accept id from query param if not in body (frontend sends as query)
-	if input.ID == "" {
-		input.ID = r.URL.Query().Get("id")
+	id, _ := raw["id"].(string)
+	if id == "" {
+		id = r.URL.Query().Get("id")
 	}
-	if input.ID == "" {
+	if id == "" {
 		http.Error(w, `{"error":{"message":"id is required"}}`, http.StatusBadRequest)
 		return
 	}
 
 	var updates []string
 	var args []any
-	if input.Name != nil {
+	if name, ok := raw["name"].(string); ok {
 		updates = append(updates, "name = ?")
-		args = append(args, *input.Name)
+		args = append(args, name)
 	}
-	if input.BaseURL != nil {
+	if baseURL, ok := raw["base_url"].(string); ok {
 		updates = append(updates, "base_url = ?")
-		args = append(args, *input.BaseURL)
+		args = append(args, baseURL)
 	}
-	if input.IsActive != nil {
-		updates = append(updates, "is_active = ?")
-		args = append(args, *input.IsActive)
-	}
-	if input.APIKey != nil {
-		newKey := *input.APIKey
-		if !(strings.Contains(newKey, "...") && len(newKey) < 20) {
+	if apiKey, ok := raw["api_key"].(string); ok {
+		if !(strings.Contains(apiKey, "...") && len(apiKey) < 20) {
 			updates = append(updates, "api_key = ?")
-			args = append(args, newKey)
+			args = append(args, apiKey)
 		}
 	}
-	if input.OAuthProvider != nil {
+	if oauthProv, ok := raw["oauth_provider"].(string); ok {
 		updates = append(updates, "oauth_provider = ?")
-		args = append(args, strings.TrimSpace(strings.ToLower(*input.OAuthProvider)))
+		args = append(args, strings.TrimSpace(strings.ToLower(oauthProv)))
 	}
-	if input.PoolID != nil {
+	if poolID, ok := raw["pool_id"].(string); ok {
 		updates = append(updates, "pool_id = ?")
-		args = append(args, strings.TrimSpace(*input.PoolID))
+		args = append(args, strings.TrimSpace(poolID))
+	}
+	if v, exists := raw["priority"]; exists && v != nil {
+		var prioVal int
+		switch val := v.(type) {
+		case float64:
+			prioVal = int(val)
+		case int:
+			prioVal = val
+		}
+		updates = append(updates, "priority = ?")
+		args = append(args, prioVal)
+	}
+
+	var isActiveChanged bool
+	if v, exists := raw["is_active"]; exists && v != nil {
+		isActiveChanged = true
+		var activeVal int
+		switch val := v.(type) {
+		case bool:
+			if val {
+				activeVal = 1
+			} else {
+				activeVal = 0
+			}
+		case float64:
+			activeVal = int(val)
+		case int:
+			activeVal = val
+		case string:
+			if strings.EqualFold(val, "true") || val == "1" {
+				activeVal = 1
+			} else {
+				activeVal = 0
+			}
+		}
+		updates = append(updates, "is_active = ?")
+		args = append(args, activeVal)
 	}
 
 	if len(updates) > 0 {
 		updates = append(updates, "updated_at = datetime('now', 'localtime')")
-		args = append(args, input.ID)
+		args = append(args, id)
 		s.db.Conn().Exec("UPDATE connections SET "+strings.Join(updates, ", ")+" WHERE id=?", args...)
 
 		// Refresh pools if pool_id or is_active changed
-		if input.PoolID != nil || input.IsActive != nil {
+		if raw["pool_id"] != nil || isActiveChanged {
 			s.proxy.RefreshMultiAccountPools()
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"id": input.ID}})
+	json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"id": id}})
 }
 
 // Combos - read from settings (Node.js stores combos in settings as JSON)
