@@ -293,6 +293,12 @@ func pingChatAlpha(base, key string) (int, []byte, error) {
     if key != "" { req.Header.Set("Authorization", "Bearer "+key) }
     req.Header.Set("Content-Type", "application/json")
     req.Header.Set("x-command-code-version", "0.26.25")
+    req.Header.Set("x-cli-environment", "cli")
+    req.Header.Set("x-cli-version", "0.26.25")
+    // Alpha is SSE-only; match a real CLI/browser client so upstream WAF
+    // doesn't treat the probe as a bot and return 403 HTML.
+    req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+    req.Header.Set("Accept", "text/event-stream")
 
     c := &http.Client{Timeout: 30 * time.Second}
     resp, err := c.Do(req)
