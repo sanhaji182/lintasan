@@ -440,3 +440,74 @@ func TestHandlePatchConnection_IsActiveTypes(t *testing.T) {
 		t.Fatalf("expected is_active=0 after patching with int 0, got %d", isActive)
 	}
 }
+
+func TestHandleModelsSyncByID_Toggle(t *testing.T) {
+	s := newRESTTestServer(t)
+
+	// Seed connection and discovered_models
+	connID := "test-conn-toggle-123"
+	_, err := s.db.Conn().Exec(`
+		INSERT INTO connections (id, name, base_url, is_active)
+		VALUES (?, 'Test Conn', 'https://api.example.com', 1)
+	`, connID)
+	if err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+
+	modelID := "gpt-4o"
+	_, err = s.db.Conn().Exec(`
+		INSERT INTO discovered_models (id, connection_id, model_id, model_name, owned_by, is_active)
+		VALUES ('dm-1', ?, ?, 'GPT-4o', 'openai', 1)
+	`, connID, modelID)
+	if err != nil {
+		t.Fatalf("insert model: %v", err)
+	}
+
+	// 1. Toggle model active to false (boolean)
+	rec := httptest.NewRecorder()
+	s.handleModelsSyncByID(rec, reqWithPath("POST", "/api/models/sync/"+connID, map[string]any{
+		"action":  "toggle",
+		"modelId": modelID,
+		"active":  false,
+	}, map[string]string{"connection_id": connID}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("toggle false: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	var isActive int
+	s.db.Conn().QueryRow("SELECT is_active FROM discovered_models WHERE connection_id = ? AND model_id = ?", connID, modelID).Scan(&isActive)
+	if isActive != 0 {
+		t.Fatalf("expected model is_active=0 after toggle false, got %d", isActive)
+	}
+
+	// 2. Toggle model active to true (boolean)
+	rec = httptest.NewRecorder()
+	s.handleModelsSyncByID(rec, reqWithPath("POST", "/api/models/sync/"+connID, map[string]any{
+		"action":  "toggle",
+		"modelId": modelID,
+		"active":  true,
+	}, map[string]string{"connection_id": connID}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("toggle true: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	s.db.Conn().QueryRow("SELECT is_active FROM discovered_models WHERE connection_id = ? AND model_id = ?", connID, modelID).Scan(&isActive)
+	if isActive != 1 {
+		t.Fatalf("expected model is_active=1 after toggle true, got %d", isActive)
+	}
+
+	// 3. Invert toggle when active field is omitted
+	rec = httptest.NewRecorder()
+	s.handleModelsSyncByID(rec, reqWithPath("POST", "/api/models/sync/"+connID, map[string]any{
+		"action":  "toggle",
+		"modelId": modelID,
+	}, map[string]string{"connection_id": connID}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("toggle invert: got %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	s.db.Conn().QueryRow("SELECT is_active FROM discovered_models WHERE connection_id = ? AND model_id = ?", connID, modelID).Scan(&isActive)
+	if isActive != 0 {
+		t.Fatalf("expected model is_active=0 after invert toggle, got %d", isActive)
+	}
+}

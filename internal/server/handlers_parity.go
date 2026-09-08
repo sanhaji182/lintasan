@@ -593,6 +593,33 @@ func (s *Server) testModelOnce(conn *Connection, modelID string) map[string]any 
         key = tok
     }
 
+    start := time.Now()
+
+    // CommandCode Alpha handles chat probes via pingChatAlpha (/alpha/generate)
+    // rather than the standard OpenAI /v1/chat/completions route.
+    if conn.Format == "commandcode" {
+        ccAlphaTestMu.Lock()
+        alphaStatus, alphaBody, alphaErr := pingChatAlpha(conn.BaseURL, key)
+        ccAlphaTestMu.Unlock()
+        latency := time.Since(start).Milliseconds()
+        if alphaErr != nil {
+            return map[string]any{"success": false, "status": "network_error", "latency_ms": latency, "message": alphaErr.Error()}
+        }
+        bodyStr := truncateBody(alphaBody, 400)
+        status := classifyModelTestStatus(alphaStatus, bodyStr)
+        if alphaStatus < 200 || alphaStatus >= 300 {
+            return map[string]any{
+                "success": false, "status": status, "latency_ms": latency,
+                "http_status": alphaStatus, "message": fmt.Sprintf("upstream status %d", alphaStatus),
+                "body": bodyStr,
+            }
+        }
+        return map[string]any{
+            "success": true, "status": "ok", "latency_ms": latency,
+            "http_status": alphaStatus, "message": "model responds",
+        }
+    }
+
     chatPath := conn.ChatPath
     if chatPath == "" { chatPath = "/v1/chat/completions" }
     url := provider.JoinUpstreamPath(conn.BaseURL, chatPath)
@@ -605,7 +632,6 @@ func (s *Server) testModelOnce(conn *Connection, modelID string) map[string]any 
     if key != "" { req.Header.Set(h, prefix+key) }
     req.Header.Set("Content-Type", "application/json")
 
-    start := time.Now()
     c := &http.Client{Timeout: 25 * time.Second}
     resp, err := c.Do(req)
     latency := time.Since(start).Milliseconds()
@@ -748,6 +774,58 @@ func (s *Server) handleModelsSyncByID(w http.ResponseWriter, r *http.Request) {
         writeJSON(w, map[string]any{"error": map[string]string{"message": "connection_id is required"}})
         return
     }
+
+    // Check if this is an action payload (e.g. toggle active model)
+    var in map[string]any
+    if r.Body != nil {
+        _ = json.NewDecoder(r.Body).Decode(&in)
+    }
+
+    if action, _ := in["action"].(string); action == "toggle" {
+        modelID, _ := in["modelId"].(string)
+        if modelID == "" {
+            modelID, _ = in["model_id"].(string)
+        }
+        if modelID == "" {
+            writeJSON(w, map[string]any{"error": map[string]string{"message": "modelId is required"}})
+            return
+        }
+
+        var nextActive int
+        if v, exists := in["active"]; exists {
+            switch val := v.(type) {
+            case bool:
+                if val { nextActive = 1 } else { nextActive = 0 }
+            case float64:
+                nextActive = int(val)
+            case int:
+                nextActive = val
+            }
+        } else {
+            // Read current and invert
+            var curr int
+            _ = s.db.Conn().QueryRow("SELECT is_active FROM discovered_models WHERE connection_id=? AND model_id=?", connID, modelID).Scan(&curr)
+            if curr == 1 { nextActive = 0 } else { nextActive = 1 }
+        }
+
+        _, err := s.db.Conn().Exec(
+            "UPDATE discovered_models SET is_active=? WHERE connection_id=? AND model_id=?",
+            nextActive, connID, modelID,
+        )
+        if err != nil {
+            writeJSON(w, map[string]any{"error": map[string]string{"message": err.Error()}})
+            return
+        }
+
+        writeJSON(w, map[string]any{
+            "success": true,
+            "action":  "toggle",
+            "modelId": modelID,
+            "active":  nextActive,
+        })
+        return
+    }
+
     res, err := s.discoverer.SyncConnection(connID)
     if err != nil {
         writeJSON(w, map[string]any{"error": map[string]string{"message": err.Error()}})
