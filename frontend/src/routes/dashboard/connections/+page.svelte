@@ -221,6 +221,8 @@
     'groq': 'Groq',
     'cerebras': 'Cerebras',
     'commandcode': 'CommandCode',
+    'commandcode-alpha': 'CommandCode Alpha',
+    'commandcode-api': 'CommandCode',
     'sumopod': 'SumoPod',
     'genfity': 'Genfity',
     'nousresearch': 'Nous Research',
@@ -277,7 +279,13 @@
   const groupedConnections = $derived.by(() => {
     const groups = new Map<string, { key: string; label: string; connections: any[]; active: number; totalModels: number; baseURL: string; formats: Set<string> }>();
     for (const conn of sortedConnections) {
-      const key = conn.pool_id || extractProvider(conn.base_url || '');
+      let key = conn.pool_id || extractProvider(conn.base_url || '');
+      // Split CommandCode into two groups: official /v1/chat/completions vs
+      // the alpha /alpha/generate endpoint (same base URL, different protocol).
+      if (key.toLowerCase() === 'commandcode') {
+        const cp = (conn.chat_path || '').toLowerCase();
+        key = cp.includes('alpha') || cp.includes('generate') ? 'commandcode-alpha' : 'commandcode-api';
+      }
       if (!groups.has(key)) {
         groups.set(key, { key, label: '', connections: [], active: 0, totalModels: 0, baseURL: conn.base_url || '', formats: new Set() });
       }
