@@ -504,74 +504,8 @@ func (s *Server) handleModelTest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Determine auth header from the stored connection.
-    h := conn.AuthHeader
-    if h == "" { h = "Authorization" }
-    prefix := conn.AuthPrefix
-    if prefix == "" { prefix = "Bearer " }
-    key := conn.APIKey
-    oauthProv := conn.OAuthProvider
-    if oauthProv != "" {
-        tok, errTok := s.oauthMgr.GetActiveToken(oauthProv)
-        if errTok != nil {
-            writeJSON(w, map[string]any{
-                "success": false, "status": "auth_error",
-                "message": "no active OAuth session for " + oauthProv,
-            })
-            return
-        }
-        key = tok
-    }
-
-    // Build the chat URL. Some providers store chat_path already including
-    // /v1 (e.g. commandcode "/v1/chat/completions" with base https://api.commandcode.ai);
-    // others store "/chat/completions" with a base ending in /v1. JoinUpstreamPath
-    // handles both without double version segments.
-    chatPath := conn.ChatPath
-    if chatPath == "" { chatPath = "/v1/chat/completions" }
-    url := provider.JoinUpstreamPath(conn.BaseURL, chatPath)
-
-    body := fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"ping"}],"max_tokens":1,"stream":false}`, modelID)
-    req, err := http.NewRequest("POST", url, strings.NewReader(body))
-    if err != nil {
-        writeJSON(w, map[string]any{"success": false, "status": "upstream_error", "message": err.Error()})
-        return
-    }
-    if key != "" { req.Header.Set(h, prefix+key) }
-    req.Header.Set("Content-Type", "application/json")
-
-    start := time.Now()
-    c := &http.Client{Timeout: 25 * time.Second}
-    resp, err := c.Do(req)
-    latency := time.Since(start).Milliseconds()
-    if err != nil {
-        writeJSON(w, map[string]any{
-            "success": false, "status": "network_error",
-            "latency_ms": latency, "message": err.Error(),
-        })
-        return
-    }
-    defer resp.Body.Close()
-    b, _ := io.ReadAll(resp.Body)
-    bodyStr := truncateBody(b, 400)
-
-    status := classifyModelTestStatus(resp.StatusCode, bodyStr)
-    success := resp.StatusCode >= 200 && resp.StatusCode < 300
-    if !success {
-        // A 4xx/5xx with an actually-invalid model vs connection-level problem:
-        // pass through the raw status + short body so the UI can show why.
-        writeJSON(w, map[string]any{
-            "success": false, "status": status, "latency_ms": latency,
-            "http_status": resp.StatusCode, "message": fmt.Sprintf("upstream %s", resp.Status),
-            "body": bodyStr,
-        })
-        return
-    }
-
-    writeJSON(w, map[string]any{
-        "success": true, "status": "ok", "latency_ms": latency,
-        "http_status": resp.StatusCode, "message": "model responds",
-    })
+    res := s.testModelOnce(conn, modelID)
+    writeJSON(w, res)
 }
 
 // testModelOnce performs the actual single-model chat probe against a resolved
