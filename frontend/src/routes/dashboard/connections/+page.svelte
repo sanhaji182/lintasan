@@ -64,6 +64,9 @@
   // Bulk test-all state
   let bulkModelTesting = $state(false);
   let bulkModelTestSummary = $state<string | null>(null);
+  let bulkCancelRequested = $state(false);
+  let bulkCurrentIndex = $state(0);
+  let bulkTotalCount = $state(0);
 
   let oauthIdeEnabled = $state(false);
   let oauthSessions = $state<{ provider: string; status: string }[]>([]);
@@ -864,6 +867,9 @@
   }
 
   function closeModelsViewer() {
+    if (bulkModelTesting) {
+      bulkCancelRequested = true;
+    }
     viewingModelsOf = null;
     modelsList = [];
     modelsSearch = '';
@@ -871,6 +877,7 @@
     modelTestState = {};
     bulkModelTesting = false;
     bulkModelTestSummary = null;
+    bulkCancelRequested = false;
   }
 
   async function loadModelsForGroup(connIds: string[]) {
@@ -1038,40 +1045,101 @@
     }
   }
 
-  // testAllModels fires a bulk probe against every active discovered model of
-  // the currently-viewed connection, then fills each row's badge from results.
+  // testAllModels runs an orderly sequential queue (concurrency = 1) across all
+  // models of the currently-viewed connection. Testing sequentially prevents
+  // triggering provider concurrency caps, WAF blocks, or HTTP 429 rate limits.
   async function testAllModels(connId: string) {
     if (bulkModelTesting) return;
     bulkModelTesting = true;
+    bulkCancelRequested = false;
     bulkModelTestSummary = null;
-    // Mark every currently-visible model as testing so rows give feedback.
-    const pending: Record<string, any> = {};
-    for (const m of modelsList) pending[m.model_id] = { status: 'testing' };
-    modelTestState = { ...modelTestState, ...pending };
-    try {
-      const res = await api.post<any>('/api/models/test-bulk', { connection_id: connId });
-      const results: any[] = res.results || [];
-      const merged: Record<string, any> = {};
-      for (const r of results) {
-        merged[r.model_id] = {
-          status: r.status,
-          latency_ms: r.latency_ms ?? null,
-          http_status: r.http_status ?? null,
-          message: r.message || '',
-          body: r.body ?? ''
+
+    // Target currently visible models (or filtered list if user searched)
+    const targetModels = (modelsSearch ? filteredModels : modelsList).slice();
+    if (targetModels.length === 0) {
+      bulkModelTesting = false;
+      return;
+    }
+
+    bulkTotalCount = targetModels.length;
+    bulkCurrentIndex = 0;
+
+    // Mark all target models as queued initially
+    const queuedState: Record<string, any> = {};
+    for (const m of targetModels) {
+      queuedState[m.model_id] = { status: 'queued' };
+    }
+    modelTestState = { ...modelTestState, ...queuedState };
+
+    let okCount = 0;
+    let failedCount = 0;
+
+    for (let i = 0; i < targetModels.length; i++) {
+      if (bulkCancelRequested) {
+        // Remove 'queued' status from remaining un-tested models
+        const updated = { ...modelTestState };
+        for (let j = i; j < targetModels.length; j++) {
+          if (updated[targetModels[j].model_id]?.status === 'queued') {
+            delete updated[targetModels[j].model_id];
+          }
+        }
+        modelTestState = updated;
+        break;
+      }
+
+      const m = targetModels[i];
+      bulkCurrentIndex = i + 1;
+      bulkModelTestSummary = `Queue: ${bulkCurrentIndex}/${bulkTotalCount} (${okCount} OK, ${failedCount} err)`;
+
+      // Set this single model to testing
+      modelTestState = {
+        ...modelTestState,
+        [m.model_id]: { status: 'testing' }
+      };
+
+      try {
+        const res = await api.post<any>('/api/models/test', {
+          model_id: m.model_id,
+          connection_id: connId
+        });
+        const isOk = res.status === 'ok';
+        if (isOk) okCount++; else failedCount++;
+        modelTestState = {
+          ...modelTestState,
+          [m.model_id]: {
+            status: res.status,
+            latency_ms: res.latency_ms ?? null,
+            http_status: res.http_status ?? null,
+            message: res.message || '',
+            body: res.body ?? ''
+          }
+        };
+      } catch (e: any) {
+        failedCount++;
+        modelTestState = {
+          ...modelTestState,
+          [m.model_id]: { status: 'error', message: e.message || 'request failed' }
         };
       }
-      modelTestState = { ...modelTestState, ...merged };
-      const okCount = results.filter(r => r.status === 'ok').length;
-      const failed = results.length - okCount;
-      bulkModelTestSummary = `${results.length} tested · ${okCount} OK · ${failed} failed`;
-      showToast(bulkModelTestSummary, failed > 0 ? (okCount > 0 ? 'warning' : 'error') : 'success', 4000);
-    } catch (e: any) {
-      bulkModelTestSummary = 'Bulk test failed: ' + (e.message || 'unknown');
-      showToast(bulkModelTestSummary, 'error', 5000);
-    } finally {
-      bulkModelTesting = false;
+
+      // Small pacing delay between requests (300ms) to allow upstream rate-limit window to relax
+      if (i < targetModels.length - 1 && !bulkCancelRequested) {
+        await new Promise(r => setTimeout(r, 300));
+      }
     }
+
+    bulkModelTesting = false;
+    if (bulkCancelRequested) {
+      bulkModelTestSummary = `Halted at ${bulkCurrentIndex}/${bulkTotalCount} · ${okCount} OK · ${failedCount} failed`;
+      showToast(bulkModelTestSummary, 'warning', 4000);
+    } else {
+      bulkModelTestSummary = `${bulkTotalCount} tested · ${okCount} OK · ${failedCount} failed`;
+      showToast(bulkModelTestSummary, failedCount > 0 ? (okCount > 0 ? 'warning' : 'error') : 'success', 4000);
+    }
+  }
+
+  function stopBulkTesting() {
+    bulkCancelRequested = true;
   }
 
   const filteredModels = $derived(
@@ -2239,25 +2307,32 @@
           </div>
           <div class="flex items-center gap-2">
             {#if bulkModelTestSummary}
-              <span style="font-size: 11px; color: var(--color-fg-2); background: var(--color-bg-3); padding: 3px 10px; border-radius: 10px;" title="Bulk test result">
+              <span style="font-size: 11px; color: var(--color-fg-2); background: var(--color-bg-3); padding: 3px 10px; border-radius: 10px;" title="Queue progress">
                 {bulkModelTestSummary}
               </span>
             {/if}
-            <button
-              class="btn-secondary flex items-center gap-1"
-              style="padding: 6px 12px; font-size: 12px;"
-              onclick={() => testAllModels(viewingModelsOf.id)}
-              disabled={bulkModelTesting || modelsLoading || !viewingModelsOf.is_active || modelsList.length === 0}
-              title={modelsList.length === 0 ? 'No models to test' : 'Probe every model with a minimal chat request to find which actually respond'}
-            >
-              {#if bulkModelTesting}
-                <RefreshCw size={14} class="animate-spin" />
-                Testing {modelsList.length}…
-              {:else}
+            {#if bulkModelTesting}
+              <button
+                class="btn-secondary flex items-center gap-1.5"
+                style="padding: 6px 12px; font-size: 12px; color: var(--color-error); border-color: rgba(239,68,68,0.3);"
+                onclick={stopBulkTesting}
+                title="Hentikan antrian testing"
+              >
+                <X size={14} />
+                Stop ({bulkCurrentIndex}/{bulkTotalCount})
+              </button>
+            {:else}
+              <button
+                class="btn-secondary flex items-center gap-1.5"
+                style="padding: 6px 12px; font-size: 12px;"
+                onclick={() => testAllModels(viewingModelsOf.id)}
+                disabled={modelsLoading || !viewingModelsOf.is_active || modelsList.length === 0}
+                title={modelsList.length === 0 ? 'No models to test' : 'Uji semua model satu per satu dalam antrian aman'}
+              >
                 <Zap size={14} />
-                Test All
-              {/if}
-            </button>
+                Test All (Queue)
+              </button>
+            {/if}
             <button
               class="btn-secondary flex items-center gap-1"
               style="padding: 6px 12px; font-size: 12px;"
@@ -2378,9 +2453,16 @@
                   <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
                     <!-- Per-model test button + status badge -->
                     {#if modelTestState[model.model_id]?.status === 'testing'}
-                      <button disabled style="all: unset; display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 6px; font-size: 11px; color: var(--color-fg-2); background: var(--color-bg-3); cursor: default;">
+                      <button disabled style="all: unset; display: inline-flex; align-items: center; gap: 4px; padding: 5px 9px; border-radius: 6px; font-size: 11px; color: var(--color-primary); background: rgba(59,130,246,0.1); cursor: default;">
                         <RefreshCw size={12} class="animate-spin" /> Testing…
                       </button>
+                    {:else if modelTestState[model.model_id]?.status === 'queued'}
+                      <span
+                        style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; color: var(--color-fg-3); background: var(--color-bg-3); padding: 3px 8px; border-radius: 10px;"
+                        title="Dalam antrian menunggu giliran"
+                      >
+                        ⏳ Queued
+                      </span>
                     {:else if modelTestState[model.model_id]}
                       <span
                         style="display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 10px;

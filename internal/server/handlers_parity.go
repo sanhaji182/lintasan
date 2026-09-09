@@ -707,8 +707,13 @@ func (s *Server) handleBulkModelTest(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Worker pool
-    const workers = 8
+    // Worker pool / queue: default to strict sequential (workers = 1) with
+    // pacing delay to prevent triggering upstream provider concurrency limits
+    // and rate limits (e.g. HTTP 429, Cloudflare WAF). Allow caller override up to 2.
+    workers := 1
+    if c, ok := in["concurrency"].(float64); ok && c >= 1 && c <= 2 {
+        workers = int(c)
+    }
     var (
         mu      sync.Mutex
         results = make([]map[string]any, len(modelIDs))
@@ -720,7 +725,10 @@ func (s *Server) handleBulkModelTest(w http.ResponseWriter, r *http.Request) {
         go func(i int, mid string) {
             defer wg.Done()
             sem <- struct{}{}
-            defer func() { <-sem }()
+            defer func() {
+                time.Sleep(200 * time.Millisecond)
+                <-sem
+            }()
             res := s.testModelOnce(conn, mid)
             res["model_id"] = mid
             mu.Lock()
