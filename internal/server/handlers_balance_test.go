@@ -39,3 +39,24 @@ func TestParseOpenRouterBalanceMalformed(t *testing.T) {
 		t.Errorf("expected parse error")
 	}
 }
+
+func TestParseKiloBalanceRemaining(t *testing.T) {
+	body := []byte(`{"microdollars_used":2500000,"total_microdollars_acquired":10000000}`)
+	info := parseKiloBalance(body)
+	if info.ProviderType != "kilo" {
+		t.Errorf("provider_type = %q, want kilo", info.ProviderType)
+	}
+	if info.Balance != "$7.50" {
+		t.Errorf("balance = %q, want $7.50", info.Balance)
+	}
+	if !strings.Contains(info.RateInfo, "remaining") {
+		t.Errorf("rate_info should mention remaining, got %q", info.RateInfo)
+	}
+}
+
+func TestParseKiloBalanceZero(t *testing.T) {
+	info := parseKiloBalance([]byte(`{"microdollars_used":0,"total_microdollars_acquired":0}`))
+	if info.Balance != "$0.00" {
+		t.Errorf("balance = %q, want $0.00", info.Balance)
+	}
+}

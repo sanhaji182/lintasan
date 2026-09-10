@@ -194,6 +194,8 @@ func fetchProviderBalance(baseURL, apiKey, format string) BalanceInfo {
 		return fetchCommandCodeBalance(apiKey)
 	case strings.Contains(host, "openrouter"):
 		return fetchOpenRouterBalance(apiKey)
+	case strings.Contains(host, "kilo"):
+		return fetchKiloBalance(apiKey)
 	case strings.Contains(host, "deepseek"):
 		return fetchDeepseekBalance(apiKey)
 	case strings.Contains(host, "openai"):
@@ -395,6 +397,61 @@ func parseOpenRouterBalance(body []byte) BalanceInfo {
 		info.RateInfo = fmt.Sprintf("Limit $%.2f remaining of $%.2f · $%.4f used", d.LimitRemaining, d.Limit, d.Usage)
 	} else {
 		info.RateInfo = fmt.Sprintf("Unlimited · $%.4f used", d.Usage)
+	}
+	return info
+}
+
+// fetchKiloBalance reads the credit balance from Kilo's /api/user endpoint.
+// Kilo (a reseller/proxy) reports lifetime credit totals in microdollars
+// (1 USD = 1,000,000 µ$). Remaining = acquired − used.
+func fetchKiloBalance(apiKey string) BalanceInfo {
+	req, _ := http.NewRequest("GET", "https://api.kilo.ai/api/user", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return BalanceInfo{ProviderType: "kilo", Error: err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return BalanceInfo{ProviderType: "kilo", Error: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 200))}
+	}
+	return parseKiloBalance(body)
+}
+
+// parseKiloBalance decodes Kilo's /api/user response into a BalanceInfo.
+func parseKiloBalance(body []byte) BalanceInfo {
+	var u struct {
+		MicrodollarsUsed     int64   `json:"microdollars_used"`
+		TotalMicrodollarsAcq int64   `json:"total_microdollars_acquired"`
+		NextCreditExpiration *string `json:"next_credit_expiration_at"`
+	}
+	if err := json.Unmarshal(body, &u); err != nil {
+		return BalanceInfo{ProviderType: "kilo", Error: "parse error: " + err.Error()}
+	}
+
+	used := float64(u.MicrodollarsUsed) / 1e6
+	acquired := float64(u.TotalMicrodollarsAcq) / 1e6
+	remaining := acquired - used
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	info := BalanceInfo{
+		ProviderType: "kilo",
+		PlanType:     "credits",
+		Currency:     "USD",
+		Balance:      fmt.Sprintf("$%.2f", remaining),
+		TotalUsed:    fmt.Sprintf("$%.4f", used),
+		RateInfo:     fmt.Sprintf("Credit $%.2f remaining · $%.4f used", remaining, used),
+	}
+	if u.NextCreditExpiration != nil && *u.NextCreditExpiration != "" {
+		if t, err := time.Parse(time.RFC3339, *u.NextCreditExpiration); err == nil {
+			info.BillingReset = t.Format("Jan 2")
+		}
 	}
 	return info
 }
