@@ -14,7 +14,7 @@
   import { showToast } from '$lib/toast';
   import { OAUTH_IDE_PRESETS, type OAuthIdePreset } from '$lib/oauthIdePresets';
   import { brandForProvider, logoPaths } from '$lib/oauthIdeBrands';
-  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers, ChevronRight, Zap, CheckCircle2, AlertCircle, TriangleAlert } from 'lucide-svelte';
+  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers, ChevronRight, ChevronDown, Zap, CheckCircle2, AlertCircle, TriangleAlert } from 'lucide-svelte';
 
   let connections = $state<any[]>([]);
   let loading = $state(true);
@@ -25,6 +25,7 @@
   // Balance/credit state
   let balances = $state<Record<string, any>>({});
   let balancesLoading = $state(false);
+  let expandedBalance = $state<string | null>(null);
   let syncing = $state<string | null>(null);
   let presetSearch = $state('');
 
@@ -111,6 +112,20 @@
     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
     if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
     return String(n);
+  }
+
+  // Worst-case limit pressure across a connection's rate windows → drive inline chip color.
+  function limitSeverity(bal: any): 'ok' | 'warn' | 'critical' {
+    if (!bal?.rate_windows?.length) return 'ok';
+    let worst: 'ok' | 'warn' | 'critical' = 'ok';
+    for (const w of bal.rate_windows) {
+      if (w.exceeded) return 'critical';
+      if (w.cap > 0) {
+        const pct = w.used / w.cap;
+        if (pct >= 0.8) worst = 'warn';
+      }
+    }
+    return worst;
   }
 
   function getProviderDomain(key: string, baseURL: string): string {
@@ -2149,11 +2164,25 @@
                         <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
                       {/if}
 
-                      {#if balances[conn.id]?.balance && !balances[conn.id]?.rate_windows?.length}
+                      {#if balances[conn.id]?.rate_windows?.length}
+                        {@const sev = limitSeverity(balances[conn.id])}
+                        <button
+                          class="conn-limit-chip"
+                          class:limit-warn={sev === 'warn'}
+                          class:limit-critical={sev === 'critical'}
+                          onclick={() => expandedBalance = expandedBalance === conn.id ? null : conn.id}
+                          title="Click for usage detail"
+                        >
+                          {#each balances[conn.id].rate_windows as win}
+                            <span class="conn-limit-seg">{winLabel(win.name)} {Math.round(win.used)}/{Math.round(win.cap)}</span>
+                          {/each}
+                          <span class="conn-limit-chev" class:open={expandedBalance === conn.id}><ChevronDown size={11} /></span>
+                        </button>
+                      {:else if balances[conn.id]?.balance}
                         <span class="badge conn-balance-badge" title="Credit: {balances[conn.id].balance}">
                           💰 {balances[conn.id].balance}
                         </span>
-                      {:else if balances[conn.id]?.rate_info && !balances[conn.id]?.rate_windows?.length}
+                      {:else if balances[conn.id]?.rate_info}
                         <span class="badge conn-rate-badge" title={balances[conn.id].rate_info}>
                           ⚡ {balances[conn.id].rate_info}
                         </span>
@@ -2234,7 +2263,7 @@
                       </div>
                     </div>
                   </div>
-                  {#if balances[conn.id]?.rate_windows?.length}
+                  {#if balances[conn.id]?.rate_windows?.length && expandedBalance === conn.id}
                     <div class="conn-balance-detail">
                       <div class="conn-balance-detail-header">
                         {#if balances[conn.id].balance}
@@ -3463,6 +3492,50 @@
     font-family: var(--font-mono);
     flex-shrink: 0;
     cursor: help;
+  }
+  .conn-limit-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 2px 6px;
+    border-radius: 5px;
+    border: 1px solid rgba(16,185,129,0.35);
+    background: rgba(16,185,129,0.08);
+    color: var(--color-success);
+    cursor: pointer;
+    flex-shrink: 0;
+    white-space: nowrap;
+    transition: all 0.12s ease;
+  }
+  .conn-limit-chip:hover {
+    background: rgba(16,185,129,0.14);
+    border-color: rgba(16,185,129,0.5);
+  }
+  .conn-limit-chip .conn-limit-seg + .conn-limit-seg {
+    margin-left: 2px;
+  }
+  .conn-limit-chip.limit-warn {
+    border-color: rgba(245,158,11,0.4);
+    background: rgba(245,158,11,0.1);
+    color: #d97706;
+  }
+  .conn-limit-chip.limit-critical {
+    border-color: rgba(239,68,68,0.4);
+    background: rgba(239,68,68,0.1);
+    color: var(--color-error, #ef4444);
+  }
+  .conn-limit-chip :global(svg) {
+    transition: transform 0.12s ease;
+  }
+  .conn-limit-chev {
+    display: inline-flex;
+    align-items: center;
+    transition: transform 0.12s ease;
+  }
+  .conn-limit-chev.open {
+    transform: rotate(180deg);
   }
   .conn-rate-badge {
     font-size: 10px;
