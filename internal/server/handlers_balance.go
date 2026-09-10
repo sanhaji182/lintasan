@@ -12,10 +12,10 @@ import (
 
 // RateWindow represents a usage window (5h, weekly, daily, etc.)
 type RateWindow struct {
-	Name      string  `json:"name"`       // e.g., "5-hour", "weekly", "daily"
-	Used      float64 `json:"used"`       // Requests used in window
-	Cap       float64 `json:"cap"`        // Max requests in window
-	Exceeded  bool    `json:"exceeded"`   // Whether window limit was hit
+	Name     string  `json:"name"`     // e.g., "5-hour", "weekly", "daily"
+	Used     float64 `json:"used"`     // Requests used in window
+	Cap      float64 `json:"cap"`      // Max requests in window
+	Exceeded bool    `json:"exceeded"` // Whether window limit was hit
 }
 
 // UsageStats represents request-level usage statistics.
@@ -28,14 +28,14 @@ type UsageStats struct {
 
 // BalanceInfo represents the credit/usage information from a provider.
 type BalanceInfo struct {
-	Balance      string       `json:"balance"`       // Current balance (e.g., "$95.20" or "9520 credits")
-	TotalUsed    string       `json:"total_used"`    // Total amount used
-	Currency     string       `json:"currency"`      // USD, credits, etc.
-	PlanType     string       `json:"plan_type"`     // prepaid, subscription, free, etc.
-	RateInfo     string       `json:"rate_info"`     // Legacy: flat rate info string (for non-CC providers)
-	ProviderType string       `json:"provider_type"` // deepseek, openai, commandcode, etc.
-	UpdatedAt    string       `json:"updated_at"`    // When this info was fetched
-	Error        string       `json:"error,omitempty"` // Error message if fetch failed
+	Balance      string `json:"balance"`         // Current balance (e.g., "$95.20" or "9520 credits")
+	TotalUsed    string `json:"total_used"`      // Total amount used
+	Currency     string `json:"currency"`        // USD, credits, etc.
+	PlanType     string `json:"plan_type"`       // prepaid, subscription, free, etc.
+	RateInfo     string `json:"rate_info"`       // Legacy: flat rate info string (for non-CC providers)
+	ProviderType string `json:"provider_type"`   // deepseek, openai, commandcode, etc.
+	UpdatedAt    string `json:"updated_at"`      // When this info was fetched
+	Error        string `json:"error,omitempty"` // Error message if fetch failed
 
 	// Structured fields (populated for CommandCode, empty for others)
 	RateWindows  []RateWindow `json:"rate_windows,omitempty"`
@@ -119,10 +119,10 @@ func (s *Server) handleGetAllBalances(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type connInfo struct {
-		ID       string
-		BaseURL  string
-		APIKey   string
-		Format   string
+		ID        string
+		BaseURL   string
+		APIKey    string
+		Format    string
 		OAuthProv string
 	}
 	var conns []connInfo
@@ -192,6 +192,8 @@ func fetchProviderBalance(baseURL, apiKey, format string) BalanceInfo {
 	switch {
 	case strings.Contains(host, "commandcode"):
 		return fetchCommandCodeBalance(apiKey)
+	case strings.Contains(host, "openrouter"):
+		return fetchOpenRouterBalance(apiKey)
 	case strings.Contains(host, "deepseek"):
 		return fetchDeepseekBalance(apiKey)
 	case strings.Contains(host, "openai"):
@@ -346,6 +348,55 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 	case <-time.After(7 * time.Second):
 		return BalanceInfo{ProviderType: "commandcode", Error: "timeout"}
 	}
+}
+
+func fetchOpenRouterBalance(apiKey string) BalanceInfo {
+	req, _ := http.NewRequest("GET", "https://openrouter.ai/api/v1/auth/key", nil)
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return BalanceInfo{ProviderType: "openrouter", Error: err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return BalanceInfo{ProviderType: "openrouter", Error: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, truncateStr(string(body), 200))}
+	}
+	return parseOpenRouterBalance(body)
+}
+
+// parseOpenRouterBalance decodes the /api/v1/auth/key response into a BalanceInfo.
+func parseOpenRouterBalance(body []byte) BalanceInfo {
+	var data struct {
+		Data struct {
+			Limit          float64 `json:"limit"`
+			LimitRemaining float64 `json:"limit_remaining"`
+			Usage          float64 `json:"usage"`
+			IsFreeTier     bool    `json:"is_free_tier"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return BalanceInfo{ProviderType: "openrouter", Error: "parse error: " + err.Error()}
+	}
+
+	d := data.Data
+	info := BalanceInfo{ProviderType: "openrouter", PlanType: "api"}
+	if d.IsFreeTier {
+		info.PlanType = "free_tier"
+	}
+
+	// A $limit means the key is capped (e.g. free tier $2/day); $0 = no cap.
+	if d.Limit > 0 {
+		info.TotalUsed = fmt.Sprintf("$%.4f", d.Usage)
+		info.Currency = "USD"
+		info.RateInfo = fmt.Sprintf("Limit $%.2f remaining of $%.2f · $%.4f used", d.LimitRemaining, d.Limit, d.Usage)
+	} else {
+		info.RateInfo = fmt.Sprintf("Unlimited · $%.4f used", d.Usage)
+	}
+	return info
 }
 
 func fetchDeepseekBalance(apiKey string) BalanceInfo {

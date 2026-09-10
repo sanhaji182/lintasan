@@ -100,6 +100,19 @@
     return clean.slice(0, 7) + '...' + clean.slice(-4);
   }
 
+  function winLabel(name: string): string {
+    if (name === '5-hour') return '🕐 5h';
+    if (name === 'weekly') return '📅 Week';
+    if (name === 'daily') return '📅 Day';
+    return name;
+  }
+
+  function fmtTokens(n: number): string {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+    return String(n);
+  }
+
   function getProviderDomain(key: string, baseURL: string): string {
     const k = (key || '').toLowerCase();
     if (k.includes('xai') || k === 'x') return 'x.ai';
@@ -2221,6 +2234,37 @@
                       </div>
                     </div>
                   </div>
+                  {#if balances[conn.id]?.rate_windows?.length}
+                    <div class="conn-balance-detail">
+                      <div class="conn-balance-detail-header">
+                        {#if balances[conn.id].balance}
+                          <span class="conn-balance-credit">💰 {balances[conn.id].balance}</span>
+                        {/if}
+                        {#if balances[conn.id].plan_type}
+                          <span class="conn-balance-plan">{balances[conn.id].plan_type}</span>
+                        {/if}
+                        {#if balances[conn.id].billing_reset}
+                          <span class="conn-balance-reset">📅 Resets {balances[conn.id].billing_reset}</span>
+                        {/if}
+                      </div>
+                      <div class="conn-balance-windows">
+                        {#each balances[conn.id].rate_windows as win}
+                          <div class="conn-balance-window" class:exceeded={win.exceeded}>
+                            <span class="conn-balance-window-label">{winLabel(win.name)}</span>
+                            <div class="conn-balance-window-bar">
+                              <div class="conn-balance-window-fill" style="width: {win.cap > 0 ? Math.min(100, (win.used / win.cap) * 100) : 0}%"></div>
+                            </div>
+                            <span class="conn-balance-window-text">{Math.round(win.used)}/{Math.round(win.cap)}</span>
+                          </div>
+                        {/each}
+                      </div>
+                      {#if balances[conn.id].usage}
+                        <div class="conn-balance-usage">
+                          {balances[conn.id].usage.total_requests} req · {fmtTokens(balances[conn.id].usage.total_tokens)} tok · {balances[conn.id].usage.success_rate.toFixed(0)}% ok
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
                 {/each}
 
                 {#if matchedConns.length > visibleConns.length}
@@ -3434,6 +3478,8 @@
   }
   /* ── Balance detail strip (CommandCode structured data) ── */
   .conn-balance-detail {
+    flex-basis: 100%;
+    width: 100%;
     margin-top: 8px;
     padding: 8px 10px;
     background: var(--color-bg-1);
