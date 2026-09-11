@@ -255,7 +255,7 @@ func (d *Discoverer) fetchModelsFromProvider(conn map[string]any) ([]ModelInfo, 
 			authHeader = "Authorization"
 		}
 		authPrefix, _ := conn["auth_prefix"].(string)
-		if authPrefix == "" {
+		if authPrefix == "" && !strings.EqualFold(authHeader, "x-api-key") {
 			authPrefix = "Bearer "
 		}
 		req.Header.Set(authHeader, authPrefix+apiKey)

@@ -69,15 +69,16 @@ type Response struct {
 // commit — it is NOT coupled to the live Connection type, so importing this
 // package can never drag in or alter the DB layer.)
 type ConnConfig struct {
-	ID         string
-	Name       string
-	BaseURL    string
-	APIKey     string
-	Format     string // retained for the compat/fallback resolution path
-	ChatPath   string
-	AuthHeader string
-	AuthPrefix string
-	Priority   int
+	ID           string
+	Name         string
+	BaseURL      string
+	APIKey       string
+	Format       string // retained for the compat/fallback resolution path
+	ChatPath     string
+	AuthHeader   string
+	AuthPrefix   string
+	ExtraHeaders string
+	Priority     int
 }
 
 // Provider is the core contract. It captures exactly what the doUpstream

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -83,6 +84,15 @@ func (d *DB) migrate() error {
 			key_label TEXT NOT NULL DEFAULT 'API Key',
 			category TEXT NOT NULL DEFAULT 'foundation',
 			is_builtin INTEGER DEFAULT 0,
+			chat_path TEXT NOT NULL DEFAULT '/v1/chat/completions',
+			models_path TEXT NOT NULL DEFAULT '/v1/models',
+			auth_header TEXT NOT NULL DEFAULT 'Authorization',
+			auth_prefix TEXT NOT NULL DEFAULT 'Bearer ',
+			extra_headers TEXT NOT NULL DEFAULT '{}',
+			models_capability TEXT NOT NULL DEFAULT 'unsupported',
+			usage_capability TEXT NOT NULL DEFAULT 'not_provided',
+			verification_status TEXT NOT NULL DEFAULT 'unverified',
+			verified_at TEXT NOT NULL DEFAULT '',
 			created_at TEXT DEFAULT (datetime('now', 'localtime')),
 			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
@@ -221,6 +231,15 @@ func (d *DB) migrate() error {
 		`ALTER TABLE connections ADD COLUMN oauth_provider TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN pool_id TEXT NOT NULL DEFAULT ''`,
 		`CREATE INDEX IF NOT EXISTS idx_connections_pool_id ON connections(pool_id)`,
+		`ALTER TABLE provider_presets ADD COLUMN chat_path TEXT NOT NULL DEFAULT '/v1/chat/completions'`,
+		`ALTER TABLE provider_presets ADD COLUMN models_path TEXT NOT NULL DEFAULT '/v1/models'`,
+		`ALTER TABLE provider_presets ADD COLUMN auth_header TEXT NOT NULL DEFAULT 'Authorization'`,
+		`ALTER TABLE provider_presets ADD COLUMN auth_prefix TEXT NOT NULL DEFAULT 'Bearer '`,
+		`ALTER TABLE provider_presets ADD COLUMN extra_headers TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE provider_presets ADD COLUMN models_capability TEXT NOT NULL DEFAULT 'unsupported'`,
+		`ALTER TABLE provider_presets ADD COLUMN usage_capability TEXT NOT NULL DEFAULT 'not_provided'`,
+		`ALTER TABLE provider_presets ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'unverified'`,
+		`ALTER TABLE provider_presets ADD COLUMN verified_at TEXT NOT NULL DEFAULT ''`,
 		// P1: Experimental Provider Registry Persistence — stores lifecycle state,
 		// admission reports, validation evidence, and descriptor snapshots for the
 		// Experimental provider ecosystem. Credentials are NEVER stored (Invariant 3).
@@ -257,6 +276,24 @@ func (d *DB) migrate() error {
 		}
 	}
 
+	// Fail-closed postcondition for the provider_presets capability columns.
+	// The loop above swallows every ALTER error, so a partially-applied
+	// migration would otherwise let Open() succeed and only fail later, at
+	// runtime, on the first presets query. Verify the columns exist now so a
+	// broken migration is loud at startup instead of silent at request time.
+	for _, col := range []string{
+		"chat_path", "models_path", "auth_header", "auth_prefix", "extra_headers",
+		"models_capability", "usage_capability", "verification_status", "verified_at",
+	} {
+		ok, err := d.columnExists("provider_presets", col)
+		if err != nil {
+			return fmt.Errorf("verify provider_presets.%s: %w", col, err)
+		}
+		if !ok {
+			return fmt.Errorf("provider_presets is missing column %q after migration", col)
+		}
+	}
+
 	// One-time backfill: force any admin that existed BEFORE this security
 	// migration (notably the legacy admin/admin123 seed) to rotate its password.
 	// Guarded by a settings marker so it never re-flags an admin that has
@@ -267,6 +304,27 @@ func (d *DB) migrate() error {
 	}
 
 	return nil
+}
+
+// columnExists reports whether the named column is present on a table. It is
+// used as a fail-closed postcondition check after the (error-swallowing)
+// migration loop, so a partially applied schema is caught at startup.
+func (d *DB) columnExists(table, column string) (bool, error) {
+	rows, err := d.conn.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(name, column) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // GetSetting retrieves a setting value by key
