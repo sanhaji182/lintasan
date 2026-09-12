@@ -116,6 +116,30 @@ npm install -g @github/copilot
 # Token: fine-grained PAT (not classic ghp_ tokens)
 ```
 
+## Hoplite Cloud Agent
+
+Hoplite is integrated as a REST-based **Cloud Agent**, not as an ACP provider and not as an OpenAI-compatible model connection. It is always isolated from Official routing, smart routing, fallbacks, and `/v1/chat/completions`.
+
+- **Dashboard:** Experimental Providers → Hoplite
+- **Credential:** encrypted dashboard credential `hoplite`, with `HOPLITE_API_KEY` environment fallback
+- **Operations:** connection test, list projects, create/list/read threads, read messages and resulting pull requests
+- **Safe defaults:** `autoFix=false`, `autoMerge=false`; thread creation is always an explicit operator action
+- **Upstream:** `https://api.hoplite.sh`
+
+Management routes:
+
+```
+GET  /api/experimental/cloud-agents/hoplite/status
+POST /api/experimental/cloud-agents/hoplite/test
+GET  /api/experimental/cloud-agents/hoplite/projects
+GET  /api/experimental/cloud-agents/hoplite/threads?projectId=...
+POST /api/experimental/cloud-agents/hoplite/threads
+GET  /api/experimental/cloud-agents/hoplite/threads/{id}
+GET  /api/experimental/cloud-agents/hoplite/threads/{id}/messages
+```
+
+All routes inherit the dashboard's fail-closed authentication boundary. The Hoplite key is resolved and attached server-side and is never returned to browser code.
+
 ## Activation Flow
 
 ### From Dashboard (recommended)

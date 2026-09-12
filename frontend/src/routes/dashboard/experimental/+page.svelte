@@ -14,7 +14,7 @@
   import ClaudeIcon from '$lib/components/icons/ClaudeIcon.svelte';
   import GeminiIcon from '$lib/components/icons/GeminiIcon.svelte';
   import CopilotIcon from '$lib/components/icons/CopilotIcon.svelte';
-  import { FlaskConical, CircleCheck, TriangleAlert, X, ChevronDown, ChevronRight, Key, Lock, LockOpen, Trash2, Wrench, Shield, Cpu, Terminal, ArrowRight, Zap, CircleAlert, Info } from 'lucide-svelte';
+  import { FlaskConical, CircleCheck, TriangleAlert, X, ChevronDown, ChevronRight, Key, Lock, LockOpen, Trash2, Wrench, Shield, Cpu, Terminal, ArrowRight, Zap, CircleAlert, Info, Cloud } from 'lucide-svelte';
 
   interface Provider {
     name: string;
@@ -262,6 +262,17 @@
       <button class="error-close" onclick={() => { error = ''; }}><X size={14} /></button>
     </div>
   {/if}
+
+  <a class="cloud-agent-card" href="/dashboard/experimental/hoplite">
+    <div class="cloud-agent-icon"><Cloud size={24} /></div>
+    <div class="cloud-agent-copy">
+      <span class="cloud-agent-kicker">Cloud Agent</span>
+      <strong>Hoplite</strong>
+      <p>Queue repository coding jobs, monitor durable threads, and open resulting pull requests.</p>
+    </div>
+    <span class="cloud-agent-isolation"><Shield size={13} /> Isolated routing</span>
+    <ArrowRight size={17} />
+  </a>
 
   {#if loading}
     <div class="loading-state">
@@ -574,6 +585,23 @@
     cursor: pointer; color: inherit; padding: 2px;
     display: flex; align-items: center;
   }
+
+  /* ── Cloud Agent ── */
+  .cloud-agent-card {
+    display: flex; align-items: center; gap: 14px;
+    padding: 16px 18px; margin-bottom: 20px;
+    border: 1px solid rgba(51,65,85,.2); border-radius: 14px;
+    background: linear-gradient(135deg, rgba(15,23,42,.05), rgba(59,130,246,.04));
+    color: var(--color-fg-1); text-decoration: none;
+    transition: border-color .2s, transform .2s;
+  }
+  .cloud-agent-card:hover { border-color: #64748b; transform: translateY(-1px); }
+  .cloud-agent-icon { width: 46px; height: 46px; border-radius: 12px; background: #0f172a; color: white; display: grid; place-items: center; flex-shrink: 0; }
+  .cloud-agent-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .cloud-agent-copy strong { font-size: 15px; }
+  .cloud-agent-copy p { margin: 0; color: var(--color-fg-3); font-size: 12px; }
+  .cloud-agent-kicker { color: #64748b; text-transform: uppercase; letter-spacing: .08em; font-size: 9px; font-weight: 750; }
+  .cloud-agent-isolation { display: flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 7px; background: rgba(34,197,94,.08); color: #16a34a; font-size: 10px; font-weight: 650; white-space: nowrap; }
 
   /* ── Loading ── */
   .loading-state {

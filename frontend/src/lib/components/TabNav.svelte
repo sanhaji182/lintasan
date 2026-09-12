@@ -8,14 +8,16 @@
   type Tab = { label: string; path: string; lab?: boolean };
   let { tabs }: { tabs: Tab[] } = $props();
 
-  function isActive(path: string) {
-    return page.url.pathname === path || page.url.pathname.startsWith(path + '/');
+  function activePath() {
+    return tabs
+      .filter((tab) => page.url.pathname === tab.path || page.url.pathname.startsWith(tab.path + '/'))
+      .sort((a, b) => b.path.length - a.path.length)[0]?.path;
   }
 </script>
 
 <nav class="tabnav" aria-label="Section tabs">
   {#each tabs as t}
-    <a href={t.path} class="tab" class:active={isActive(t.path)}>
+    <a href={t.path} class="tab" class:active={activePath() === t.path}>
       <span>{t.label}</span>
       {#if t.lab}<span class="tab-lab">LAB</span>{/if}
     </a>
