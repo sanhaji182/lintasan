@@ -20,7 +20,7 @@ func TestClientListProjectsUsesAPIKeyAndParsesResponse(t *testing.T) {
 			t.Fatalf("X-Api-Key = %q, want test key", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true,"projects":[{"id":"proj_1","name":"acme/app","defaultBranch":"main","repos":[{"repoFullName":"acme/app","repositoryId":"repo_1"}]}]}`))
+		_, _ = w.Write([]byte(`{"ok":true,"projects":[{"id":"proj_1","name":"acme/app","defaultBranch":"main","defaultModel":"claude-sonnet-4-5","agentSpeed":"fast","repos":[{"repoFullName":"acme/app","repositoryId":"repo_1"}]}]}`))
 	}))
 	defer upstream.Close()
 
@@ -34,6 +34,9 @@ func TestClientListProjectsUsesAPIKeyAndParsesResponse(t *testing.T) {
 	}
 	if projects[0].ID != "proj_1" || projects[0].Repos[0].RepoFullName != "acme/app" {
 		t.Fatalf("unexpected project: %#v", projects[0])
+	}
+	if projects[0].DefaultModel != "claude-sonnet-4-5" || projects[0].AgentSpeed != "fast" {
+		t.Fatalf("project model defaults were not parsed: %#v", projects[0])
 	}
 }
 
@@ -55,6 +58,9 @@ func TestClientCreateThreadSendsSafeDefaultsAndIdempotency(t *testing.T) {
 		if got["clientOperationId"] != "lintasan-op-1" {
 			t.Fatalf("missing idempotency key: %#v", got)
 		}
+		if got["model"] != "claude-sonnet-4-5" {
+			t.Fatalf("model override not forwarded: %#v", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte(`{"ok":true,"thread":{"id":"thr_1","projectId":"proj_1","title":"Fix test","status":"queued"},"run":{"id":"run_1","status":"queued"}}`))
@@ -66,6 +72,7 @@ func TestClientCreateThreadSendsSafeDefaultsAndIdempotency(t *testing.T) {
 		ProjectID:         "proj_1",
 		Prompt:            "Fix the failing test",
 		Title:             "Fix test",
+		Model:             "claude-sonnet-4-5",
 		ClientOperationID: "lintasan-op-1",
 	})
 	if err != nil {
@@ -86,7 +93,7 @@ func TestClientListsAndReadsThreadState(t *testing.T) {
 			}
 			_, _ = w.Write([]byte(`{"ok":true,"threads":[{"id":"thr_1","projectId":"proj_1","status":"running","pullRequests":[]}]}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/threads/thr_1":
-			_, _ = w.Write([]byte(`{"ok":true,"thread":{"id":"thr_1","projectId":"proj_1","status":"succeeded","pullRequests":[{"url":"https://github.com/acme/app/pull/1","number":1}]}}`))
+			_, _ = w.Write([]byte(`{"ok":true,"thread":{"id":"thr_1","projectId":"proj_1","status":"ready","modelId":"claude-sonnet-4-5","pullRequests":[{"url":"https://github.com/acme/app/pull/1","number":1}]}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/threads/thr_1/messages":
 			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"id":"msg_1","role":"assistant","content":"Done"}]}`))
 		default:
@@ -101,7 +108,7 @@ func TestClientListsAndReadsThreadState(t *testing.T) {
 		t.Fatalf("ListThreads: threads=%#v err=%v", threads, err)
 	}
 	thread, _, err := client.GetThread(context.Background(), "thr_1")
-	if err != nil || len(thread.PullRequests) != 1 || thread.PullRequests[0].Number != 1 {
+	if err != nil || thread.ModelID != "claude-sonnet-4-5" || len(thread.PullRequests) != 1 || thread.PullRequests[0].Number != 1 {
 		t.Fatalf("GetThread: thread=%#v err=%v", thread, err)
 	}
 	messages, _, err := client.ListMessages(context.Background(), "thr_1")

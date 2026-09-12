@@ -60,6 +60,8 @@ type Project struct {
 	Name          string  `json:"name"`
 	Description   *string `json:"description,omitempty"`
 	DefaultBranch string  `json:"defaultBranch,omitempty"`
+	DefaultModel  string  `json:"defaultModel,omitempty"`
+	AgentSpeed    string  `json:"agentSpeed,omitempty"`
 	PreviewPort   int     `json:"previewPort,omitempty"`
 	Repos         []Repo  `json:"repos,omitempty"`
 }
@@ -75,6 +77,8 @@ type Thread struct {
 	ProjectID    string        `json:"projectId"`
 	Title        string        `json:"title,omitempty"`
 	Status       string        `json:"status"`
+	ModelID      string        `json:"modelId,omitempty"`
+	RunStatus    string        `json:"runStatus,omitempty"`
 	WaitingOn    []any         `json:"waitingOn,omitempty"`
 	BlockedOn    []any         `json:"blockedOn,omitempty"`
 	PullRequests []PullRequest `json:"pullRequests,omitempty"`

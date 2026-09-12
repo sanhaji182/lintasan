@@ -109,6 +109,8 @@ func TestHopliteStatusAndTestAreReadOnlyAndCredentialBacked(t *testing.T) {
 			t.Fatalf("upstream key = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("RateLimit", `"ingress";r=599;t=60`)
+		w.Header().Set("RateLimit-Policy", `"ingress";q=600;qu="requests";w=60`)
 		_, _ = w.Write([]byte(`{"ok":true,"projects":[{"id":"proj_1","name":"acme/app"}]}`))
 	}))
 	defer upstream.Close()
@@ -158,6 +160,17 @@ func TestHopliteStatusAndTestAreReadOnlyAndCredentialBacked(t *testing.T) {
 	data := body["data"].(map[string]any)
 	if data["ok"] != true || data["project_count"] != float64(1) || calls != 1 {
 		t.Fatalf("unexpected test response=%#v calls=%d", body, calls)
+	}
+	if data["checked_at"] == "" || data["latency_ms"] == nil {
+		t.Fatalf("connection diagnostics missing timestamp/latency: %#v", data)
+	}
+	meta := data["meta"].(map[string]any)
+	if meta["rate_limit"] != `"ingress";r=599;t=60` || meta["rate_limit_policy"] == "" {
+		t.Fatalf("rate-limit diagnostics missing: %#v", meta)
+	}
+	verified, ok := data["verified_operations"].([]any)
+	if !ok || len(verified) != 1 || verified[0] != "project:list" || data["thread_create"] != "not_tested" {
+		t.Fatalf("connection diagnostics overclaim capabilities: %#v", data)
 	}
 	encoded, _ := json.Marshal(body)
 	if strings.Contains(string(encoded), hopliteKey) {

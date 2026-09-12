@@ -31,6 +31,18 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 		"clearInterval",
 		"Update key",
 		"never returned to this browser",
+		"Connection diagnostics",
+		"if (status.configured) await testConnection();",
+		"Last checked",
+		"Project default",
+		"Custom model ID",
+		"Run real agent test",
+		"This creates a real Hoplite thread and may use quota",
+		"Hoplite exposes no dry-run guarantee",
+		"autoFix: false",
+		"autoMerge: false",
+		"Agent test result",
+		"thread-create not tested",
 		"Cloud Agent",
 		"Isolated from LLM routing",
 	} {
@@ -40,6 +52,9 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 	}
 	if strings.Contains(body, "localStorage.setItem('HOPLITE_API_KEY'") || strings.Contains(body, "X-Api-Key") {
 		t.Fatal("Hoplite page must never handle the upstream API key directly")
+	}
+	if strings.Contains(body, "error = connectionError") {
+		t.Fatal("connection failures must render in diagnostics without a duplicate global banner")
 	}
 
 	experimental, err := os.ReadFile(filepath.Join(root, "routes", "dashboard", "experimental", "+page.svelte"))

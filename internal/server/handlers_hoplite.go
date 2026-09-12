@@ -53,16 +53,20 @@ func (s *Server) handleHopliteTest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	started := time.Now()
 	projects, meta, err := client.ListProjects(r.Context())
 	if err != nil {
 		writeHopliteError(w, err)
 		return
 	}
 	writeData(w, map[string]any{
-		"ok":            true,
-		"project_count": len(projects),
-		"latency_hint":  "live",
-		"meta":          meta,
+		"ok":                  true,
+		"checked_at":          time.Now().UTC().Format(time.RFC3339),
+		"latency_ms":          time.Since(started).Milliseconds(),
+		"project_count":       len(projects),
+		"verified_operations": []string{"project:list"},
+		"thread_create":       "not_tested",
+		"meta":                meta,
 	})
 }
 

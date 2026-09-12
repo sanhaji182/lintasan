@@ -122,7 +122,9 @@ Hoplite is integrated as a REST-based **Cloud Agent**, not as an ACP provider an
 
 - **Dashboard:** Experimental Providers → Hoplite
 - **Credential:** encrypted dashboard credential `hoplite`, with `HOPLITE_API_KEY` environment fallback
-- **Operations:** connection test, list projects, create/list/read threads, read messages and resulting pull requests
+- **Operations:** persistent connection diagnostics, list projects, create/list/read threads, read messages and resulting pull requests
+- **Models:** Hoplite has no model-catalog endpoint. Lintasan shows the project's `defaultModel` when available and accepts an exact custom model ID; custom IDs are validated only by creating a real thread.
+- **Agent test:** explicitly creates a real thread, may consume quota, and polls status/messages. The fixed prompt asks for read-only inspection, while `autoFix=false` and `autoMerge=false`; Hoplite exposes no dry-run guarantee.
 - **Safe defaults:** `autoFix=false`, `autoMerge=false`; thread creation is always an explicit operator action
 - **Upstream:** `https://api.hoplite.sh`
 
