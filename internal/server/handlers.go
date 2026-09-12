@@ -202,6 +202,11 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 		ModelsPath    string `json:"modelsPath"`
 		AuthHeader    string `json:"authHeader"`
 		AuthPrefix    string `json:"authPrefix"`
+		ChatPath2     string `json:"chat_path"`
+		ModelsPath2   string `json:"models_path"`
+		AuthHeader2   string `json:"auth_header"`
+		AuthPrefix2   string `json:"auth_prefix"`
+		ExtraHeaders  string `json:"extra_headers"`
 		OAuthProvider string `json:"oauth_provider"`
 		PoolID        string `json:"pool_id"`
 	}
@@ -216,6 +221,18 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 	}
 	if input.APIKey == "" {
 		input.APIKey = input.APIKey2
+	}
+	if input.ChatPath == "" {
+		input.ChatPath = input.ChatPath2
+	}
+	if input.ModelsPath == "" {
+		input.ModelsPath = input.ModelsPath2
+	}
+	if input.AuthHeader == "" {
+		input.AuthHeader = input.AuthHeader2
+	}
+	if input.AuthPrefix == "" {
+		input.AuthPrefix = input.AuthPrefix2
 	}
 	if input.Name == "" || input.BaseURL == "" {
 		http.Error(w, `{"error":{"message":"name and baseUrl are required"}}`, http.StatusBadRequest)
@@ -237,14 +254,14 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 	if input.AuthHeader == "" {
 		input.AuthHeader = "Authorization"
 	}
-	if input.AuthPrefix == "" {
+	if input.AuthPrefix == "" && !strings.EqualFold(input.AuthHeader, "x-api-key") {
 		input.AuthPrefix = "Bearer "
 	}
 
 	id := uuid.New().String()
 	_, err := s.db.Conn().Exec(
-		`INSERT INTO connections (id, name, base_url, api_key, oauth_provider, format, priority, chat_path, models_path, auth_header, auth_prefix, pool_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, input.Name, input.BaseURL, input.APIKey, strings.TrimSpace(strings.ToLower(input.OAuthProvider)), input.Format, input.Priority, input.ChatPath, input.ModelsPath, input.AuthHeader, input.AuthPrefix, strings.TrimSpace(input.PoolID),
+		`INSERT INTO connections (id, name, base_url, api_key, oauth_provider, format, priority, chat_path, models_path, auth_header, auth_prefix, extra_headers, pool_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, input.Name, input.BaseURL, input.APIKey, strings.TrimSpace(strings.ToLower(input.OAuthProvider)), input.Format, input.Priority, input.ChatPath, input.ModelsPath, input.AuthHeader, input.AuthPrefix, input.ExtraHeaders, strings.TrimSpace(input.PoolID),
 	)
 	if err != nil {
 		http.Error(w, `{"error":"failed to create connection"}`, http.StatusInternalServerError)

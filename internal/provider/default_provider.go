@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -63,11 +64,19 @@ func (d *DefaultProvider) Prepare(ctx context.Context, req *Request, conn *ConnC
 		authHeader = "Authorization"
 	}
 	authPrefix := conn.AuthPrefix
-	if authPrefix == "" {
+	if authPrefix == "" && !strings.EqualFold(authHeader, "x-api-key") {
 		authPrefix = "Bearer "
 	}
 	if conn.APIKey != "" {
 		h.Set(authHeader, authPrefix+conn.APIKey)
+	}
+	if conn.ExtraHeaders != "" {
+		var extra map[string]string
+		if json.Unmarshal([]byte(conn.ExtraHeaders), &extra) == nil {
+			for name, value := range extra {
+				h.Set(name, value)
+			}
+		}
 	}
 
 	return &UpstreamRequest{

@@ -241,6 +241,7 @@ type Connection struct {
 	ChatPath      string `json:"chat_path"`
 	AuthHeader    string `json:"auth_header"`
 	AuthPrefix    string `json:"auth_prefix"`
+	ExtraHeaders  string `json:"extra_headers"`
 	IsActive      int    `json:"is_active"`
 	Priority      int    `json:"priority"`
 }
@@ -1153,14 +1154,14 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 func (p *ProxyHandler) findConnectionByID(id string) (*Connection, error) {
 	row := p.db.Conn().QueryRow(`
-		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority, COALESCE(pool_id,'')
+		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, COALESCE(extra_headers,'{}'), is_active, priority, COALESCE(pool_id,'')
 		FROM connections
 		WHERE id = ? AND is_active = 1
 		LIMIT 1
 	`, id)
 
 	var conn Connection
-	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID)
+	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.ExtraHeaders, &conn.IsActive, &conn.Priority, &conn.PoolID)
 	if err != nil {
 		return nil, fmt.Errorf("connection not found: %s", id)
 	}
@@ -1216,11 +1217,19 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 		authHeader = "Authorization"
 	}
 	authPrefix := conn.AuthPrefix
-	if authPrefix == "" {
+	if authPrefix == "" && !strings.EqualFold(authHeader, "x-api-key") {
 		authPrefix = "Bearer "
 	}
 	if conn.APIKey != "" {
 		upReq.Header.Set(authHeader, authPrefix+conn.APIKey)
+	}
+	if conn.ExtraHeaders != "" {
+		var extra map[string]string
+		if json.Unmarshal([]byte(conn.ExtraHeaders), &extra) == nil {
+			for name, value := range extra {
+				upReq.Header.Set(name, value)
+			}
+		}
 	}
 	if xcc := r.Header.Get("X-Command-Code-Version"); xcc != "" {
 		upReq.Header.Set("X-Command-Code-Version", xcc)
@@ -1749,7 +1758,7 @@ func (p *ProxyHandler) resolveTieredCombo() ([]*Connection, string, bool) {
 func (p *ProxyHandler) buildAutoProviders() ([]combo.Provider, map[string]*Connection, map[string]string) {
 	rows, err := p.db.Conn().Query(`
 		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path,
-		       c.auth_header, c.auth_prefix, c.is_active, c.priority,
+		       c.auth_header, c.auth_prefix, COALESCE(c.extra_headers,'{}'), c.is_active, c.priority,
 		       (SELECT m.model_id FROM discovered_models m
 		         WHERE m.connection_id = c.id AND m.is_active = 1
 		         ORDER BY m.model_id LIMIT 1) AS model_id
@@ -1772,7 +1781,7 @@ func (p *ProxyHandler) buildAutoProviders() ([]combo.Provider, map[string]*Conne
 		var c Connection
 		var modelID sql.NullString
 		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.ChatPath,
-			&c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority, &modelID) != nil {
+			&c.AuthHeader, &c.AuthPrefix, &c.ExtraHeaders, &c.IsActive, &c.Priority, &modelID) != nil {
 			continue
 		}
 		p.applyConnectionAuth(&c)
@@ -1926,7 +1935,7 @@ func stringSlice(v any) []string {
 }
 
 func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*Connection {
-	query := `SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority FROM discovered_models m JOIN connections c ON m.connection_id=c.id WHERE m.model_id=? AND m.is_active=1 AND c.is_active=1`
+	query := `SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, COALESCE(c.extra_headers,'{}'), c.is_active, c.priority FROM discovered_models m JOIN connections c ON m.connection_id=c.id WHERE m.model_id=? AND m.is_active=1 AND c.is_active=1`
 	args := []any{model}
 	if len(ids) > 0 {
 		ph := make([]string, len(ids))
@@ -1945,7 +1954,7 @@ func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*
 	var out []*Connection
 	for rows.Next() {
 		var c Connection
-		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.ChatPath, &c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority) == nil {
+		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.ChatPath, &c.AuthHeader, &c.AuthPrefix, &c.ExtraHeaders, &c.IsActive, &c.Priority) == nil {
 			p.applyConnectionAuth(&c)
 			out = append(out, &c)
 		}
@@ -1955,7 +1964,7 @@ func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*
 
 func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error) {
 	row := p.db.Conn().QueryRow(`
-		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority, COALESCE(c.pool_id,'')
+		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, COALESCE(c.extra_headers,'{}'), c.is_active, c.priority, COALESCE(c.pool_id,'')
 		FROM discovered_models m
 		JOIN connections c ON m.connection_id = c.id
 		WHERE m.model_id = ? AND m.is_active = 1 AND c.is_active = 1
@@ -1964,7 +1973,7 @@ func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error)
 	`, model)
 
 	var conn Connection
-	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID)
+	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.ExtraHeaders, &conn.IsActive, &conn.Priority, &conn.PoolID)
 	if err != nil {
 		return nil, fmt.Errorf("model not found: %s", model)
 	}
@@ -1979,7 +1988,7 @@ func (p *ProxyHandler) scanConnections(rows *sql.Rows) []*Connection {
 	var out []*Connection
 	for rows.Next() {
 		var conn Connection
-		if err := rows.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID); err != nil {
+		if err := rows.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.ExtraHeaders, &conn.IsActive, &conn.Priority, &conn.PoolID); err != nil {
 			continue
 		}
 		p.applyConnectionAuth(&conn)
@@ -2011,7 +2020,7 @@ func (p *ProxyHandler) findAlternateConnectionsForModel(model string, excludeIDs
 	}
 
 	rows, err := p.db.Conn().Query(`
-		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority, COALESCE(c.pool_id,'')
+		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, COALESCE(c.extra_headers,'{}'), c.is_active, c.priority, COALESCE(c.pool_id,'')
 		FROM discovered_models m
 		JOIN connections c ON m.connection_id = c.id
 		WHERE m.model_id = ? AND m.is_active = 1 AND c.is_active = 1`+exclude+`
@@ -2026,7 +2035,7 @@ func (p *ProxyHandler) findAlternateConnectionsForModel(model string, excludeIDs
 
 func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
 	row := p.db.Conn().QueryRow(`
-		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority, COALESCE(pool_id,'')
+		SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, COALESCE(extra_headers,'{}'), is_active, priority, COALESCE(pool_id,'')
 		FROM connections
 		WHERE is_active = 1
 		ORDER BY priority DESC
@@ -2034,7 +2043,7 @@ func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
 	`)
 
 	var conn Connection
-	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID)
+	err := row.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.ExtraHeaders, &conn.IsActive, &conn.Priority, &conn.PoolID)
 	if err != nil {
 		return nil, fmt.Errorf("no active connections")
 	}

@@ -174,16 +174,16 @@ func TestDefaultProviderPrepareOpenAIShape(t *testing.T) {
 }
 
 func TestDefaultProviderPrepareFaithfulToLiveRouter(t *testing.T) {
-	// The live router (proxy.go:981-987) and the connection-insert path
-	// (handlers.go:205-206) BOTH treat an empty AuthPrefix as "Bearer ". The
-	// current system has no representation for "no prefix", so the provider
-	// mirrors that EXACTLY -- faithfulness, not a behavior change.
+	// The live router and the connection-insert path BOTH default an empty
+	// AuthPrefix to "Bearer " -- but ONLY for non-x-api-key headers. The
+	// x-api-key family has no prefix by contract (Anthropic), covered by
+	// TestDefaultProviderPrepareBareApiKeyToken below.
 	d := NewDefaultProvider("custom")
 	conn := &ConnConfig{
 		BaseURL:    "https://api.example.com",
 		APIKey:     "k",
 		ChatPath:   "/openai/v1/chat/completions",
-		AuthHeader: "X-Api-Key",
+		AuthHeader: "X-Custom-Token",
 		AuthPrefix: "",
 	}
 	req := &Request{Body: []byte(`{}`), Headers: http.Header{}}
@@ -194,8 +194,50 @@ func TestDefaultProviderPrepareFaithfulToLiveRouter(t *testing.T) {
 	if up.URL != "https://api.example.com/openai/v1/chat/completions" {
 		t.Fatalf("override chatPath not honored: %s", up.URL)
 	}
-	if got := up.Header.Get("X-Api-Key"); got != "Bearer k" {
+	if got := up.Header.Get("X-Custom-Token"); got != "Bearer k" {
 		t.Fatalf("expected live-faithful 'Bearer k' on custom header, got %q", got)
+	}
+}
+
+// TestDefaultProviderPrepareBareApiKeyToken pins the Anthropic contract: an
+// x-api-key header with an empty prefix sends the BARE key. Before this, the
+// empty-prefix default made the advertised Anthropic preset unsatisfiable.
+func TestDefaultProviderPrepareBareApiKeyToken(t *testing.T) {
+	d := NewDefaultProvider("anthropic")
+	conn := &ConnConfig{
+		BaseURL:    "https://api.anthropic.com/v1",
+		APIKey:     "sk-ant-123",
+		ChatPath:   "/messages",
+		AuthHeader: "x-api-key",
+		AuthPrefix: "",
+	}
+	up, err := d.Prepare(context.Background(), &Request{Body: []byte(`{}`)}, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := up.Header.Get("X-Api-Key"); got != "sk-ant-123" {
+		t.Fatalf("x-api-key must carry the bare token, got %q", got)
+	}
+}
+
+// TestDefaultProviderPrepareExtraHeaders pins that provider-required headers
+// survive Test AND real chat traffic: the same ConnConfig drives both paths.
+func TestDefaultProviderPrepareExtraHeaders(t *testing.T) {
+	d := NewDefaultProvider("anthropic")
+	conn := &ConnConfig{
+		BaseURL:      "https://api.anthropic.com/v1",
+		APIKey:       "sk-ant-123",
+		ChatPath:     "/messages",
+		AuthHeader:   "x-api-key",
+		AuthPrefix:   "",
+		ExtraHeaders: `{"anthropic-version":"2023-06-01"}`,
+	}
+	up, err := d.Prepare(context.Background(), &Request{Body: []byte(`{}`)}, conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := up.Header.Get("anthropic-version"); got != "2023-06-01" {
+		t.Fatalf("extra_headers must be applied to the upstream request, got %q", got)
 	}
 }
 

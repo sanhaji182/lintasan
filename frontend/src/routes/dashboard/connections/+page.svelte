@@ -367,7 +367,9 @@
   let reassigningPool = $state<string | null>(null); // connection id being reassigned
   let poolReassignTarget = $state(''); // target pool_id for reassign
 
-  let form = $state({ name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' as string, pool_id: '' as string });
+  const emptyConnectionForm = () => ({ name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' as string, pool_id: '' as string,
+    chat_path: '', models_path: '', auth_header: 'Authorization', auth_prefix: 'Bearer ', extra_headers: '{}' });
+  let form = $state(emptyConnectionForm());
 
   // Test-before-save state for the new-connection form
   let testingForm = $state(false);
@@ -382,7 +384,25 @@
     models_count?: number;
     fallback?: string;
   } | null>(null);
+  let testedFormFingerprint = $state('');
   let testBounce = $state(false); // triggers bounce animation on Test button
+
+  function connectionFormFingerprint() {
+    return JSON.stringify({
+      name: form.name,
+      base_url: form.base_url,
+      api_key: form.api_key,
+      format: form.format,
+      priority: form.priority,
+      oauth_provider: form.oauth_provider,
+      pool_id: form.pool_id,
+      chat_path: form.chat_path,
+      models_path: form.models_path,
+      auth_header: form.auth_header,
+      auth_prefix: form.auth_prefix,
+      extra_headers: form.extra_headers
+    });
+  }
 
   const summary = $derived({
     total: connections.length,
@@ -440,13 +460,12 @@
 
   function pickOAuthIdePreset(p: OAuthIdePreset) {
     form = {
+      ...emptyConnectionForm(),
       name: p.name,
       base_url: p.base_url,
-      api_key: '',
       format: p.format,
       priority: 5,
-      oauth_provider: p.oauth_provider,
-      pool_id: ''
+      oauth_provider: p.oauth_provider
     };
     testResult = null;
     showForm = true;
@@ -498,9 +517,15 @@
       format: preset.format,
       priority: 1,
       oauth_provider: '',
-      pool_id: ''
+      pool_id: '',
+      chat_path: preset.chat_path || '',
+      models_path: preset.models_path || '',
+      auth_header: preset.auth_header || 'Authorization',
+      auth_prefix: preset.auth_prefix ?? 'Bearer ',
+      extra_headers: preset.extra_headers || '{}'
     };
     testResult = null; // reset prior test result when picking a new preset
+    testedFormFingerprint = '';
     showForm = true;
     setTimeout(() => {
       const formEl = document.getElementById('add-connection-form');
@@ -1205,12 +1230,18 @@
     setTimeout(() => { testBounce = false; }, 600);
     testingForm = true;
     testResult = null;
+    testedFormFingerprint = '';
     try {
       const res = await api.post<any>('/api/connections/test', {
         base_url: form.base_url,
         api_key: formUsesOAuth ? '' : form.api_key,
         format: form.format,
-        oauth_provider: form.oauth_provider || undefined
+        oauth_provider: form.oauth_provider || undefined,
+        chat_path: form.chat_path,
+        models_path: form.models_path,
+        auth_header: form.auth_header,
+        auth_prefix: form.auth_prefix,
+        extra_headers: form.extra_headers
       });
       // Capture the full standard envelope
       testResult = {
@@ -1231,6 +1262,9 @@
             form.name = u.hostname.replace(/^api\./, '').replace(/\./g, '-');
           } catch { /* ignore */ }
         }
+        // Name auto-fill is a product-owned consequence of the successful
+        // test, so capture the final state. Any later user edit invalidates it.
+        testedFormFingerprint = connectionFormFingerprint();
       } else {
         // Toast gets a compact summary; the inline banner shows the full details
         const e = testResult.error;
@@ -1267,25 +1301,36 @@
   async function createConn() {
     // Save is blocked until test passes. Clicking the disabled-looking Save
     // button triggers a bounce on the Test button to draw the user's eye.
-    if (!testResult?.success) {
+    if (!testResult?.success || testedFormFingerprint !== connectionFormFingerprint()) {
       // Trigger bounce on Test button
       testBounce = true;
       setTimeout(() => { testBounce = false; }, 600);
       return;
     }
     try {
-      await api.post<any>('/api/connections', form);
+      const created = await api.post<any>('/api/connections', form);
+      const connectionId = created?.data?.id || created?.id;
+      if (connectionId) {
+        try {
+          await api.post('/api/models/sync/' + connectionId);
+          showToast('Connection saved · models synced', 'success');
+        } catch (syncError: any) {
+          showToast('Connection saved · model sync needs retry: ' + (syncError?.message || 'unknown error'), 'warning', 6000);
+        }
+      }
       await fetchConnections();
       showForm = false;
-      form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '', pool_id: '' };
+      form = emptyConnectionForm();
       testResult = null;
+      testedFormFingerprint = '';
     } catch (e: any) { error = e.message; }
   }
 
   function cancelForm() {
     showForm = false;
-    form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '', pool_id: '' };
+    form = emptyConnectionForm();
     testResult = null;
+    testedFormFingerprint = '';
     testingForm = false;
     testBounce = false;
   }
@@ -1698,7 +1743,10 @@
                     />
                     <div style="min-width: 0; flex: 1;">
                       <div style="font-size: 11px; font-weight: 600; color: var(--color-fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{preset.name}</div>
-                      <div style="font-size: 9px; color: var(--color-fg-3); text-transform: uppercase;">{preset.format}</div>
+                      <div style="font-size: 9px; color: var(--color-fg-3); text-transform: uppercase;">{preset.format} · Models ✓</div>
+                      <div style="font-size: 9px; color: var(--color-fg-3);">
+                        {preset.usage_capability === 'full' ? 'Usage: Full' : preset.usage_capability === 'rate_limits' ? 'Usage: Rate limits' : 'Usage not provided by provider'}
+                      </div>
                     </div>
                   </button>
                 {/each}

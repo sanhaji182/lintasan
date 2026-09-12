@@ -40,6 +40,44 @@ func TestBuiltinPresetsAreComplete(t *testing.T) {
 		if !strings.HasPrefix(p.BaseURL, "http://") && !strings.HasPrefix(p.BaseURL, "https://") {
 			t.Errorf("preset %q base URL %q is not an http(s) URL", p.Name, p.BaseURL)
 		}
+		if p.UsageCapability != "full" && p.UsageCapability != "rate_limits" && p.UsageCapability != "not_provided" {
+			t.Errorf("curated preset %q has invalid usage capability %q", p.Name, p.UsageCapability)
+		}
+		if p.VerificationStatus == "verified" && (p.ModelsCapability != "supported" || strings.TrimSpace(p.ModelsPath) == "" || strings.TrimSpace(p.VerifiedAt) == "") {
+			t.Errorf("verified preset %q lacks model/evidence metadata: %+v", p.Name, p)
+		}
+	}
+}
+
+func TestCatalogueHasConservativeVerifiedCohort(t *testing.T) {
+	verified := 0
+	for _, p := range builtinPresetCatalogue(t) {
+		if p.VerificationStatus == "verified" {
+			verified++
+		}
+	}
+	if verified < 10 || verified >= len(builtinPresetCatalogue(t)) {
+		t.Fatalf("verified cohort=%d total=%d; want a useful curated subset, not an empty or claim-all catalogue", verified, len(builtinPresetCatalogue(t)))
+	}
+}
+
+func TestProviderSpecificPresetContracts(t *testing.T) {
+	byName := map[string]Preset{}
+	for _, p := range builtinPresetCatalogue(t) {
+		byName[p.Name] = p
+	}
+
+	anthropic := byName["Anthropic"]
+	if anthropic.AuthHeader != "x-api-key" || anthropic.AuthPrefix != "" || anthropic.ModelsPath != "/models" || !strings.Contains(anthropic.ExtraHeaders, "anthropic-version") {
+		t.Errorf("Anthropic contract incorrect: %+v", anthropic)
+	}
+	google := byName["Google AI"]
+	if google.Format != "openai" || google.ModelsPath != "/models" || !strings.Contains(google.BaseURL, "/openai") {
+		t.Errorf("Google AI must use its OpenAI-compatible surface: %+v", google)
+	}
+	cc := byName["CommandCode Alpha"]
+	if cc.ChatPath != "/alpha/generate" || cc.ModelsPath != "/provider/v1/models" || cc.UsageCapability != "full" {
+		t.Errorf("CommandCode Alpha contract incorrect: %+v", cc)
 	}
 }
 
