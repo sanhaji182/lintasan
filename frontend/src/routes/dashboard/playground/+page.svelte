@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { page } from '$app/state';
   import { api } from '$lib/api';
   import {
     Send, Bot, User, Settings2, Thermometer, Hash,
@@ -31,11 +32,13 @@
 
   async function loadModelsAndCombos() {
     try {
+      const requestedModel = page.url.searchParams.get('model')?.trim() || '';
       const [modelsRes, combosRes] = await Promise.all([
         api.get<any>('/v1/models').catch(() => null),
         api.get<any>('/api/combos').catch(() => null),
       ]);
       const set = new Set<string>();
+      if (requestedModel) set.add(requestedModel);
       if (combosRes) {
         const cList = combosRes.data || combosRes.combos || (Array.isArray(combosRes) ? combosRes : []);
         for (const c of cList) {
@@ -50,7 +53,9 @@
       }
       if (set.size > 0) {
         availableModels = Array.from(set).sort();
-        if (!availableModels.includes(selectedModel)) {
+        if (requestedModel && availableModels.includes(requestedModel)) {
+          selectedModel = requestedModel;
+        } else if (!availableModels.includes(selectedModel)) {
           selectedModel = availableModels[0];
         }
       }
@@ -138,6 +143,7 @@
         }
       }
 
+      const isHopliteModel = selectedModel.startsWith('hoplite-agent/');
       const res = await api.raw('/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -145,7 +151,7 @@
           model: selectedModel,
           messages: apiMessages,
           temperature,
-          stream: true,
+          stream: !isHopliteModel,
         }),
         signal: streamAbort.signal,
       });
@@ -153,6 +159,21 @@
       if (!res.ok) {
         const errBody = await res.text();
         throw new Error(errBody || `HTTP ${res.status}`);
+      }
+
+      if (isHopliteModel) {
+        const payload = await res.json();
+        const choice = payload?.choices?.[0]?.message;
+        const content = choice?.content || 'Hoplite completed without returning a message.';
+        const lastIdx = messages.length - 1;
+        messages[lastIdx] = {
+          ...messages[lastIdx],
+          content,
+          reasoning: choice?.reasoning_content || '',
+          tokens: payload?.usage?.total_tokens || estimateTokens(content),
+        };
+        messages = [...messages];
+        return;
       }
 
       const reader = res.body?.getReader();
