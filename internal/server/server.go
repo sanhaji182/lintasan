@@ -30,29 +30,31 @@ import (
 )
 
 type Server struct {
-	cfg               *config.Config
-	db                *db.DB
-	mux               *http.ServeMux
-	proxy             *ProxyHandler
-	memHandler        *MemoryHandler         // vector memory API handler
-	mitmProxy         *mitm.MITMProxy        // MITM bridge for IDE interception
-	oauthMgr          *auth.OAuthManager     // OAuth session manager
-	userMgr           *auth.UserManager      // Dashboard user manager
-	authHandler       *auth.AuthHandler      // HTTP auth handlers
-	pluginMgr         *plugin.Manager        // JS plugin engine (also in proxy.pm)
-	discoverer        *discover.Discoverer   // auto model discovery
-	fpScanner         *freeproviders.Scanner // free provider scanner
-	rtkComp           *rtk.Compressor        // RTK token compressor
-	webSearch         *websearch.Engine      // web search engine
-	mcpServer         *mcp.Server            // MCP protocol server
-	mitmOnce          sync.Once              // ensures MITM starts exactly once
-	mitmSecret        string                 // random per-boot MITM bypass secret (empty = disabled)
-	setup             setupState             // bootstrap/active one-way latch
-	metrics           *metrics.Registry      // Prometheus metrics registry (/metrics)
-	startTime         time.Time              // server boot timestamp, used by /health
-	accessLogStore    *logging.LogStore      // in-memory access log ring buffer
-	hopliteBaseURL    string                 // injectable in tests; defaults to Hoplite public API
-	hopliteHTTPClient *http.Client           // injectable in tests; bounded by hoplite.Client
+	cfg                 *config.Config
+	db                  *db.DB
+	mux                 *http.ServeMux
+	proxy               *ProxyHandler
+	memHandler          *MemoryHandler         // vector memory API handler
+	mitmProxy           *mitm.MITMProxy        // MITM bridge for IDE interception
+	oauthMgr            *auth.OAuthManager     // OAuth session manager
+	userMgr             *auth.UserManager      // Dashboard user manager
+	authHandler         *auth.AuthHandler      // HTTP auth handlers
+	pluginMgr           *plugin.Manager        // JS plugin engine (also in proxy.pm)
+	discoverer          *discover.Discoverer   // auto model discovery
+	fpScanner           *freeproviders.Scanner // free provider scanner
+	rtkComp             *rtk.Compressor        // RTK token compressor
+	webSearch           *websearch.Engine      // web search engine
+	mcpServer           *mcp.Server            // MCP protocol server
+	mitmOnce            sync.Once              // ensures MITM starts exactly once
+	mitmSecret          string                 // random per-boot MITM bypass secret (empty = disabled)
+	setup               setupState             // bootstrap/active one-way latch
+	metrics             *metrics.Registry      // Prometheus metrics registry (/metrics)
+	startTime           time.Time              // server boot timestamp, used by /health
+	accessLogStore      *logging.LogStore      // in-memory access log ring buffer
+	hopliteBaseURL      string                 // injectable in tests; defaults to Hoplite public API
+	hopliteHTTPClient   *http.Client           // injectable in tests; bounded by hoplite.Client
+	hoplitePollInterval time.Duration          // injectable in tests; defaults to 2 seconds
+	hopliteProxyTimeout time.Duration          // injectable in tests; defaults to 4 minutes
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
@@ -219,7 +221,7 @@ func (s *Server) routes() {
 	// routing/selection/eligibility (capability-based routing is a later phase).
 	s.mux.HandleFunc("GET /api/capabilities", s.handleCapabilities)
 	s.mux.HandleFunc("GET /api/capabilities/shadow", s.handleShadowStats)
-	s.mux.HandleFunc("POST /v1/chat/completions", s.proxy.HandleChatCompletions)
+	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	s.mux.HandleFunc("POST /v1/embeddings", s.proxy.HandleEmbeddings)
 
 	// Codex Official Layer ingress (POST /v1/responses) — M0 scaffolding,

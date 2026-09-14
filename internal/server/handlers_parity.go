@@ -58,7 +58,7 @@ func (s *Server) registerParityRoutes() {
     s.mux.HandleFunc("GET /api/routing", s.handleGetCombos)
     s.mux.HandleFunc("POST /api/routing/reorder", s.handleRoutingReorder)
     s.mux.HandleFunc("GET /api/connections/sync", s.handleConnectionsSyncAll)
-    s.mux.HandleFunc("POST /api/v1/chat/completions", s.proxy.HandleChatCompletions)
+    s.mux.HandleFunc("POST /api/v1/chat/completions", s.handleChatCompletions)
     s.mux.HandleFunc("GET /api/teams/{id}", s.handleTeamByID)
     s.mux.HandleFunc("PUT /api/teams/{id}", s.handleTeamByID)
     s.mux.HandleFunc("DELETE /api/teams/{id}", s.handleTeamByID)

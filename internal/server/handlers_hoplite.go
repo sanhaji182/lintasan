@@ -231,11 +231,7 @@ func (s *Server) hopliteClient(w http.ResponseWriter, r *http.Request) (*hoplite
 		})
 		return nil, false
 	}
-	baseURL := s.hopliteBaseURL
-	if strings.TrimSpace(baseURL) == "" {
-		baseURL = hoplite.DefaultBaseURL
-	}
-	return hoplite.NewClient(baseURL, key, s.hopliteHTTPClient), true
+	return s.newHopliteClient(key, 0), true
 }
 
 func (s *Server) hopliteCredential(ctx context.Context) (string, bool) {

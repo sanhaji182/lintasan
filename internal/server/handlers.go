@@ -70,6 +70,23 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Hoplite is a coding-agent API, not an inference catalogue. Advertise one
+	// explicit adapter model per confirmed project only when configured.
+	if key, ok := s.hopliteCredential(r.Context()); ok {
+		client := s.newHopliteClient(key, 3*time.Second)
+		if projects, _, listErr := client.ListProjects(r.Context()); listErr == nil {
+			for _, project := range projects {
+				if strings.TrimSpace(project.ID) == "" {
+					continue
+				}
+				modelsList = append(modelsList, Model{
+					ID: "hoplite-agent/" + project.ID, Object: "model",
+					Created: time.Now().Unix(), OwnedBy: "Hoplite Agent",
+				})
+			}
+		}
+	}
+
 	if modelsList == nil {
 		modelsList = []Model{}
 	}

@@ -94,6 +94,7 @@ type RunSummary struct {
 type Message struct {
 	ID        string `json:"id"`
 	Role      string `json:"role"`
+	Kind      string `json:"kind,omitempty"`
 	Content   string `json:"content"`
 	CreatedAt string `json:"createdAt,omitempty"`
 }
