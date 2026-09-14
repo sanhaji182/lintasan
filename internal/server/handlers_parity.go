@@ -315,6 +315,12 @@ func truncateBody(b []byte, n int) string { if len(b)<=n { return string(b) }; r
 
 func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
     var in map[string]any; json.NewDecoder(r.Body).Decode(&in)
+    // Hoplite is a virtual Cloud Agent connection backed by the encrypted
+    // credential store, so it has no row/base_url in the connections table.
+    if id,_:=in["id"].(string); id==hopliteConnectionID {
+        s.handleHopliteTest(w, r)
+        return
+    }
     base,_:=in["base_url"].(string); if base==""{base,_=in["baseUrl"].(string)}
     key,_:=in["api_key"].(string); if key==""{key,_=in["apiKey"].(string)}
     var oauthProv string

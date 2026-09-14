@@ -37,6 +37,40 @@ func TestConnectionsRepresentHopliteAsMaskedCloudAgent(t *testing.T) {
 	}
 }
 
+func TestConnectionTestDispatchesHopliteVirtualConnection(t *testing.T) {
+	var projectCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		projectCalls.Add(1)
+		if r.Method != http.MethodGet || r.URL.Path != "/api/projects" {
+			t.Fatalf("unexpected Hoplite probe: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"projects":[{"id":"proj_1","name":"Acme"}]}`))
+	}))
+	defer upstream.Close()
+
+	s, ts := newTestServer(t, &config.Config{MasterKey: "test-master-key-1234567890"})
+	s.hopliteBaseURL, s.hopliteHTTPClient = upstream.URL, upstream.Client()
+	if err := s.credStore().SetCredential(context.Background(), "hoplite", "hop_test"); err != nil {
+		t.Fatal(err)
+	}
+	token := makeKnownAdmin(t, s, "connection-test-cloud-admin", "correct horse battery")
+	resp := hopliteRequest(t, ts, http.MethodPost, "/api/connections/test", `{"id":"hoplite-cloud-agent"}`, token)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Hoplite virtual connection test status=%d body=%s", resp.StatusCode, body)
+	}
+	if projectCalls.Load() != 1 {
+		t.Fatalf("Hoplite project probe calls=%d want=1", projectCalls.Load())
+	}
+	for _, want := range []string{`"ok":true`, `"project_count":1`, `"thread_create":"not_tested"`} {
+		if !strings.Contains(string(body), want) {
+			t.Fatalf("Hoplite connection test response missing %s: %s", want, body)
+		}
+	}
+}
+
 func TestHopliteMaskedCredentialPlaceholderNeverOverwritesStoredSecret(t *testing.T) {
 	s, ts := newTestServer(t, &config.Config{MasterKey: "test-master-key-1234567890"})
 	token := makeKnownAdmin(t, s, "masked-cloud-admin", "correct horse battery")
