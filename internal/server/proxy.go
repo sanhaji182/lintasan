@@ -243,6 +243,7 @@ type Connection struct {
 	AuthPrefix    string `json:"auth_prefix"`
 	IsActive      int    `json:"is_active"`
 	Priority      int    `json:"priority"`
+	ProviderKind  string `json:"provider_kind"`
 }
 
 func (p *ProxyHandler) getSetting(key, def string) string {

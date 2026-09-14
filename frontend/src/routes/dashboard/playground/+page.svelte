@@ -26,9 +26,12 @@
   let temperature = $state(0.7);
   let systemPrompt = $state('You are a helpful assistant.');
 
-  let availableModels = $state<string[]>([
-    'gpt-4o', 'gpt-4o-mini', 'claude-3.5-sonnet', 'deepseek-chat', 'gemini-2.5-flash'
+  let availableModels = $state<Array<{ id: string; label: string; kind: 'llm' | 'cloud_agent'; supportsStreaming: boolean }>>([
+    { id: 'gpt-4o', label: 'gpt-4o', kind: 'llm', supportsStreaming: true },
+    { id: 'gpt-4o-mini', label: 'gpt-4o-mini', kind: 'llm', supportsStreaming: true }
   ]);
+  let selectedCapability = $derived(availableModels.find(model => model.id === selectedModel));
+  let isCloudAgentSelection = $derived(selectedCapability?.kind === 'cloud_agent' || selectedModel.startsWith('hoplite-agent/') || selectedModel.startsWith('hoplite-model/v1/'));
 
   async function loadModelsAndCombos() {
     try {
@@ -37,26 +40,31 @@
         api.get<any>('/v1/models').catch(() => null),
         api.get<any>('/api/combos').catch(() => null),
       ]);
-      const set = new Set<string>();
-      if (requestedModel) set.add(requestedModel);
+      const catalog = new Map<string, { id: string; label: string; kind: 'llm' | 'cloud_agent'; supportsStreaming: boolean }>();
+      const add = (id: string, label = id, kind: 'llm' | 'cloud_agent' = 'llm', supportsStreaming = true) => {
+        if (id) catalog.set(id, { id, label, kind, supportsStreaming });
+      };
+      if (requestedModel) add(requestedModel);
       if (combosRes) {
         const cList = combosRes.data || combosRes.combos || (Array.isArray(combosRes) ? combosRes : []);
         for (const c of cList) {
-          if (c.name) set.add(c.name);
-          if (c.provider) set.add(c.provider);
+          const comboID = c.name || c.provider;
+          const cloud = Array.isArray(c.entries) && c.entries.some((entry: any) => String(entry.model || '').startsWith('hoplite-'));
+          if (comboID) add(comboID, cloud ? `${comboID} · Cloud Agent combo` : comboID, cloud ? 'cloud_agent' : 'llm', !cloud);
         }
       }
       if (modelsRes?.data && Array.isArray(modelsRes.data)) {
         for (const m of modelsRes.data) {
-          if (m.id) set.add(m.id);
+          const cloud = m.provider_kind === 'cloud_agent';
+          add(m.id, cloud ? `${m.hoplite_project_name || 'Hoplite'} · ${m.display_name || m.id} · Cloud Agent` : m.id, cloud ? 'cloud_agent' : 'llm', m.supports_streaming !== false);
         }
       }
-      if (set.size > 0) {
-        availableModels = Array.from(set).sort();
-        if (requestedModel && availableModels.includes(requestedModel)) {
+      if (catalog.size > 0) {
+        availableModels = Array.from(catalog.values()).sort((a, b) => a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label));
+        if (requestedModel && availableModels.some(model => model.id === requestedModel)) {
           selectedModel = requestedModel;
-        } else if (!availableModels.includes(selectedModel)) {
-          selectedModel = availableModels[0];
+        } else if (!availableModels.some(model => model.id === selectedModel)) {
+          selectedModel = availableModels[0].id;
         }
       }
     } catch {}
@@ -143,7 +151,7 @@
         }
       }
 
-      const isHopliteModel = selectedModel.startsWith('hoplite-agent/') || selectedModel.startsWith('hoplite-model/v1/');
+      const isHopliteModel = isCloudAgentSelection;
       const res = await api.raw('/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -348,9 +356,12 @@
             bind:value={selectedModel}
           >
             {#each availableModels as model}
-              <option value={model}>{model}</option>
+              <option value={model.id}>{model.label}</option>
             {/each}
           </select>
+          {#if isCloudAgentSelection}
+            <div class="cloud-agent-note">☁ Cloud Agent · non-streaming · project-scoped · may run for several minutes</div>
+          {/if}
         </div>
 
         <!-- Temperature -->

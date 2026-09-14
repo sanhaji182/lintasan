@@ -474,6 +474,17 @@ func (s *Server) handleRoutingComboPatch(w http.ResponseWriter, r *http.Request)
 	for _, item := range combos {
 		m := asMap(item)
 		if fmt.Sprint(m["id"]) == id {
+			candidate := make(map[string]any, len(m)+len(in))
+			for k, v := range m {
+				candidate[k] = v
+			}
+			for k, v := range in {
+				candidate[k] = v
+			}
+			if err := validateCloudAgentCombo(s.db.Conn(), candidate); err != nil {
+				writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+				return
+			}
 			for k, v := range in {
 				m[k] = v
 			}
@@ -485,6 +496,9 @@ func (s *Server) handleRoutingComboPatch(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.setJSONSetting("combos", combos)
+	if encoded, err := json.Marshal(combos); err == nil {
+		_ = s.proxy.cmb.LoadFromSettings(string(encoded))
+	}
 	s.audit("combo.update", "dashboard", id, in)
 	writeJSON(w, map[string]any{"id": id, "status": "updated"})
 }

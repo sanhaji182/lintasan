@@ -122,6 +122,10 @@ func (s *Server) handleCredentialSet(w http.ResponseWriter, r *http.Request) {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "credential cannot be empty"})
 		return
 	}
+	if strings.Contains(body.Credential, "*") || strings.Contains(body.Credential, "...") {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "masked credential placeholders cannot be saved"})
+		return
+	}
 	if err := s.credStore().SetCredential(r.Context(), name, body.Credential); err != nil {
 		writeJSONStatus(w, http.StatusInternalServerError, map[string]any{"error": "failed to store credential"})
 		return

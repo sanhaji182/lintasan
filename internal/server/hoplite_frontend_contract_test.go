@@ -78,6 +78,26 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 		t.Fatal("Hoplite onboarding must not describe the adapter as isolated from LLM routing")
 	}
 
+	connections, err := os.ReadFile(filepath.Join(root, "routes", "dashboard", "connections", "+page.svelte"))
+	if err != nil {
+		t.Fatalf("read Connections page: %v", err)
+	}
+	for _, required := range []string{"provider_kind === 'cloud_agent'", "Cloud Agent Providers", "Diagnostics"} {
+		if !strings.Contains(string(connections), required) {
+			t.Errorf("Connections missing cloud-agent contract %q", required)
+		}
+	}
+
+	routing, err := os.ReadFile(filepath.Join(root, "routes", "dashboard", "routing", "+page.svelte"))
+	if err != nil {
+		t.Fatalf("read Routing page: %v", err)
+	}
+	for _, required := range []string{"provider_kind === 'cloud_agent'", "Cloud Agent · priority only", "Cloud Agent combos only support priority/fallback", "s.value !== 'priority'"} {
+		if !strings.Contains(string(routing), required) {
+			t.Errorf("Routing missing cloud-agent contract %q", required)
+		}
+	}
+
 	playground, err := os.ReadFile(filepath.Join(root, "routes", "dashboard", "playground", "+page.svelte"))
 	if err != nil {
 		t.Fatalf("read Playground page: %v", err)
@@ -89,6 +109,8 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 		"selectedModel.startsWith('hoplite-model/v1/')",
 		"stream: !isHopliteModel",
 		"await res.json()",
+		"provider_kind === 'cloud_agent'",
+		"Cloud Agent · non-streaming · project-scoped",
 	} {
 		if !strings.Contains(playgroundBody, required) {
 			t.Errorf("Playground missing Hoplite handoff contract %q", required)

@@ -220,6 +220,9 @@ func (d *DB) migrate() error {
 		`ALTER TABLE oauth_sessions ADD COLUMN flow_meta TEXT DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN oauth_provider TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE connections ADD COLUMN pool_id TEXT NOT NULL DEFAULT ''`,
+		// Existing rows remain ordinary LLM providers. Cloud-agent adapters use
+		// their dedicated encrypted credential store, never connections.api_key.
+		`ALTER TABLE connections ADD COLUMN provider_kind TEXT NOT NULL DEFAULT 'llm'`,
 		`CREATE INDEX IF NOT EXISTS idx_connections_pool_id ON connections(pool_id)`,
 		// P1: Experimental Provider Registry Persistence — stores lifecycle state,
 		// admission reports, validation evidence, and descriptor snapshots for the

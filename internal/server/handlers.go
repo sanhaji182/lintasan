@@ -37,6 +37,10 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		ContextWindowTokens int    `json:"context_window_tokens,omitempty"`
 		CatalogEligibility  string `json:"catalog_eligibility,omitempty"`
 		CatalogRevision     string `json:"catalog_revision,omitempty"`
+		ProviderKind        string `json:"provider_kind,omitempty"`
+		SupportsStreaming   *bool  `json:"supports_streaming,omitempty"`
+		LongRunning         bool   `json:"long_running,omitempty"`
+		ProjectScoped       bool   `json:"project_scoped,omitempty"`
 	}
 
 	var modelsList []Model
@@ -88,10 +92,11 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 				if strings.TrimSpace(project.ID) == "" {
 					continue
 				}
+				noStreaming := false
 				modelsList = append(modelsList, Model{
 					ID: "hoplite-agent/" + project.ID, Object: "model", Created: time.Now().Unix(), OwnedBy: "Hoplite Agent",
 					DisplayName: project.Name + " · Project default", HopliteProjectID: project.ID, HopliteProjectName: project.Name,
-					CatalogEligibility: "project-default",
+					CatalogEligibility: "project-default", ProviderKind: "cloud_agent", SupportsStreaming: &noStreaming, LongRunning: true, ProjectScoped: true,
 				})
 				for _, model := range hoplite.Models() {
 					modelsList = append(modelsList, Model{
@@ -99,6 +104,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 						DisplayName: model.DisplayName, HopliteProjectID: project.ID, HopliteProjectName: project.Name,
 						HopliteModelID: model.ID, Provider: model.Provider, ContextWindowTokens: model.ContextTokens,
 						CatalogEligibility: model.Plan, CatalogRevision: hoplite.ModelCatalogRevision,
+						ProviderKind: "cloud_agent", SupportsStreaming: &noStreaming, LongRunning: true, ProjectScoped: true,
 					})
 				}
 			}
@@ -177,7 +183,8 @@ func (s *Server) handleModelsCatalog(w http.ResponseWriter, r *http.Request) {
 
 // Connections CRUD
 func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.Conn().Query(`SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, is_active, priority, models_count, created_at, COALESCE(pool_id,''), COALESCE(chat_path,'') FROM connections ORDER BY priority DESC, created_at DESC`)
+	hopliteStatus := s.credStore().GetStatus(r.Context(), "hoplite", hopliteCredentialEnv)
+	rows, err := s.db.Conn().Query(`SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, is_active, priority, models_count, created_at, COALESCE(pool_id,''), COALESCE(chat_path,''), COALESCE(provider_kind,'llm') FROM connections ORDER BY provider_kind, priority DESC, created_at DESC`)
 	if err != nil {
 		http.Error(w, `{"error":"failed to query connections"}`, http.StatusInternalServerError)
 		return
@@ -185,25 +192,40 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type ConnResponse struct {
-		ID            string `json:"id"`
-		Name          string `json:"name"`
-		BaseURL       string `json:"base_url"`
-		APIKey        string `json:"api_key"`
-		OAuthProvider string `json:"oauth_provider,omitempty"`
-		Format        string `json:"format"`
-		IsActive      int    `json:"is_active"`
-		Priority      int    `json:"priority"`
-		ModelsCount   int    `json:"models_count"`
-		CreatedAt     string `json:"created_at"`
-		PoolID        string `json:"pool_id,omitempty"`
-		ChatPath      string `json:"chat_path,omitempty"`
+		ID                   string `json:"id"`
+		Name                 string `json:"name"`
+		BaseURL              string `json:"base_url"`
+		APIKey               string `json:"api_key"`
+		OAuthProvider        string `json:"oauth_provider,omitempty"`
+		Format               string `json:"format"`
+		IsActive             int    `json:"is_active"`
+		Priority             int    `json:"priority"`
+		ModelsCount          int    `json:"models_count"`
+		CreatedAt            string `json:"created_at"`
+		PoolID               string `json:"pool_id,omitempty"`
+		ChatPath             string `json:"chat_path,omitempty"`
+		ProviderKind         string `json:"provider_kind"`
+		CredentialLabel      string `json:"credential_label,omitempty"`
+		CredentialConfigured bool   `json:"credential_configured,omitempty"`
+		CredentialMasked     string `json:"credential_masked,omitempty"`
+		SupportsStreaming    bool   `json:"supports_streaming"`
+		LongRunning          bool   `json:"long_running,omitempty"`
+		ProjectScoped        bool   `json:"project_scoped,omitempty"`
 	}
 
 	var conns []ConnResponse
 	for rows.Next() {
 		var c ConnResponse
-		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.IsActive, &c.Priority, &c.ModelsCount, &c.CreatedAt, &c.PoolID, &c.ChatPath); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.IsActive, &c.Priority, &c.ModelsCount, &c.CreatedAt, &c.PoolID, &c.ChatPath, &c.ProviderKind); err != nil {
 			continue
+		}
+		c.SupportsStreaming = true
+		if c.ProviderKind == "cloud_agent" {
+			c.APIKey = ""
+			c.CredentialLabel = "Organization API Key"
+			c.CredentialConfigured = hopliteStatus.Configured
+			c.CredentialMasked = hopliteStatus.MaskedValue
+			c.SupportsStreaming, c.LongRunning, c.ProjectScoped = false, true, true
 		}
 		// Mask API key
 		if len(c.APIKey) > 8 {
@@ -218,6 +240,19 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 
 	if conns == nil {
 		conns = []ConnResponse{}
+	}
+	// Hoplite is a virtual first-class connection backed by the authoritative
+	// encrypted credential store, so no extra plaintext connection row exists.
+	// It appears once configured (including an invalid credential for diagnostics)
+	// and therefore does not change empty-install connection semantics.
+	if hopliteStatus.Configured {
+		hopliteConnection := ConnResponse{
+			ID: hopliteConnectionID, Name: "Hoplite", BaseURL: "https://api.hoplite.sh", Format: "hoplite-agent",
+			IsActive: 1, ProviderKind: providerKindCloudAgent, CredentialLabel: "Organization API Key",
+			CredentialConfigured: hopliteStatus.Configured, CredentialMasked: hopliteStatus.MaskedValue,
+			SupportsStreaming: false, LongRunning: true, ProjectScoped: true,
+		}
+		conns = append(conns, hopliteConnection)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -505,6 +540,10 @@ func (s *Server) handleCreateCombo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 		return
 	}
+	if err := validateCloudAgentCombo(s.db.Conn(), input); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
 
 	// Get existing combos
 	combosJSON, _ := s.db.GetSetting("combos")
@@ -518,6 +557,7 @@ func (s *Server) handleCreateCombo(w http.ResponseWriter, r *http.Request) {
 
 	newJSON, _ := json.Marshal(combos)
 	s.db.SetSetting("combos", string(newJSON))
+	_ = s.proxy.cmb.LoadFromSettings(string(newJSON))
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -534,6 +574,10 @@ func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
 	var input map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
+		return
+	}
+	if err := validateCloudAgentCombo(s.db.Conn(), input); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
 
@@ -563,6 +607,7 @@ func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
 
 	newJSON, _ := json.Marshal(combos)
 	s.db.SetSetting("combos", string(newJSON))
+	_ = s.proxy.cmb.LoadFromSettings(string(newJSON))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"data": input, "id": id, "status": "updated"})

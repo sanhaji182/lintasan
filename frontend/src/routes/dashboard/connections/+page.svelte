@@ -310,7 +310,7 @@
   const groupedConnections = $derived.by(() => {
     const groups = new Map<string, { key: string; label: string; connections: any[]; active: number; totalModels: number; baseURL: string; formats: Set<string> }>();
     for (const conn of sortedConnections) {
-      let key = conn.pool_id || extractProvider(conn.base_url || '');
+      let key = conn.provider_kind === 'cloud_agent' ? 'cloud-agent-providers' : (conn.pool_id || extractProvider(conn.base_url || ''));
       // Split CommandCode into two groups: official /v1/chat/completions vs
       // the alpha /alpha/generate endpoint (same base URL, different protocol).
       if (key.toLowerCase() === 'commandcode') {
@@ -328,7 +328,7 @@
     }
     // Set labels after grouping
     for (const g of groups.values()) {
-      g.label = providerDisplayName(g.key, g.connections);
+      g.label = g.key === 'cloud-agent-providers' ? 'Cloud Agent Providers' : providerDisplayName(g.key, g.connections);
     }
     return [...groups.values()];
   });
@@ -2024,6 +2024,10 @@
                 <div class="group-title-col">
                   <div class="group-title-row">
                     <span class="conn-group-label">{group.label}</span>
+                    {#if group.key === 'cloud-agent-providers'}
+                      <span class="badge" style="background: rgba(124,58,237,.12); color: #7c3aed;">Cloud Agent</span>
+                      <a href="/dashboard/experimental/hoplite" class="badge" onclick={(e) => e.stopPropagation()}>Diagnostics</a>
+                    {/if}
                     {#each [...group.formats] as fmt}
                       <span class="badge conn-format-badge">{fmt}</span>
                     {/each}

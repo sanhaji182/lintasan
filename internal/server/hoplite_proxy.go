@@ -35,7 +35,14 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	if json.Unmarshal(body, &envelope) != nil || (!strings.HasPrefix(envelope.Model, "hoplite-agent/") && !strings.HasPrefix(envelope.Model, "hoplite-model/v1/")) {
+	if json.Unmarshal(body, &envelope) != nil {
+		s.proxy.HandleChatCompletions(w, r)
+		return
+	}
+	if s.handleCloudAgentCombo(w, r, envelope.Model, envelope.Stream, envelope.Messages, body) {
+		return
+	}
+	if !isCloudAgentModel(envelope.Model) {
 		s.proxy.HandleChatCompletions(w, r)
 		return
 	}
@@ -90,7 +97,17 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 	created, meta, err := client.CreateThread(ctx, hoplite.CreateThreadRequest{
 		ProjectID: projectID, Prompt: prompt, Model: selectedModel, AutoFix: false, AutoMerge: false, ClientOperationID: opID,
 	})
+	// Idempotency alone cannot prove whether a network timeout happened before
+	// or after upstream acceptance; the combo dispatcher handles that ambiguity
+	// fail-closed and will not start another autonomous target.
 	if err != nil {
+		// A transport failure has ambiguous acceptance: the upstream may have
+		// created the thread before the response was lost. Never fan out a second
+		// agent in that case. Typed HTTP errors are definitive pre-create rejects.
+		var upstream *hoplite.UpstreamError
+		if !errors.As(err, &upstream) {
+			w.Header().Set("X-Lintasan-Agent-Acceptance-Uncertain", "true")
+		}
 		writeHopliteOpenAIError(w, err)
 		return
 	}
@@ -99,6 +116,9 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 		writeOpenAIError(w, http.StatusBadGateway, "invalid_upstream_response", "Hoplite did not return a thread ID")
 		return
 	}
+	// This header is internal dispatch state until copied to the client. From
+	// this point onward fallback is forbidden: a real agent job now exists.
+	w.Header().Set("X-Lintasan-Agent-Accepted", "true")
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	for !hopliteTerminal(thread.Status) {
