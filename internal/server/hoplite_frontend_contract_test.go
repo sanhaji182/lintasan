@@ -86,6 +86,7 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 	for _, required := range []string{
 		"url.searchParams.get('model')",
 		"selectedModel.startsWith('hoplite-agent/')",
+		"selectedModel.startsWith('hoplite-model/v1/')",
 		"stream: !isHopliteModel",
 		"await res.json()",
 	} {

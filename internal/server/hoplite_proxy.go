@@ -35,7 +35,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	if json.Unmarshal(body, &envelope) != nil || !strings.HasPrefix(envelope.Model, "hoplite-agent/") {
+	if json.Unmarshal(body, &envelope) != nil || (!strings.HasPrefix(envelope.Model, "hoplite-agent/") && !strings.HasPrefix(envelope.Model, "hoplite-model/v1/")) {
 		s.proxy.HandleChatCompletions(w, r)
 		return
 	}
@@ -145,20 +145,20 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 
 func hopliteSelectedModelID(projectID, modelID string) string {
 	encode := func(value string) string { return base64.RawURLEncoding.EncodeToString([]byte(value)) }
-	return "hoplite-agent/v1/" + encode(projectID) + "/" + encode(modelID)
+	return "hoplite-model/v1/" + encode(projectID) + "/" + encode(modelID)
 }
 
 func parseHopliteModelID(id string) (projectID, modelID string, selected, ok bool) {
-	const prefix = "hoplite-agent/"
-	if !strings.HasPrefix(id, prefix) {
-		return "", "", false, false
-	}
-	rest := strings.TrimPrefix(id, prefix)
-	if !strings.HasPrefix(rest, "v1/") {
-		projectID = strings.TrimSpace(rest)
+	const aliasPrefix = "hoplite-agent/"
+	const selectedPrefix = "hoplite-model/v1/"
+	if strings.HasPrefix(id, aliasPrefix) {
+		projectID = strings.TrimSpace(strings.TrimPrefix(id, aliasPrefix))
 		return projectID, "", false, projectID != ""
 	}
-	parts := strings.Split(strings.TrimPrefix(rest, "v1/"), "/")
+	if !strings.HasPrefix(id, selectedPrefix) {
+		return "", "", false, false
+	}
+	parts := strings.Split(strings.TrimPrefix(id, selectedPrefix), "/")
 	if len(parts) != 2 {
 		return "", "", false, false
 	}

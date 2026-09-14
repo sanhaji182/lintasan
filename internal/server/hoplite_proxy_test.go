@@ -62,7 +62,7 @@ func TestHopliteModelIDRoundTripSupportsSpecialCharacters(t *testing.T) {
 }
 
 func TestHopliteInvalidSelectedModelFailsClosed(t *testing.T) {
-	project, model, selected, ok := parseHopliteModelID("hoplite-agent/v1/not-base64/also-not-base64")
+	project, model, selected, ok := parseHopliteModelID("hoplite-model/v1/not-base64/also-not-base64")
 	if ok || selected || project != "" || model != "" {
 		t.Fatalf("invalid ID accepted: project=%q model=%q selected=%v ok=%v", project, model, selected, ok)
 	}

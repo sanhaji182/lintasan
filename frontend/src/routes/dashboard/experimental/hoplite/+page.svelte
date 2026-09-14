@@ -192,7 +192,7 @@
     const res = await api.get<{ data: { projects: Project[] } }>('/api/experimental/cloud-agents/hoplite/projects');
     projects = res.data.projects || [];
     const modelsRes = await api.get<{ data: AdapterModel[] }>('/v1/models');
-    adapterModels = (modelsRes.data || []).filter((model) => model.id.startsWith('hoplite-agent/'));
+    adapterModels = (modelsRes.data || []).filter((model) => model.id.startsWith('hoplite-agent/') || model.id.startsWith('hoplite-model/v1/'));
     if (!selectedProject && projects.length) selectedProject = projects[0].id;
     const project = selectedProjectData();
     if (project?.agentSpeed) speed = project.agentSpeed;

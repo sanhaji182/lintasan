@@ -143,7 +143,7 @@
         }
       }
 
-      const isHopliteModel = selectedModel.startsWith('hoplite-agent/');
+      const isHopliteModel = selectedModel.startsWith('hoplite-agent/') || selectedModel.startsWith('hoplite-model/v1/');
       const res = await api.raw('/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
