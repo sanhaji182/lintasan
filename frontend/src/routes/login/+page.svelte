@@ -2,6 +2,7 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import LogoMark from '$lib/components/LogoMark.svelte';
   import {
     ArrowRight, Eye, EyeOff, Loader2, Lock, LogIn, User,
     ShieldCheck, Terminal, ArrowUpRight, Info, KeyRound, WifiOff, AlertTriangle
@@ -109,7 +110,7 @@
   <div class="login-layout">
     <div class="brand-card">
       <a href="/" class="brand">
-        <span class="brand-mark">L</span>
+        <LogoMark size={34} decorative />
         <span>Lintasan</span>
       </a>
       <h1>Welcome back</h1>
@@ -284,16 +285,6 @@
     gap: 10px;
     text-decoration: none;
     margin-bottom: 32px;
-  }
-  .brand-mark {
-    width: 34px; height: 34px;
-    border-radius: 9px;
-    background: #4f46e5;
-    color: #fff;
-    display: grid;
-    place-items: center;
-    font-weight: 700;
-    font-size: 14px;
   }
   .brand span {
     font-size: 17px;

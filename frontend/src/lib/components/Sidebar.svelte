@@ -7,6 +7,7 @@
     Brain, Globe, Server, Sun, Moon, Upload, Plug
   } from 'lucide-svelte';
   import { theme } from '$lib/stores/theme';
+  import LogoMark from '$lib/components/LogoMark.svelte';
 
   let { open = $bindable(false) }: { open?: boolean } = $props();
 
@@ -77,7 +78,7 @@
 
 <aside class="sidebar" class:open>
   <div class="sidebar-brand">
-    <span class="sb-logo">L</span>
+    <LogoMark size={36} variant={$theme === 'dark' ? 'dark' : 'light'} decorative />
     <div>
       <div class="sb-name">Lintasan</div>
       <div class="sb-version">{version}</div>
@@ -150,16 +151,6 @@
     border-bottom: 1px solid #f1f5f9;
   }
 
-  .sb-logo {
-    width: 34px; height: 34px;
-    border-radius: 9px;
-    background: #4f46e5;
-    color: #fff;
-    display: grid;
-    place-items: center;
-    font-weight: 700;
-    font-size: 14px;
-  }
 
   .sb-name {
     font-size: 15px;

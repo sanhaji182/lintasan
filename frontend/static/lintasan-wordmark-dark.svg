@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 248 64" role="img" aria-labelledby="title desc">
+  <title id="title">Lintasan — dark</title>
+  <desc id="desc">Lintasan Jalur symbol with horizontal wordmark for dark backgrounds.</desc>
+  <defs><linearGradient id="route" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse"><stop stop-color="#67E8F9"/><stop offset="1" stop-color="#38BDF8"/></linearGradient></defs>
+  <rect width="64" height="64" rx="16" fill="#0F172A"/>
+  <g fill="none" stroke="url(#route)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 13H19C27 13 33 19 33 27V45C33 50 37 53 42 53H54"/>
+    <path d="M10 27H21C28 27 33 32 33 39"/>
+    <path d="M10 41H22C28 41 33 36 33 30"/>
+  </g>
+  <text x="80" y="42" fill="#F8FAFC" font-family="Inter, ui-sans-serif, system-ui, sans-serif" font-size="31" font-weight="700" letter-spacing="-1">Lintasan</text>
+</svg>

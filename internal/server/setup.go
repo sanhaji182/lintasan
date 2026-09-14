@@ -62,7 +62,12 @@ func isPublicUIPath(method, path string) bool {
 	// Top-level static files + known SPA entry routes. SPA sub-routes resolve
 	// to these top-level prefixes (e.g. /dashboard/users).
 	switch {
-	case path == "/favicon.png" || path == "/favicon.ico" || path == "/robots.txt":
+	case path == "/favicon.svg" || path == "/favicon.png" || path == "/favicon.ico" ||
+		path == "/favicon-16.png" || path == "/favicon-32.png" || path == "/favicon-48.png" ||
+		path == "/favicon-192.png" || path == "/apple-touch-icon.png" || path == "/site.webmanifest" ||
+		path == "/lintasan-mark.svg" || path == "/lintasan-mark-dark.svg" ||
+		path == "/lintasan-mark-512.png" || path == "/lintasan-wordmark.svg" ||
+		path == "/lintasan-wordmark-dark.svg" || path == "/robots.txt":
 		return true
 	case path == "/login":
 		return true

@@ -8,6 +8,7 @@
     BarChart3, Cpu, BookOpen
   } from 'lucide-svelte';
   import { api } from '$lib/api';
+  import LogoMark from '$lib/components/LogoMark.svelte';
 
   let version = $state('v0.x');
   let mounted = $state(false);
@@ -127,7 +128,7 @@
 
   <header class="topbar">
     <a class="brand" href="/">
-      <span class="brand-mark">L</span>
+      <LogoMark size={36} decorative />
       <span class="brand-name">Lintasan</span>
     </a>
     <nav class="nav-links">
@@ -234,7 +235,7 @@
             <tr>
               <th></th>
               <th class="th-lintasan">
-                <span class="th-brand-mark">L</span>
+                <LogoMark size={24} decorative />
                 Lintasan
               </th>
               <th class="th-raw">Raw Providers</th>
@@ -404,16 +405,6 @@
     align-items: center;
     gap: 10px;
     text-decoration: none;
-  }
-  .brand-mark {
-    width: 36px; height: 36px;
-    border-radius: 10px;
-    background: linear-gradient(135deg, #4f46e5, #7c3aed);
-    color: #fff;
-    display: grid;
-    place-items: center;
-    font-weight: 700;
-    font-size: 15px;
   }
   .brand-name {
     font-size: 18px;
@@ -724,19 +715,6 @@
   .th-lintasan {
     background: #eef2ff;
     color: #4f46e5;
-  }
-  .th-lintasan .th-brand-mark {
-    display: inline-flex;
-    width: 22px; height: 22px;
-    border-radius: 6px;
-    background: linear-gradient(135deg, #4f46e5, #7c3aed);
-    color: #fff;
-    align-items: center;
-    justify-content: center;
-    font-size: 11px;
-    font-weight: 700;
-    margin-right: 7px;
-    vertical-align: middle;
   }
   .th-raw {
     background: #f8fafc;
