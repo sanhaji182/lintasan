@@ -42,14 +42,45 @@ func TestSeedBuiltinPresets_RefreshesExistingBuiltin(t *testing.T) {
 	if count != 1 {
 		t.Errorf("expected 1 row for %s after refresh, got %d (rename duplicated the row)", target.BaseURL, count)
 	}
-	var name, category string
+	var name, category, modelsPath, usageCapability, verificationStatus string
 	_ = s.db.Conn().QueryRow(
-		"SELECT name, category FROM provider_presets WHERE base_url = ?", target.BaseURL).Scan(&name, &category)
+		"SELECT name, category, models_path, usage_capability, verification_status FROM provider_presets WHERE base_url = ?", target.BaseURL).Scan(&name, &category, &modelsPath, &usageCapability, &verificationStatus)
 	if name != target.Name {
 		t.Errorf("name = %q, want refreshed %q", name, target.Name)
 	}
 	if category != target.Category {
 		t.Errorf("category = %q, want refreshed %q", category, target.Category)
+	}
+	if modelsPath != target.ModelsPath || usageCapability != target.UsageCapability || verificationStatus != "verified" {
+		t.Errorf("metadata not refreshed: models=%q usage=%q verification=%q", modelsPath, usageCapability, verificationStatus)
+	}
+}
+
+// Google moved from the native Gemini base to its OpenAI-compatible surface.
+// Name-matched built-ins must migrate the base URL as well as the paths;
+// otherwise an existing install ends up with a mixed, invalid contract.
+func TestSeedBuiltinPresets_MigratesGoogleBaseURLByName(t *testing.T) {
+	s := newRESTTestServer(t)
+	now := "2026-01-01 00:00:00"
+	_, err := s.db.Conn().Exec(`
+		INSERT INTO provider_presets (id,name,domain,base_url,format,key_label,category,is_builtin,created_at,updated_at)
+		VALUES ('google-old','Google AI','ai.google.dev','https://generativelanguage.googleapis.com/v1beta','gemini','API Key','foundation',1,?,?)`, now, now)
+	if err != nil {
+		t.Fatalf("seed old google row: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.handleSeedBuiltinPresets(rec, httptest.NewRequest("POST", "/api/presets/seed", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed: got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	var baseURL, format, chatPath, modelsPath string
+	if err := s.db.Conn().QueryRow(`SELECT base_url,format,chat_path,models_path FROM provider_presets WHERE id='google-old'`).Scan(&baseURL, &format, &chatPath, &modelsPath); err != nil {
+		t.Fatal(err)
+	}
+	if baseURL != "https://generativelanguage.googleapis.com/v1beta/openai" || format != "openai" || chatPath != "/chat/completions" || modelsPath != "/models" {
+		t.Fatalf("Google mixed contract after migration: base=%q format=%q chat=%q models=%q", baseURL, format, chatPath, modelsPath)
 	}
 }
 

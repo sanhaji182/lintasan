@@ -4,22 +4,54 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
 // Preset represents a provider preset in the catalog
 type Preset struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Domain    string `json:"domain"`
-	BaseURL   string `json:"base_url"`
-	Format    string `json:"format"`
-	KeyLabel  string `json:"key_label"`
-	Category  string `json:"category"`
-	IsBuiltin int    `json:"is_builtin"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Domain             string `json:"domain"`
+	BaseURL            string `json:"base_url"`
+	Format             string `json:"format"`
+	KeyLabel           string `json:"key_label"`
+	Category           string `json:"category"`
+	IsBuiltin          int    `json:"is_builtin"`
+	ChatPath           string `json:"chat_path"`
+	ModelsPath         string `json:"models_path"`
+	AuthHeader         string `json:"auth_header"`
+	AuthPrefix         string `json:"auth_prefix"`
+	ExtraHeaders       string `json:"extra_headers"`
+	ModelsCapability   string `json:"models_capability"`
+	UsageCapability    string `json:"usage_capability"`
+	VerificationStatus string `json:"verification_status"`
+	VerifiedAt         string `json:"verified_at"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
+}
+
+// validatePresetExtraHeaders keeps this catalogue field non-secret. It is
+// returned by the presets API, so credentials belong in api_key/auth fields,
+// never here. String-only values also make discovery and proxy interpretation
+// deterministic.
+func validatePresetExtraHeaders(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	var headers map[string]string
+	if err := json.Unmarshal([]byte(raw), &headers); err != nil {
+		return fmt.Errorf("extra_headers must be a JSON object with string values")
+	}
+	for name := range headers {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "authorization", "proxy-authorization", "x-api-key", "api-key", "cookie", "set-cookie":
+			return fmt.Errorf("extra_headers must not contain credential header %q", name)
+		}
+	}
+	return nil
 }
 
 // handleGetPresets returns all provider presets (built-in + custom)
@@ -30,8 +62,12 @@ func (s *Server) handleGetPresets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.db.Conn().Query(`
-		SELECT id, name, domain, base_url, format, key_label, category, is_builtin, created_at, updated_at
+		SELECT id, name, domain, base_url, format, key_label, category, is_builtin,
+		       chat_path, models_path, auth_header, auth_prefix, extra_headers,
+		       models_capability, usage_capability, verification_status, verified_at,
+		       created_at, updated_at
 		FROM provider_presets
+		WHERE is_builtin = 0 OR (verification_status = 'verified' AND models_capability = 'supported')
 		ORDER BY is_builtin DESC, name ASC
 	`)
 	if err != nil {
@@ -43,7 +79,10 @@ func (s *Server) handleGetPresets(w http.ResponseWriter, r *http.Request) {
 	presets := []Preset{}
 	for rows.Next() {
 		var p Preset
-		if err := rows.Scan(&p.ID, &p.Name, &p.Domain, &p.BaseURL, &p.Format, &p.KeyLabel, &p.Category, &p.IsBuiltin, &p.CreatedAt, &p.UpdatedAt); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Domain, &p.BaseURL, &p.Format, &p.KeyLabel, &p.Category, &p.IsBuiltin,
+			&p.ChatPath, &p.ModelsPath, &p.AuthHeader, &p.AuthPrefix, &p.ExtraHeaders,
+			&p.ModelsCapability, &p.UsageCapability, &p.VerificationStatus, &p.VerifiedAt,
+			&p.CreatedAt, &p.UpdatedAt); err != nil {
 			continue
 		}
 		presets = append(presets, p)
@@ -60,12 +99,17 @@ func (s *Server) handleCreatePreset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name     string `json:"name"`
-		Domain   string `json:"domain"`
-		BaseURL  string `json:"base_url"`
-		Format   string `json:"format"`
-		KeyLabel string `json:"key_label"`
-		Category string `json:"category"`
+		Name         string `json:"name"`
+		Domain       string `json:"domain"`
+		BaseURL      string `json:"base_url"`
+		Format       string `json:"format"`
+		KeyLabel     string `json:"key_label"`
+		Category     string `json:"category"`
+		ChatPath     string `json:"chat_path"`
+		ModelsPath   string `json:"models_path"`
+		AuthHeader   string `json:"auth_header"`
+		AuthPrefix   string `json:"auth_prefix"`
+		ExtraHeaders string `json:"extra_headers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -85,30 +129,47 @@ func (s *Server) handleCreatePreset(w http.ResponseWriter, r *http.Request) {
 	if req.Category == "" {
 		req.Category = "foundation"
 	}
+	defaultChat, defaultModels := apiPathsFor(req.BaseURL)
+	if req.ChatPath == "" {
+		req.ChatPath = defaultChat
+	}
+	if req.ModelsPath == "" {
+		req.ModelsPath = defaultModels
+	}
+	if req.AuthHeader == "" {
+		req.AuthHeader = "Authorization"
+	}
+	if req.AuthPrefix == "" && !strings.EqualFold(req.AuthHeader, "x-api-key") {
+		req.AuthPrefix = "Bearer "
+	}
+	if req.ExtraHeaders == "" {
+		req.ExtraHeaders = "{}"
+	}
+	if err := validatePresetExtraHeaders(req.ExtraHeaders); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	id, _ := generatePresetID()
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 
 	_, err := s.db.Conn().Exec(`
-		INSERT INTO provider_presets (id, name, domain, base_url, format, key_label, category, is_builtin, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
-	`, id, req.Name, req.Domain, req.BaseURL, req.Format, req.KeyLabel, req.Category, now, now)
+		INSERT INTO provider_presets (id,name,domain,base_url,format,key_label,category,is_builtin,chat_path,models_path,auth_header,auth_prefix,extra_headers,models_capability,usage_capability,verification_status,verified_at,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?,'unsupported','not_provided','unverified','',?,?)
+	`, id, req.Name, req.Domain, req.BaseURL, req.Format, req.KeyLabel, req.Category,
+		req.ChatPath, req.ModelsPath, req.AuthHeader, req.AuthPrefix, req.ExtraHeaders, now, now)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	writeData(w, Preset{
-		ID:        id,
-		Name:      req.Name,
-		Domain:    req.Domain,
-		BaseURL:   req.BaseURL,
-		Format:    req.Format,
-		KeyLabel:  req.KeyLabel,
-		Category:  req.Category,
-		IsBuiltin: 0,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID: id, Name: req.Name, Domain: req.Domain, BaseURL: req.BaseURL,
+		Format: req.Format, KeyLabel: req.KeyLabel, Category: req.Category, IsBuiltin: 0,
+		ChatPath: req.ChatPath, ModelsPath: req.ModelsPath, AuthHeader: req.AuthHeader,
+		AuthPrefix: req.AuthPrefix, ExtraHeaders: req.ExtraHeaders,
+		ModelsCapability: "unsupported", UsageCapability: "not_provided", VerificationStatus: "unverified",
+		CreatedAt: now, UpdatedAt: now,
 	})
 }
 
@@ -126,12 +187,17 @@ func (s *Server) handleUpdatePreset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name     string `json:"name"`
-		Domain   string `json:"domain"`
-		BaseURL  string `json:"base_url"`
-		Format   string `json:"format"`
-		KeyLabel string `json:"key_label"`
-		Category string `json:"category"`
+		Name         string `json:"name"`
+		Domain       string `json:"domain"`
+		BaseURL      string `json:"base_url"`
+		Format       string `json:"format"`
+		KeyLabel     string `json:"key_label"`
+		Category     string `json:"category"`
+		ChatPath     string `json:"chat_path"`
+		ModelsPath   string `json:"models_path"`
+		AuthHeader   string `json:"auth_header"`
+		AuthPrefix   string `json:"auth_prefix"`
+		ExtraHeaders string `json:"extra_headers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -150,12 +216,39 @@ func (s *Server) handleUpdatePreset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-derive endpoint metadata when the base URL moved and the caller did
+	// not supply explicit paths: a versioned endpoint needs /v1/models while an
+	// unversioned one needs /models, so keeping the old value would silently
+	// point Get Models at a 404.
+	if req.ChatPath == "" || req.ModelsPath == "" {
+		dc, dm := apiPathsFor(req.BaseURL)
+		if req.ChatPath == "" {
+			req.ChatPath = dc
+		}
+		if req.ModelsPath == "" {
+			req.ModelsPath = dm
+		}
+	}
+	if req.AuthHeader == "" {
+		req.AuthHeader = "Authorization"
+	}
+	if req.ExtraHeaders == "" {
+		req.ExtraHeaders = "{}"
+	}
+	if err := validatePresetExtraHeaders(req.ExtraHeaders); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	now := time.Now().UTC().Format("2006-01-02 15:04:05")
 	_, err = s.db.Conn().Exec(`
 		UPDATE provider_presets
-		SET name = ?, domain = ?, base_url = ?, format = ?, key_label = ?, category = ?, updated_at = ?
+		SET name = ?, domain = ?, base_url = ?, format = ?, key_label = ?, category = ?,
+		    chat_path = ?, models_path = ?, auth_header = ?, auth_prefix = ?, extra_headers = ?,
+		    updated_at = ?
 		WHERE id = ?
-	`, req.Name, req.Domain, req.BaseURL, req.Format, req.KeyLabel, req.Category, now, id)
+	`, req.Name, req.Domain, req.BaseURL, req.Format, req.KeyLabel, req.Category,
+		req.ChatPath, req.ModelsPath, req.AuthHeader, req.AuthPrefix, req.ExtraHeaders, now, id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -201,7 +294,7 @@ func (s *Server) handleDeletePreset(w http.ResponseWriter, r *http.Request) {
 // seedCatalogue is the list of built-in provider presets. It lives in its own
 // function so tests can assert on the catalogue without needing a database.
 func seedCatalogue() []Preset {
-	return []Preset{
+	presets := []Preset{
 		{Name: "OpenAI", Domain: "openai.com", BaseURL: "https://api.openai.com/v1", Format: "openai", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "Anthropic", Domain: "anthropic.com", BaseURL: "https://api.anthropic.com/v1", Format: "anthropic", KeyLabel: "API Key", Category: "foundation"},
 		{Name: "Google AI", Domain: "ai.google.dev", BaseURL: "https://generativelanguage.googleapis.com/v1beta", Format: "gemini", KeyLabel: "API Key", Category: "foundation"},
@@ -283,6 +376,38 @@ func seedCatalogue() []Preset {
 		{Name: "Baseten", Domain: "baseten.co", BaseURL: "https://inference.baseten.co/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Novita AI", Domain: "novita.ai", BaseURL: "https://api.novita.ai/v3/openai", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 	}
+	verified := map[string]string{
+		"OpenAI": "rate_limits", "Anthropic": "not_provided", "Google AI": "not_provided",
+		"xAI": "rate_limits", "Mistral": "not_provided", "DeepSeek": "full", "Qwen": "not_provided",
+		"Moonshot": "not_provided", "Zhipu": "not_provided", "Groq": "rate_limits",
+		"Together": "not_provided", "Fireworks": "not_provided", "OpenRouter": "full",
+		"Perplexity": "not_provided", "Ollama": "not_provided", "Xiaomi MiMo": "not_provided",
+		"NVIDIA": "rate_limits", "Cerebras": "rate_limits", "Kilo Gateway": "full",
+		"TokenRouter": "not_provided", "SambaNova": "not_provided", "SiliconFlow": "not_provided",
+		"DeepInfra": "not_provided", "Jina AI": "not_provided", "Baseten": "not_provided", "Novita AI": "not_provided",
+	}
+	for i := range presets {
+		p := &presets[i]
+		p.ChatPath, p.ModelsPath = apiPathsFor(p.BaseURL)
+		p.AuthHeader, p.AuthPrefix, p.ExtraHeaders = "Authorization", "Bearer ", "{}"
+		p.ModelsCapability, p.UsageCapability, p.VerificationStatus = "unsupported", "not_provided", "unverified"
+		if usage, ok := verified[p.Name]; ok {
+			p.ModelsCapability, p.UsageCapability, p.VerificationStatus, p.VerifiedAt = "supported", usage, "verified", "2026-09-11"
+		}
+	}
+	for i := range presets {
+		p := &presets[i]
+		switch p.Name {
+		case "Anthropic":
+			p.ChatPath, p.ModelsPath, p.AuthHeader, p.AuthPrefix = "/messages", "/models", "x-api-key", ""
+			p.ExtraHeaders = `{"anthropic-version":"2023-06-01"}`
+		case "Google AI":
+			p.BaseURL, p.Format, p.ChatPath, p.ModelsPath = "https://generativelanguage.googleapis.com/v1beta/openai", "openai", "/chat/completions", "/models"
+		}
+	}
+	// CommandCode Alpha has a provider-specific model catalogue and usage API.
+	presets = append(presets, Preset{Name: "CommandCode Alpha", Domain: "commandcode.ai", BaseURL: "https://api.commandcode.ai", Format: "commandcode", KeyLabel: "Token", Category: "aggregator", ChatPath: "/alpha/generate", ModelsPath: "/provider/v1/models", AuthHeader: "Authorization", AuthPrefix: "Bearer ", ExtraHeaders: `{"x-cli-environment":"cli","x-cli-version":"0.26.25"}`, ModelsCapability: "supported", UsageCapability: "full", VerificationStatus: "verified", VerifiedAt: "2026-09-11"})
+	return presets
 }
 
 // handleSeedBuiltinPresets inserts missing built-in presets AND refreshes the
@@ -318,40 +443,64 @@ func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request
 	updated := 0
 	skipped := 0
 	for _, p := range builtins {
-		// Find the existing row, preferring the current name, then a prior
-		// name, then the endpoint. base_url is the stable identity.
+		// Find the existing row in two steps so the two match kinds can have
+		// DIFFERENT update rules:
+		//   1. by name (current, then a prior name) — name is the real
+		//      identity, so base_url MAY be rewritten. Providers do move
+		//      endpoints (Google moved Gemini to the OpenAI-compatible
+		//      /v1beta/openai surface); without this, an existing install
+		//      would keep the stale URL forever while receiving the new
+		//      chat/models paths.
+		//   2. by endpoint — here base_url IS the identity we matched on, so
+		//      it must never be rewritten (it would collapse rows).
 		var id string
 		var isBuiltin int
-		row := s.db.Conn().QueryRow(
+		matchedByName := false
+		if err := s.db.Conn().QueryRow(
 			`SELECT id, is_builtin FROM provider_presets
-			   WHERE lower(name) = lower(?)
-			      OR lower(name) = lower(?)
-			      OR lower(rtrim(base_url, '/')) = lower(rtrim(?, '/'))
+			   WHERE lower(name) = lower(?) OR lower(name) = lower(?)
 			   LIMIT 1`,
-			p.Name, oldNameFor(renames, p.Name), p.BaseURL,
-		)
-		if err := row.Scan(&id, &isBuiltin); err == nil && id != "" {
+			p.Name, oldNameFor(renames, p.Name),
+		).Scan(&id, &isBuiltin); err != nil {
+			id = ""
+		}
+		if id != "" {
+			matchedByName = true
+		} else if err := s.db.Conn().QueryRow(
+			`SELECT id, is_builtin FROM provider_presets
+			   WHERE lower(rtrim(base_url, '/')) = lower(rtrim(?, '/'))
+			   LIMIT 1`,
+			p.BaseURL,
+		).Scan(&id, &isBuiltin); err != nil {
+			id = ""
+		}
+		if id != "" {
 			if isBuiltin == 1 {
-				// Refresh a built-in in place: name and category only. Never
-				// the base_url — that is the identity we matched on — and
-				// never a manual preset.
-				if _, err := s.db.Conn().Exec(
-					`UPDATE provider_presets SET name = ?, category = ?, updated_at = ? WHERE id = ? AND is_builtin = 1`,
-					p.Name, p.Category, now, id,
+				// Refresh a built-in in place. A manual preset is never touched.
+				if matchedByName {
+					if _, err := s.db.Conn().Exec(
+						`UPDATE provider_presets SET name=?, domain=?, base_url=?, format=?, key_label=?, category=?, chat_path=?, models_path=?, auth_header=?, auth_prefix=?, extra_headers=?, models_capability=?, usage_capability=?, verification_status=?, verified_at=?, updated_at=? WHERE id=? AND is_builtin=1`,
+						p.Name, p.Domain, p.BaseURL, p.Format, p.KeyLabel, p.Category, p.ChatPath, p.ModelsPath, p.AuthHeader, p.AuthPrefix, p.ExtraHeaders, p.ModelsCapability, p.UsageCapability, p.VerificationStatus, p.VerifiedAt, now, id,
+					); err == nil {
+						updated++
+					}
+				} else if _, err := s.db.Conn().Exec(
+					`UPDATE provider_presets SET name=?, domain=?, format=?, key_label=?, category=?, chat_path=?, models_path=?, auth_header=?, auth_prefix=?, extra_headers=?, models_capability=?, usage_capability=?, verification_status=?, verified_at=?, updated_at=? WHERE id=? AND is_builtin=1`,
+					p.Name, p.Domain, p.Format, p.KeyLabel, p.Category, p.ChatPath, p.ModelsPath, p.AuthHeader, p.AuthPrefix, p.ExtraHeaders, p.ModelsCapability, p.UsageCapability, p.VerificationStatus, p.VerifiedAt, now, id,
 				); err == nil {
 					updated++
 				}
 			} else {
-				skipped++ // manual preset shares the endpoint; leave it alone
+				skipped++ // manual preset shares the name or endpoint; leave it alone
 			}
 			continue
 		}
 
 		newID, _ := generatePresetID()
 		_, err := s.db.Conn().Exec(`
-			INSERT INTO provider_presets (id, name, domain, base_url, format, key_label, category, is_builtin, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-		`, newID, p.Name, p.Domain, p.BaseURL, p.Format, p.KeyLabel, p.Category, now, now)
+			INSERT INTO provider_presets (id,name,domain,base_url,format,key_label,category,is_builtin,chat_path,models_path,auth_header,auth_prefix,extra_headers,models_capability,usage_capability,verification_status,verified_at,created_at,updated_at)
+			VALUES (?,?,?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)
+		`, newID, p.Name, p.Domain, p.BaseURL, p.Format, p.KeyLabel, p.Category, p.ChatPath, p.ModelsPath, p.AuthHeader, p.AuthPrefix, p.ExtraHeaders, p.ModelsCapability, p.UsageCapability, p.VerificationStatus, p.VerifiedAt, now, now)
 		if err == nil {
 			inserted++
 		}

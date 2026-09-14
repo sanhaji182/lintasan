@@ -185,15 +185,42 @@ func TestT2_Parity_CustomAuthHeader(t *testing.T) {
 	if legacy.path != sdk.path {
 		t.Errorf("chat_path mismatch: legacy=%q sdk=%q", legacy.path, sdk.path)
 	}
-	// FAITHFUL QUIRK: the live router (proxy.go:986-987) coerces an empty
-	// AuthPrefix to "Bearer " — there is no way to send a truly bare token.
-	// The SDK's DefaultProvider.Prepare reproduces this EXACTLY. Asserting the
-	// quirk (not an idealized behavior) is the whole point of zero-behavior-change:
-	// both paths must emit "Bearer sk-test-key" under a custom auth header too.
-	if got, want := sdk.header.Get("X-Api-Key"), "Bearer sk-test-key"; got != want {
-		t.Errorf("custom auth header value mismatch on SDK path: got %q want %q (the faithful empty-prefix quirk)", got, want)
+	// EMPTY PREFIX IS NOW A REAL VALUE for the x-api-key family. Anthropic's
+	// contract is `x-api-key: <bare key>` with NO prefix; the old coercion to
+	// "Bearer " made that preset impossible to satisfy. A bare key is now sent
+	// when the header is x-api-key, and BOTH paths must agree exactly.
+	if got, want := sdk.header.Get("X-Api-Key"), "sk-test-key"; got != want {
+		t.Errorf("custom auth header value mismatch on SDK path: got %q want %q (bare key, no prefix)", got, want)
 	}
-	if got := legacy.header.Get("X-Api-Key"); got != "Bearer sk-test-key" {
-		t.Errorf("legacy path did not exhibit the documented empty-prefix quirk: %q", got)
+	if got := legacy.header.Get("X-Api-Key"); got != "sk-test-key" {
+		t.Errorf("legacy path mismatch: got %q want %q (bare key, no prefix)", got, "sk-test-key")
+	}
+}
+
+// TestT2_Parity_EmptyPrefixNonApiKeyStillBearer locks the OTHER half of the
+// contract: the empty-prefix -> "Bearer " default must still apply for every
+// header that is not x-api-key, so no existing connection changes behavior.
+func TestT2_Parity_EmptyPrefixNonApiKeyStillBearer(t *testing.T) {
+	body := []byte(`{"model":"gpt-4o","messages":[]}`)
+	mk := func(baseURL string) *Connection {
+		c := openAICompatConn(baseURL, "openai")
+		c.AuthHeader = "Authorization"
+		c.AuthPrefix = ""
+		return c
+	}
+
+	var legacy capturedReq
+	lsrv := newCapturingUpstream(t, &legacy)
+	runDoUpstream(t, buildHandler(t, false), mk(lsrv.URL), body, http.Header{}, &legacy)
+
+	var sdk capturedReq
+	ssrv := newCapturingUpstream(t, &sdk)
+	runDoUpstream(t, buildHandler(t, true), mk(ssrv.URL), body, http.Header{}, &sdk)
+
+	if got, want := legacy.header.Get("Authorization"), "Bearer sk-test-key"; got != want {
+		t.Errorf("legacy: empty prefix with Authorization must still become %q, got %q", want, got)
+	}
+	if got, want := sdk.header.Get("Authorization"), "Bearer sk-test-key"; got != want {
+		t.Errorf("sdk: empty prefix with Authorization must still become %q, got %q", want, got)
 	}
 }

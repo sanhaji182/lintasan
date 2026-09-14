@@ -233,9 +233,10 @@ func (s *Server) handlePresetTest(w http.ResponseWriter, r *http.Request){
     modelsPath,_:=preset["modelsPath"].(string)
     authHeader,_:=preset["authHeader"].(string)
     authPrefix,_:=preset["authPrefix"].(string)
+    extraHeaders,_:=preset["extraHeaders"].(string)
     apiKey,_:=in["apiKey"].(string)
     start:=time.Now()
-    models,_,_,err:=fetchModels(baseUrl,modelsPath,apiKey,authHeader,authPrefix)
+    models,_,_,err:=fetchModels(baseUrl,modelsPath,apiKey,authHeader,authPrefix,extraHeaders)
     if err!=nil{
         writeJSON(w,map[string]any{"success":false,"error":err.Error(),"latency_ms":time.Since(start).Milliseconds()})
         return
@@ -243,11 +244,17 @@ func (s *Server) handlePresetTest(w http.ResponseWriter, r *http.Request){
     writeJSON(w,map[string]any{"success":true,"message":fmt.Sprintf("Connected · %d models found · %dms",len(models),time.Since(start).Milliseconds()),"models_count":len(models),"latency_ms":time.Since(start).Milliseconds(),"models":models})
 }
 
-func fetchModels(base, path, key, h, prefix string)([]any,int,[]byte,error){
+func fetchModels(base, path, key, h, prefix, extraHeaders string)([]any,int,[]byte,error){
     if base=="" { return nil,0,nil,fmt.Errorf("base_url required") }
     url := provider.JoinUpstreamPath(base, path)
     req,_:=http.NewRequest("GET", url, nil)
     if key!=""{ if h==""{h="Authorization"}; req.Header.Set(h,prefix+key) }
+    if extraHeaders!="" {
+        var extra map[string]string
+        if json.Unmarshal([]byte(extraHeaders),&extra)==nil {
+            for name,value:=range extra { req.Header.Set(name,value) }
+        }
+    }
     c:=&http.Client{Timeout:20*time.Second}; resp,err:=c.Do(req); if err!=nil{return nil,0,nil,err}; defer resp.Body.Close()
     b,_:=io.ReadAll(resp.Body)
     if resp.StatusCode>=400 { return nil,resp.StatusCode,b,fmt.Errorf("upstream status %d",resp.StatusCode) }
@@ -321,9 +328,12 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
     oauthFromIn,_:=in["oauth_provider"].(string)
     if strings.TrimSpace(oauthFromIn)!="" { oauthProv=strings.TrimSpace(oauthFromIn) }
     path,_:=in["models_path"].(string); if path==""{path,_=in["modelsPath"].(string)}; if path==""{path="/v1/models"}
+    authHeader,_:=in["auth_header"].(string); if authHeader==""{authHeader="Authorization"}
+    authPrefix,_:=in["auth_prefix"].(string); if authPrefix=="" && !strings.EqualFold(authHeader,"x-api-key"){authPrefix="Bearer "}
+    extraHeaders,_:=in["extra_headers"].(string)
     // Connection metadata recovered from DB when only an id is supplied; used
     // to route format=commandcode (CC Alpha) tests through /alpha/generate.
-    var formatFromDB string
+    formatFromDB,_:=in["format"].(string)
     // If only an id was supplied (list-view Test button), look up the saved
     // connection from the DB so we can re-test it without re-typing the key.
     if base=="" {
@@ -388,7 +398,7 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
         return
     }
 
-    models,status,body,err:=fetchModels(base,path,key,"Authorization","Bearer ")
+    models,status,body,err:=fetchModels(base,path,key,authHeader,authPrefix,extraHeaders)
     latency:=time.Since(start).Milliseconds()
 
     if err==nil{
@@ -770,6 +780,7 @@ func (s *Server) handleModelsSyncByID(w http.ResponseWriter, r *http.Request) {
 
     res, err := s.discoverer.SyncConnection(connID)
     if err != nil {
+        w.WriteHeader(http.StatusBadGateway)
         writeJSON(w, map[string]any{"error": map[string]string{"message": err.Error()}})
         return
     }

@@ -121,15 +121,16 @@ func (p *ProxyHandler) providerSDKEligible(conn *Connection) bool {
 // reads, so the SDK is backward compatible by construction (no schema change).
 func connToConfig(conn *Connection) *provider.ConnConfig {
 	return &provider.ConnConfig{
-		ID:         conn.ID,
-		Name:       conn.Name,
-		BaseURL:    conn.BaseURL,
-		APIKey:     conn.APIKey,
-		Format:     conn.Format,
-		ChatPath:   conn.ChatPath,
-		AuthHeader: conn.AuthHeader,
-		AuthPrefix: conn.AuthPrefix,
-		Priority:   conn.Priority,
+		ID:           conn.ID,
+		Name:         conn.Name,
+		BaseURL:      conn.BaseURL,
+		APIKey:       conn.APIKey,
+		Format:       conn.Format,
+		ChatPath:     conn.ChatPath,
+		AuthHeader:   conn.AuthHeader,
+		AuthPrefix:   conn.AuthPrefix,
+		ExtraHeaders: conn.ExtraHeaders,
+		Priority:     conn.Priority,
 	}
 }
 
