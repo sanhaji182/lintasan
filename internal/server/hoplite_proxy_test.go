@@ -38,10 +38,33 @@ func TestHopliteModelsAreAdvertisedOnlyWhenConfigured(t *testing.T) {
 	resp = hopliteRequest(t, ts, http.MethodGet, "/v1/models", "", token)
 	body = decodeEnvelope(t, resp)
 	encoded := mustJSON(t, body)
-	for _, want := range []string{"hoplite-agent/proj_1", "hoplite-agent/proj_2", "Hoplite Agent"} {
+	for _, want := range []string{"hoplite-agent/proj_1", "hoplite-agent/proj_2", "GPT-5.6 Terra", "gpt-5.6-terra", "claude-sonnet-5", "Hoplite Agent"} {
 		if !strings.Contains(encoded, want) {
 			t.Fatalf("models response missing %q: %s", want, encoded)
 		}
+	}
+}
+
+func TestHopliteModelIDRoundTripSupportsSpecialCharacters(t *testing.T) {
+	encoded := hopliteSelectedModelID("project/with spaces", "meta/muse-spark-1.3")
+	project, model, selected, ok := parseHopliteModelID(encoded)
+	if !ok || !selected || project != "project/with spaces" || model != "meta/muse-spark-1.3" {
+		t.Fatalf("round trip failed: encoded=%q project=%q model=%q selected=%v ok=%v", encoded, project, model, selected, ok)
+	}
+	project, model, selected, ok = parseHopliteModelID("hoplite-agent/proj_1")
+	if !ok || selected || project != "proj_1" || model != "" {
+		t.Fatalf("default alias parse failed: project=%q model=%q selected=%v ok=%v", project, model, selected, ok)
+	}
+	project, model, selected, ok = parseHopliteModelID("hoplite-agent/p:literal/m:project")
+	if !ok || selected || project != "p:literal/m:project" || model != "" {
+		t.Fatalf("legacy special project parse failed: project=%q model=%q selected=%v ok=%v", project, model, selected, ok)
+	}
+}
+
+func TestHopliteInvalidSelectedModelFailsClosed(t *testing.T) {
+	project, model, selected, ok := parseHopliteModelID("hoplite-agent/v1/not-base64/also-not-base64")
+	if ok || selected || project != "" || model != "" {
+		t.Fatalf("invalid ID accepted: project=%q model=%q selected=%v ok=%v", project, model, selected, ok)
 	}
 }
 
@@ -60,6 +83,9 @@ func TestHopliteChatCompletionCreatesPollsAndMapsTerminalResult(t *testing.T) {
 			operationID, _ = in["clientOperationId"].(string)
 			if in["projectId"] != "proj_1" || in["prompt"] != "Fix the flaky test" {
 				t.Fatalf("bad create payload: %#v", in)
+			}
+			if _, exists := in["model"]; exists {
+				t.Fatalf("project-default alias must omit model: %#v", in)
 			}
 			if in["autoFix"] != false || in["autoMerge"] != false {
 				t.Fatalf("unsafe defaults: %#v", in)
@@ -99,6 +125,40 @@ func TestHopliteChatCompletionCreatesPollsAndMapsTerminalResult(t *testing.T) {
 	}
 	if creates.Load() != 1 || operationID == "" {
 		t.Fatalf("creates=%d operationID=%q", creates.Load(), operationID)
+	}
+}
+
+func TestHopliteChatCompletionSendsExactSelectedModel(t *testing.T) {
+	var gotModel string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/threads":
+			var in map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			gotModel, _ = in["model"].(string)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"ok":true,"thread":{"id":"thr_model","projectId":"project/one","status":"ready"}}`))
+		case "/api/threads/thr_model/messages":
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"id":"m1","role":"assistant","kind":"chat","content":"ok"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+	s, ts := newTestServer(t, &config.Config{MasterKey: "test-master-key-1234567890"})
+	s.hopliteBaseURL, s.hopliteHTTPClient = upstream.URL, upstream.Client()
+	if err := s.credStore().SetCredential(context.Background(), "hoplite", "hop_test"); err != nil {
+		t.Fatal(err)
+	}
+	token := makeKnownAdmin(t, s, "exact-model-admin", "correct horse battery")
+	payload := `{"model":"` + hopliteSelectedModelID("project/one", "meta/muse-spark-1.3") + `","messages":[{"role":"user","content":"x"}]}`
+	resp := hopliteRequest(t, ts, http.MethodPost, "/v1/chat/completions", payload, token)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%#v", resp.StatusCode, decodeEnvelope(t, resp))
+	}
+	if gotModel != "meta/muse-spark-1.3" {
+		t.Fatalf("upstream model=%q", gotModel)
 	}
 }
 

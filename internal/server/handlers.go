@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sanhaji182/lintasan-go/internal/hoplite"
 	"github.com/sanhaji182/lintasan-go/internal/models"
 )
 
@@ -24,10 +25,18 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	`)
 
 	type Model struct {
-		ID      string `json:"id"`
-		Object  string `json:"object"`
-		Created int64  `json:"created"`
-		OwnedBy string `json:"owned_by"`
+		ID                  string `json:"id"`
+		Object              string `json:"object"`
+		Created             int64  `json:"created"`
+		OwnedBy             string `json:"owned_by"`
+		DisplayName         string `json:"display_name,omitempty"`
+		HopliteProjectID    string `json:"hoplite_project_id,omitempty"`
+		HopliteProjectName  string `json:"hoplite_project_name,omitempty"`
+		HopliteModelID      string `json:"hoplite_model_id,omitempty"`
+		Provider            string `json:"provider,omitempty"`
+		ContextWindowTokens int    `json:"context_window_tokens,omitempty"`
+		CatalogEligibility  string `json:"catalog_eligibility,omitempty"`
+		CatalogRevision     string `json:"catalog_revision,omitempty"`
 	}
 
 	var modelsList []Model
@@ -70,8 +79,8 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Hoplite is a coding-agent API, not an inference catalogue. Advertise one
-	// explicit adapter model per confirmed project only when configured.
+	// Hoplite exposes projects dynamically but currently ships its selectable
+	// model contract in the official app bundle rather than a discovery API.
 	if key, ok := s.hopliteCredential(r.Context()); ok {
 		client := s.newHopliteClient(key, 3*time.Second)
 		if projects, _, listErr := client.ListProjects(r.Context()); listErr == nil {
@@ -80,9 +89,18 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				modelsList = append(modelsList, Model{
-					ID: "hoplite-agent/" + project.ID, Object: "model",
-					Created: time.Now().Unix(), OwnedBy: "Hoplite Agent",
+					ID: "hoplite-agent/" + project.ID, Object: "model", Created: time.Now().Unix(), OwnedBy: "Hoplite Agent",
+					DisplayName: project.Name + " · Project default", HopliteProjectID: project.ID, HopliteProjectName: project.Name,
+					CatalogEligibility: "project-default",
 				})
+				for _, model := range hoplite.Models() {
+					modelsList = append(modelsList, Model{
+						ID: hopliteSelectedModelID(project.ID, model.ID), Object: "model", Created: time.Now().Unix(), OwnedBy: "Hoplite Agent",
+						DisplayName: model.DisplayName, HopliteProjectID: project.ID, HopliteProjectName: project.Name,
+						HopliteModelID: model.ID, Provider: model.Provider, ContextWindowTokens: model.ContextTokens,
+						CatalogEligibility: model.Plan, CatalogRevision: hoplite.ModelCatalogRevision,
+					})
+				}
 			}
 		}
 	}

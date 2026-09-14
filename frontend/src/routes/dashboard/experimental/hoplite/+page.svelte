@@ -14,7 +14,7 @@
   ];
 
   type Status = { configured: boolean; source: string; masked_value: string; env_var: string; mode: string; routing: string };
-  type AdapterModel = { id: string; object: string; owned_by: string };
+  type AdapterModel = { id: string; object: string; owned_by: string; display_name?: string; hoplite_project_id?: string; hoplite_project_name?: string; hoplite_model_id?: string; provider?: string; context_window_tokens?: number; catalog_eligibility?: string; catalog_revision?: string };
   type ConnectionTest = { ok: boolean; checked_at: string; latency_ms: number; project_count: number; verified_operations: string[]; thread_create: string; meta?: { rate_limit?: string; rate_limit_policy?: string; request_id?: string } };
   type Project = { id: string; name: string; description?: string; defaultBranch?: string; defaultModel?: string; agentSpeed?: 'standard' | 'fast'; repos?: { repoFullName: string; branch?: string }[] };
   type PullRequest = { url?: string; number?: number; state?: string };
@@ -34,7 +34,8 @@
   let prompt = $state('');
   let title = $state('');
   let speed = $state<'standard' | 'fast'>('standard');
-  let modelMode = $state<'default' | 'custom'>('default');
+  let modelMode = $state<'default' | 'catalog' | 'custom'>('default');
+  let catalogModel = $state('');
   let customModel = $state('');
   let autoFix = $state(false);
   let autoMerge = $state(false);
@@ -72,10 +73,12 @@
   }
 
   function selectedModel() {
+    if (modelMode === 'catalog') return catalogModel;
     return modelMode === 'custom' ? customModel.trim() : '';
   }
 
   function modelLabel() {
+    if (modelMode === 'catalog') return adapterModels.find((model) => model.hoplite_model_id === catalogModel)?.display_name || 'Select a catalog model';
     if (modelMode === 'custom') return customModel.trim() || 'Custom model not entered';
     return selectedProjectData()?.defaultModel || 'Hoplite project default';
   }
@@ -86,6 +89,32 @@
 
   function projectModelID(project: Project) {
     return `hoplite-agent/${project.id}`;
+  }
+
+  function projectModels(project?: Project) {
+    if (!project) return [];
+    return adapterModels.filter((model) => model.hoplite_project_id === project.id && !!model.hoplite_model_id);
+  }
+
+  function formatContext(tokens?: number) {
+    if (!tokens) return 'Unknown';
+    return tokens >= 1_000_000 ? `${tokens / 1_000_000}M` : `${tokens / 1_000}k`;
+  }
+
+  function eligibilityLabel(value?: string) {
+    if (value === 'free+pro') return 'Free + Pro';
+    if (value === 'free-only') return 'Free only';
+    if (value === 'free-via-contributor+pro') return 'Free via Contributor · Pro regular';
+    return value === 'pro' ? 'Pro only' : 'Unknown';
+  }
+
+  async function copyAdapterModelID(modelID: string) {
+    try {
+      await navigator.clipboard.writeText(modelID);
+      notice = `Copied ${modelID}`;
+    } catch {
+      error = 'Could not copy the model ID. Select and copy it manually.';
+    }
   }
 
   async function copyModelID(project: Project) {
@@ -219,7 +248,7 @@
   }
 
   async function runAgentTest() {
-    if (!selectedProject || (modelMode === 'custom' && !customModel.trim())) return;
+    if (!selectedProject || (modelMode === 'catalog' && !catalogModel) || (modelMode === 'custom' && !customModel.trim())) return;
     action = 'agent-test'; error = ''; notice = '';
     try {
       const res = await api.post<{ data: { result: { thread: Thread } } }>('/api/experimental/cloud-agents/hoplite/threads', {
@@ -343,7 +372,7 @@
     </section>
 
     <section class="panel detection-panel" class:muted={!status?.configured}>
-      <div class="step-heading"><div class="step-icon blue"><RefreshCw size={19} /></div><div><div class="eyebrow">Step 2</div><h2>Detect projects</h2><p>Lintasan verifies access and creates one model ID for each Hoplite project.</p></div></div>
+      <div class="step-heading"><div class="step-icon blue"><RefreshCw size={19} /></div><div><div class="eyebrow">Step 2</div><h2>Detect projects</h2><p>Lintasan verifies project access, then combines each project with the exact model IDs from Hoplite's versioned app contract.</p></div></div>
       {#if !status?.configured}
         <div class="inline-state"><span class="state-dot"></span>Waiting for a Hoplite connection</div>
       {:else if action === 'test'}
@@ -358,15 +387,24 @@
     </section>
 
     <section class="ready-section">
-      <div class="section-title ready-title"><div><div class="eyebrow">Step 3</div><h2>Ready to use</h2><p>Use the model ID with the OpenAI-compatible API or open it directly in Chat Playground.</p></div>{#if projects.length}<span class="ready-count"><CircleCheck size={14} /> {projects.length} ready</span>{/if}</div>
+      <div class="section-title ready-title"><div><div class="eyebrow">Step 3</div><h2>Ready to use</h2><p>Choose a real Hoplite model grouped by project. Catalog eligibility is informational. Available to your account is confirmed only when Hoplite accepts a thread.</p></div>{#if projects.length}<span class="ready-count"><CircleCheck size={14} /> {projects.length} project{projects.length === 1 ? '' : 's'}</span>{/if}</div>
       {#if projects.length}
         <div class="project-grid">
           {#each projects as project}
             <article class="project-card">
               <div class="project-head"><div class="project-icon"><FolderGit2 size={19} /></div><span class="ready-badge"><span></span>Ready</span></div>
               <div><h3>{project.name}</h3>{#if project.description}<p>{project.description}</p>{/if}</div>
-              <div class="model-id"><small>Model ID</small><code>{projectModelID(project)}</code></div>
+              <div class="model-id"><small>Project-default alias</small><code>{projectModelID(project)}</code></div>
               <div class="project-actions"><button class="secondary" onclick={() => copyModelID(project)}><Copy size={14} /> Copy model ID</button><a class="primary link-button" href={`/dashboard/playground?model=${encodeURIComponent(projectModelID(project))}`}><Play size={14} /> Test in Chat</a></div>
+              <div class="model-list">
+                {#each projectModels(project) as model}
+                  <div class="model-choice">
+                    <div><strong>{model.display_name}</strong><span>{model.provider} · Context window {formatContext(model.context_window_tokens)} · Catalog eligibility: {eligibilityLabel(model.catalog_eligibility)}</span></div>
+                    <code>{model.id}</code>
+                    <div class="project-actions"><button class="secondary" onclick={() => copyAdapterModelID(model.id)}><Copy size={14} /> Copy Model ID</button><a class="primary link-button" href={`/dashboard/playground?model=${encodeURIComponent(model.id)}`}><Play size={14} /> Test in Chat</a></div>
+                  </div>
+                {/each}
+              </div>
             </article>
           {/each}
         </div>
@@ -411,10 +449,11 @@
         <p>This creates a real Hoplite thread and may use quota. The fixed prompt requests a read-only report, but Hoplite exposes no dry-run guarantee; autoFix: false and autoMerge: false.</p>
         <div class="test-controls">
           <label>Project<select bind:value={selectedProject} onchange={loadThreads}><option value="">Select project</option>{#each projects as p}<option value={p.id}>{p.name}</option>{/each}</select></label>
-          <label>Model source<select bind:value={modelMode}><option value="default">Project default</option><option value="custom">Custom model ID</option></select></label>
+          <label>Model source<select bind:value={modelMode}><option value="default">Project default</option><option value="catalog">Hoplite catalog</option><option value="custom">Advanced custom ID</option></select></label>
+          {#if modelMode === 'catalog'}<label>Hoplite model<select bind:value={catalogModel}><option value="">Select model</option>{#each projectModels(selectedProjectData()) as m}<option value={m.hoplite_model_id}>{m.display_name} · {eligibilityLabel(m.catalog_eligibility)}</option>{/each}</select></label>{/if}
           {#if modelMode === 'custom'}<label>Custom model ID<input bind:value={customModel} placeholder="Exact Hoplite model ID" /></label>{/if}
           <label>Resolved model<input value={modelLabel()} readonly /></label>
-          <button class="primary" disabled={!selectedProject || (modelMode === 'custom' && !customModel.trim()) || !!action} onclick={runAgentTest}><Play size={14} /> {action === 'agent-test' ? 'Starting...' : 'Run real agent test'}</button>
+          <button class="primary" disabled={!selectedProject || (modelMode === 'catalog' && !catalogModel) || (modelMode === 'custom' && !customModel.trim()) || !!action} onclick={runAgentTest}><Play size={14} /> {action === 'agent-test' ? 'Starting...' : 'Run real agent test'}</button>
         </div>
         {#if agentTestThread}
           <div class="test-result">
@@ -436,9 +475,10 @@
           <label>Title <span>optional</span><input bind:value={title} maxlength="500" placeholder="Fix failing checkout test" /></label>
           <label>Prompt<textarea bind:value={prompt} rows="6" placeholder="Describe the goal, constraints, and verification required..."></textarea></label>
           <label>Speed<select bind:value={speed}><option value="standard">Standard</option><option value="fast">Fast</option></select></label>
-          <label>Model source<select bind:value={modelMode}><option value="default">Project default</option><option value="custom">Custom model ID</option></select></label>
+          <label>Model source<select bind:value={modelMode}><option value="default">Project default</option><option value="catalog">Hoplite catalog</option><option value="custom">Advanced custom ID</option></select></label>
+          {#if modelMode === 'catalog'}<label>Hoplite model<select bind:value={catalogModel}><option value="">Select model</option>{#each projectModels(selectedProjectData()) as m}<option value={m.hoplite_model_id}>{m.display_name} · {eligibilityLabel(m.catalog_eligibility)}</option>{/each}</select></label>{/if}
           {#if modelMode === 'custom'}<label>Custom model ID<input bind:value={customModel} placeholder="Exact Hoplite model ID" /></label>{/if}
-          <small class="model-hint">Resolved model: {modelLabel()}. Hoplite exposes no model catalogue, so custom IDs are validated only when a real thread starts.</small>
+          <small class="model-hint">Resolved model: {modelLabel()}. Catalog eligibility does not guarantee account access; advanced custom IDs are validated only when a real thread starts.</small>
           <div class="toggles">
             <label class="toggle"><input type="checkbox" bind:checked={autoFix} /><span><strong>Automatic PR fixes</strong><small>Allow Hoplite to address review and check feedback.</small></span></label>
             <label class="toggle"><input type="checkbox" bind:checked={autoMerge} /><span><strong>Automatic PR merge</strong><small>Merge only after Hoplite's required checks succeed.</small></span></label>
@@ -477,6 +517,6 @@
   .page{animation:fadeInUp .35s ease}.back{display:inline-flex;align-items:center;gap:5px;color:var(--color-fg-3);font-size:12px;text-decoration:none;margin-bottom:14px}.headline{display:flex;align-items:center;gap:13px;margin-bottom:22px}.logo{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#111827,#334155);color:white;display:grid;place-items:center}.headline h1,.panel h2{margin:0;color:var(--color-fg-0)}.headline h1{font-size:23px}.headline p,.panel p{margin:4px 0 0;color:var(--color-fg-3);font-size:13px}.safe{margin-left:auto;display:flex;align-items:center;gap:5px;padding:6px 9px;border-radius:8px;background:rgba(34,197,94,.09);color:#16a34a;font-size:11px;font-weight:650}.panel{background:var(--color-bg-card);border:1px solid var(--color-border);border-radius:15px;padding:20px}.credential-panel{display:flex;align-items:center;gap:16px;margin-bottom:18px;flex-wrap:wrap}.credential-panel>div:first-child{flex:1}.eyebrow{text-transform:uppercase;letter-spacing:.08em;color:var(--color-fg-4);font-size:10px;font-weight:700;margin-bottom:4px}.credential-state{display:flex;align-items:center;gap:8px;color:#16a34a}.credential-state code{color:var(--color-fg-2);background:var(--color-bg-3);padding:6px 9px;border-radius:7px}.credential-state span{font-size:10px;text-transform:uppercase}.actions,.credential-form{display:flex;align-items:center;gap:8px}.credential-form{min-width:390px}.update-form{flex-basis:100%;margin-left:auto;max-width:520px}.diagnostics-panel,.agent-test-panel{margin-bottom:18px}.adapter-note{display:flex;flex-direction:column;gap:5px;padding:12px;margin:0 0 14px;border:1px solid rgba(59,130,246,.2);border-radius:10px;background:rgba(59,130,246,.07);color:var(--color-fg-2)}.adapter-note span{font-size:12px;line-height:1.5;color:var(--color-fg-3)}.adapter-note code{font-size:11px;overflow-wrap:anywhere}.diagnostic-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.diagnostic-grid>div{display:flex;flex-direction:column;gap:5px;padding:12px;border:1px solid var(--color-border);border-radius:10px;background:var(--color-bg-2)}.diagnostic-grid span,.rate-row span,.test-result-head span,.test-meta span{font-size:10px;color:var(--color-fg-4);text-transform:uppercase;letter-spacing:.05em}.diagnostic-grid strong{font-size:12px;color:var(--color-fg-1);word-break:break-word}.good-text{color:#16a34a!important}.rate-row{display:flex;align-items:center;gap:10px;margin-top:10px}.rate-row code{font-size:11px;color:var(--color-fg-2);background:var(--color-bg-3);padding:6px 8px;border-radius:7px}.diagnostic-empty{padding:10px 0}.diagnostic-failure{display:flex;gap:9px;align-items:flex-start;color:#ef4444;background:rgba(239,68,68,.08);padding:12px;border-radius:9px}.diagnostic-failure div{display:flex;flex-direction:column;gap:3px}.diagnostic-failure span{font-size:11px}.quota-warning{margin-left:auto;padding:5px 8px;border-radius:7px;background:rgba(245,158,11,.12);color:#d97706;font-size:10px;font-weight:700}.test-controls{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:end;margin-top:14px}.test-controls label{display:flex;flex-direction:column;gap:6px;font-size:10px;font-weight:700;color:var(--color-fg-3);text-transform:uppercase}.test-controls input,.test-controls select{border:1px solid var(--color-border);background:var(--color-bg-1);color:var(--color-fg-1);border-radius:9px;padding:10px;font:inherit;text-transform:none}.test-result{margin-top:14px;padding:14px;border:1px solid var(--color-border);border-radius:11px;background:var(--color-bg-2)}.test-result-head{display:flex;align-items:center;gap:12px}.test-result-head div{display:flex;flex-direction:column;gap:2px}.test-result-head code{margin-left:auto;font-size:10px}.test-result-head>span{padding:4px 7px;border-radius:7px;background:rgba(59,130,246,.1);color:#3b82f6}.test-result-head>span.good{background:rgba(34,197,94,.1);color:#16a34a}.test-result-head>span.bad{background:rgba(239,68,68,.1);color:#ef4444}.test-meta{display:flex;gap:14px;flex-wrap:wrap;margin-top:9px}.messages.compact{max-height:220px}.model-hint{color:var(--color-fg-4);font-size:10px;line-height:1.5}.workspace{display:grid;grid-template-columns:minmax(320px,.85fr) minmax(360px,1.15fr);gap:18px}.section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}.section-title h2,.panel h2{font-size:16px}.composer{display:flex;flex-direction:column;gap:13px}.composer .section-title{margin-bottom:0}.composer label{display:flex;flex-direction:column;gap:6px;font-size:11px;font-weight:650;color:var(--color-fg-3);text-transform:uppercase;letter-spacing:.04em}.composer label span{font-weight:400;text-transform:none}.composer input,.composer select,.composer textarea,.credential-form input{border:1px solid var(--color-border);background:var(--color-bg-1);color:var(--color-fg-1);border-radius:9px;padding:10px 11px;font:inherit;text-transform:none;letter-spacing:normal;outline:none}.composer textarea{resize:vertical;min-height:110px}.toggles{display:grid;grid-template-columns:1fr 1fr;gap:8px}.composer .toggle{display:flex;flex-direction:row;align-items:flex-start;gap:8px;padding:10px;border:1px solid var(--color-border);border-radius:9px;background:var(--color-bg-2);text-transform:none;letter-spacing:normal}.toggle input{width:auto;margin-top:3px}.toggle span{display:flex;flex-direction:column;gap:2px}.toggle strong{font-size:11px;color:var(--color-fg-1)}.toggle small{font-size:10px;color:var(--color-fg-4);font-weight:400}.composer input:focus,.composer select:focus,.composer textarea:focus,.credential-form input:focus{border-color:var(--color-primary);box-shadow:0 0 0 3px color-mix(in srgb,var(--color-primary) 12%,transparent)}button{font:inherit}.primary,.secondary,.danger,.icon-btn{border:0;border-radius:9px;padding:9px 13px;display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:12px;font-weight:650;cursor:pointer}.primary{background:var(--color-primary);color:white}.secondary,.icon-btn{background:var(--color-bg-3);color:var(--color-fg-1)}.danger{background:rgba(239,68,68,.08);color:#ef4444}.wide{width:100%}button:disabled{opacity:.45;cursor:not-allowed}.thread-list{display:flex;flex-direction:column;gap:7px}.thread{width:100%;border:1px solid var(--color-border);background:var(--color-bg-1);border-radius:10px;padding:11px;display:flex;align-items:center;text-align:left;cursor:pointer;color:var(--color-fg-1)}.thread.selected{border-color:var(--color-primary)}.thread div{display:flex;flex-direction:column;gap:3px;min-width:0}.thread strong{font-size:12px}.thread small{font-family:var(--font-mono);color:var(--color-fg-4)}.thread>span{margin-left:auto;font-size:10px;padding:4px 7px;border-radius:7px;background:rgba(59,130,246,.1);color:#3b82f6}.thread>span.good{background:rgba(34,197,94,.1);color:#16a34a}.thread>span.bad{background:rgba(239,68,68,.1);color:#ef4444}.detail{border-top:1px solid var(--color-border);margin-top:16px;padding-top:16px}.detail-head{display:flex;justify-content:space-between;font-size:12px}.pr{display:flex;align-items:center;gap:5px;color:var(--color-primary);font-size:12px;margin-top:10px;text-decoration:none}.messages{display:flex;flex-direction:column;gap:8px;margin-top:12px;max-height:330px;overflow:auto}.messages article{background:var(--color-bg-2);border-radius:9px;padding:10px}.messages span{font-size:9px;text-transform:uppercase;color:var(--color-fg-4);font-weight:700}.messages p{white-space:pre-wrap;word-break:break-word}.banner{display:flex;align-items:center;gap:8px;padding:10px 13px;border-radius:9px;margin-bottom:12px;font-size:12px}.banner.error{background:rgba(239,68,68,.08);color:#ef4444}.banner.success{background:rgba(34,197,94,.08);color:#16a34a}.loading,.empty{padding:35px;text-align:center;color:var(--color-fg-4);font-size:12px}.loading{display:flex;justify-content:center;gap:8px}.icon-btn{padding:8px}@media(max-width:900px){.workspace{grid-template-columns:1fr}.diagnostic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.test-controls{grid-template-columns:repeat(2,minmax(0,1fr))}.credential-panel{align-items:stretch;flex-direction:column}.credential-form{min-width:0;width:100%}.headline{align-items:flex-start;flex-wrap:wrap}.safe{margin-left:8px}}@media(max-width:560px){.credential-form,.actions{flex-direction:column;align-items:stretch}.panel{padding:15px}}
   .steps{display:flex;align-items:center;max-width:760px;margin:0 auto 22px;padding:0 10px}.step{display:flex;align-items:center;gap:9px;min-width:145px;color:var(--color-fg-4)}.step>span{display:grid;place-items:center;width:30px;height:30px;border-radius:50%;border:1px solid var(--color-border);background:var(--color-bg-card);font-size:12px;font-weight:750}.step div{display:flex;flex-direction:column}.step small{font-size:9px;text-transform:uppercase;letter-spacing:.08em}.step strong{font-size:12px;color:var(--color-fg-2)}.step.complete>span{border-color:#22c55e;background:#22c55e;color:#fff}.step.complete strong{color:var(--color-fg-0)}.step.active>span{border-color:#3b82f6;color:#2563eb;box-shadow:0 0 0 3px rgba(59,130,246,.1)}.step-line{height:1px;flex:1;background:var(--color-border);margin:0 12px}.step-line.complete{background:#86efac}
   .step-heading{display:flex;align-items:center;gap:12px;flex:1}.step-icon{display:grid;place-items:center;min-width:38px;height:38px;border-radius:11px;color:#7c3aed;background:rgba(124,58,237,.1)}.step-icon.blue{color:#2563eb;background:rgba(37,99,235,.1)}.security-note{display:flex;align-items:center;gap:5px;flex-basis:100%;font-size:11px!important;margin:0!important;padding-left:50px}.detection-panel{margin-bottom:22px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}.detection-panel .step-heading{min-width:280px}.detection-panel.muted{opacity:.72}.inline-state{display:flex;align-items:center;gap:10px;margin-left:auto;padding:10px 12px;border-radius:10px;background:var(--color-bg-3);color:var(--color-fg-3);font-size:12px}.inline-state div{display:flex;flex-direction:column;gap:2px}.inline-state span{font-size:11px}.inline-state.success{color:#15803d;background:rgba(34,197,94,.09)}.inline-state.failed{color:#dc2626;background:rgba(239,68,68,.08)}.inline-state.active{color:#2563eb;background:rgba(59,130,246,.08)}.state-dot{width:8px;height:8px;border-radius:50%;background:var(--color-fg-4)}
-  .ready-section{margin-bottom:22px;padding:4px}.ready-title{margin:0 0 13px}.ready-title p{margin:4px 0 0;color:var(--color-fg-3);font-size:12px}.ready-count,.ready-badge{display:flex;align-items:center;gap:5px;color:#15803d;background:rgba(34,197,94,.09);border-radius:999px;padding:6px 9px;font-size:11px;font-weight:700}.project-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.project-card{display:flex;flex-direction:column;gap:14px;min-width:0;padding:17px;border:1px solid var(--color-border);border-radius:14px;background:var(--color-bg-card);box-shadow:0 5px 18px rgba(15,23,42,.035)}.project-head{display:flex;justify-content:space-between;align-items:center}.project-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;color:#2563eb;background:rgba(59,130,246,.09)}.ready-badge span{width:6px;height:6px;border-radius:50%;background:#22c55e}.project-card h3{margin:0;color:var(--color-fg-0);font-size:15px}.project-card p{margin:4px 0 0;color:var(--color-fg-3);font-size:12px}.model-id{padding:10px;border-radius:9px;background:var(--color-bg-3);overflow:hidden}.model-id small{display:block;margin-bottom:4px;color:var(--color-fg-4);text-transform:uppercase;letter-spacing:.06em;font-size:9px}.model-id code{font-size:11px;color:var(--color-fg-1);overflow-wrap:anywhere}.project-actions{display:flex;gap:8px;margin-top:auto}.project-actions>*{flex:1;justify-content:center}.link-button{text-decoration:none}.empty-ready{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;min-height:145px;padding:24px;border:1px dashed var(--color-border);border-radius:14px;background:var(--color-bg-card);color:var(--color-fg-3);text-align:center}.empty-ready strong{color:var(--color-fg-1);font-size:13px}.empty-ready span{font-size:11px}.advanced{margin-top:10px;border:1px solid var(--color-border);border-radius:14px;background:var(--color-bg-card);overflow:hidden}.advanced>summary{cursor:pointer;list-style:none;padding:15px 18px}.advanced>summary::-webkit-details-marker{display:none}.advanced>summary>span{display:flex;align-items:center;gap:10px}.advanced>summary strong,.advanced>summary small{display:block}.advanced>summary strong{font-size:13px;color:var(--color-fg-1)}.advanced>summary small{margin-top:2px;font-size:11px;color:var(--color-fg-3)}.advanced-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:var(--color-bg-3);transition:transform .2s}.advanced[open] .advanced-icon{transform:rotate(180deg)}.advanced-content{padding:0 16px 16px}.advanced-content>.panel{border-color:var(--color-border);box-shadow:none}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .ready-section{margin-bottom:22px;padding:4px}.ready-title{margin:0 0 13px}.ready-title p{margin:4px 0 0;color:var(--color-fg-3);font-size:12px}.ready-count,.ready-badge{display:flex;align-items:center;gap:5px;color:#15803d;background:rgba(34,197,94,.09);border-radius:999px;padding:6px 9px;font-size:11px;font-weight:700}.project-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.project-card{display:flex;flex-direction:column;gap:14px;min-width:0;padding:17px;border:1px solid var(--color-border);border-radius:14px;background:var(--color-bg-card);box-shadow:0 5px 18px rgba(15,23,42,.035)}.project-head{display:flex;justify-content:space-between;align-items:center}.project-icon{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;color:#2563eb;background:rgba(59,130,246,.09)}.ready-badge span{width:6px;height:6px;border-radius:50%;background:#22c55e}.project-card h3{margin:0;color:var(--color-fg-0);font-size:15px}.project-card p{margin:4px 0 0;color:var(--color-fg-3);font-size:12px}.model-id{padding:10px;border-radius:9px;background:var(--color-bg-3);overflow:hidden}.model-id small{display:block;margin-bottom:4px;color:var(--color-fg-4);text-transform:uppercase;letter-spacing:.06em;font-size:9px}.model-id code{font-size:11px;color:var(--color-fg-1);overflow-wrap:anywhere}.project-actions{display:flex;gap:8px;margin-top:auto}.project-actions>*{flex:1;justify-content:center}.link-button{text-decoration:none}.model-list{display:flex;flex-direction:column;gap:10px;padding-top:4px;border-top:1px solid var(--color-border)}.model-choice{display:flex;flex-direction:column;gap:7px;padding:11px;border:1px solid var(--color-border);border-radius:10px;background:var(--color-bg-2)}.model-choice>div:first-child{display:flex;flex-direction:column;gap:2px}.model-choice strong{font-size:12px;color:var(--color-fg-1)}.model-choice span{font-size:10px;color:var(--color-fg-3)}.model-choice code{font-size:10px;color:var(--color-fg-2);overflow-wrap:anywhere}.model-choice .project-actions>*{font-size:10px;padding:6px 8px}.empty-ready{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;min-height:145px;padding:24px;border:1px dashed var(--color-border);border-radius:14px;background:var(--color-bg-card);color:var(--color-fg-3);text-align:center}.empty-ready strong{color:var(--color-fg-1);font-size:13px}.empty-ready span{font-size:11px}.advanced{margin-top:10px;border:1px solid var(--color-border);border-radius:14px;background:var(--color-bg-card);overflow:hidden}.advanced>summary{cursor:pointer;list-style:none;padding:15px 18px}.advanced>summary::-webkit-details-marker{display:none}.advanced>summary>span{display:flex;align-items:center;gap:10px}.advanced>summary strong,.advanced>summary small{display:block}.advanced>summary strong{font-size:13px;color:var(--color-fg-1)}.advanced>summary small{margin-top:2px;font-size:11px;color:var(--color-fg-3)}.advanced-icon{display:grid;place-items:center;width:30px;height:30px;border-radius:8px;background:var(--color-bg-3);transition:transform .2s}.advanced[open] .advanced-icon{transform:rotate(180deg)}.advanced-content{padding:0 16px 16px}.advanced-content>.panel{border-color:var(--color-border);box-shadow:none}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
   @media(max-width:700px){.steps{align-items:flex-start;padding:0}.step{min-width:0;flex:1;justify-content:center}.step div{display:none}.step-line{margin:15px 6px}.credential-panel,.detection-panel{align-items:stretch}.step-heading{min-width:100%!important}.security-note{padding-left:0}.inline-state{margin-left:0;width:100%;flex-wrap:wrap}.inline-state button{width:100%;justify-content:center}.project-grid{grid-template-columns:1fr}.project-actions{flex-direction:column}.project-actions>*{min-height:42px}.advanced-content{padding:0 10px 10px}}
 </style>

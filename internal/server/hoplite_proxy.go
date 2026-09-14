@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -42,9 +43,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request, model string, stream bool, messages []hopliteChatMessage) {
-	projectID := strings.TrimSpace(strings.TrimPrefix(model, "hoplite-agent/"))
-	if projectID == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "Hoplite model must include a project ID")
+	projectID, selectedModel, _, validModelID := parseHopliteModelID(model)
+	if !validModelID {
+		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid Hoplite model ID")
 		return
 	}
 	if stream {
@@ -87,7 +88,7 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 		opID = "lintasan-" + hex.EncodeToString(digest[:24])
 	}
 	created, meta, err := client.CreateThread(ctx, hoplite.CreateThreadRequest{
-		ProjectID: projectID, Prompt: prompt, AutoFix: false, AutoMerge: false, ClientOperationID: opID,
+		ProjectID: projectID, Prompt: prompt, Model: selectedModel, AutoFix: false, AutoMerge: false, ClientOperationID: opID,
 	})
 	if err != nil {
 		writeHopliteOpenAIError(w, err)
@@ -140,6 +141,38 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 		"usage":      map[string]int{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
 		"x_lintasan": map[string]any{"provider": "hoplite-agent", "agent_semantics": true, "thread_id": thread.ID, "status": thread.Status, "pull_requests": thread.PullRequests, "request_id": meta.RequestID},
 	})
+}
+
+func hopliteSelectedModelID(projectID, modelID string) string {
+	encode := func(value string) string { return base64.RawURLEncoding.EncodeToString([]byte(value)) }
+	return "hoplite-agent/v1/" + encode(projectID) + "/" + encode(modelID)
+}
+
+func parseHopliteModelID(id string) (projectID, modelID string, selected, ok bool) {
+	const prefix = "hoplite-agent/"
+	if !strings.HasPrefix(id, prefix) {
+		return "", "", false, false
+	}
+	rest := strings.TrimPrefix(id, prefix)
+	if !strings.HasPrefix(rest, "v1/") {
+		projectID = strings.TrimSpace(rest)
+		return projectID, "", false, projectID != ""
+	}
+	parts := strings.Split(strings.TrimPrefix(rest, "v1/"), "/")
+	if len(parts) != 2 {
+		return "", "", false, false
+	}
+	decode := func(value string) (string, bool) {
+		decoded, err := base64.RawURLEncoding.DecodeString(value)
+		return string(decoded), err == nil && len(decoded) > 0
+	}
+	var projectOK, modelOK bool
+	projectID, projectOK = decode(parts[0])
+	modelID, modelOK = decode(parts[1])
+	if !projectOK || !modelOK || !hoplite.IsKnownModel(modelID) {
+		return "", "", false, false
+	}
+	return projectID, modelID, true, true
 }
 
 func hopliteTerminal(status string) bool {
