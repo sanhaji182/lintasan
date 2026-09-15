@@ -78,13 +78,11 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 		t.Fatal("Hoplite onboarding must not describe the adapter as isolated from LLM routing")
 	}
 
-	// Project-default Copy and Test actions must use the exact account-qualified
-	// ID advertised by /v1/models. A secondary account must never fall back to
-	// the legacy default-account alias, because project IDs can overlap.
+	// Project-default Copy and Test actions share the pure resolver exercised by
+	// frontend/tests/hoplite-model-id.test.mjs. Keep only wiring contracts here;
+	// account isolation itself is covered behaviorally by that test.
 	for _, required := range []string{
-		"model.catalog_eligibility === 'project-default'",
-		"model.hoplite_account_id === accountID",
-		"if (accountID) return '';",
+		"resolveHopliteProjectModelID(adapterModels, accountID, project.id)",
 		"copyModelID(project)",
 		"encodeURIComponent(projectModelID(project))",
 	} {

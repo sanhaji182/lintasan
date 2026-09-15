@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { page } from '$app/state';
   import { api } from '$lib/api';
+  import { resolveHopliteProjectModelID } from '$lib/hoplite-model-id';
   import TabNav from '$lib/components/TabNav.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import { Cloud, Key, Lock, RefreshCw, Play, GitPullRequest, ExternalLink, Trash2, CircleCheck, CircleAlert, ArrowLeft, Copy, ArrowRight, FolderGit2, ChevronDown } from 'lucide-svelte';
@@ -95,14 +96,7 @@
   }
 
   function projectModelID(project: Project) {
-    const advertised = adapterModels.find((model) =>
-      model.hoplite_project_id === project.id &&
-      model.hoplite_account_id === (accountID || 'hoplite-cloud-agent') &&
-      model.catalog_eligibility === 'project-default'
-    );
-    if (advertised) return advertised.id;
-    if (accountID) return '';
-    return `hoplite-agent/${project.id}`;
+    return resolveHopliteProjectModelID(adapterModels, accountID, project.id);
   }
 
   function projectModels(project?: Project) {
