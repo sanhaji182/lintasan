@@ -9,6 +9,7 @@ export const navigationGroups: NavigationGroup[] = [
   ]},
   { label: 'Gateway', collapsible: false, items: [
     { label: 'Connections', path: '/dashboard/connections', icon: 'connections' },
+    { label: 'Models', path: '/dashboard/models', icon: 'models' },
     { label: 'Provider Catalog', path: '/dashboard/providers', icon: 'providers' },
     { label: 'Routing', path: '/dashboard/routing', icon: 'routing' },
   ]},

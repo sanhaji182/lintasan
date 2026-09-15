@@ -11,6 +11,7 @@ import { page } from '$app/state';
     '/dashboard': 'Overview',
     '/dashboard/quickstart': 'Quickstart',
     '/dashboard/connections': 'Connections',
+    '/dashboard/models': 'Models',
     '/dashboard/providers': 'Provider Catalog',
     '/dashboard/experimental': 'Experimental',
     '/dashboard/experimental/hoplite': 'Hoplite Cloud Agent',

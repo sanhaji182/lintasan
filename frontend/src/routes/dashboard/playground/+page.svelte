@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { api } from '$lib/api';
+  import ModelCombobox from '$lib/components/ModelCombobox.svelte';
+  import { buildCallableCatalog, rememberRecentModel, type CallableModel } from '$lib/workflow-consolidation';
   import {
     Send, Bot, User, Settings2, Thermometer, Hash,
     Copy, Trash2, ChevronDown, ChevronUp, Brain, Sparkles
@@ -26,48 +28,36 @@
   let temperature = $state(0.7);
   let systemPrompt = $state('You are a helpful assistant.');
 
-  let availableModels = $state<Array<{ id: string; label: string; kind: 'llm' | 'cloud_agent'; supportsStreaming: boolean }>>([
-    { id: 'gpt-4o', label: 'gpt-4o', kind: 'llm', supportsStreaming: true },
-    { id: 'gpt-4o-mini', label: 'gpt-4o-mini', kind: 'llm', supportsStreaming: true }
-  ]);
+  let availableModels = $state<CallableModel[]>([]);
+  let recentModels = $state<string[]>([]);
   let selectedCapability = $derived(availableModels.find(model => model.id === selectedModel));
   let isCloudAgentSelection = $derived(selectedCapability?.kind === 'cloud_agent' || selectedModel.startsWith('hoplite-agent/') || selectedModel.startsWith('hoplite-model/v1/') || selectedModel.startsWith('hoplite-model/v2/'));
 
   async function loadModelsAndCombos() {
     try {
       const requestedModel = page.url.searchParams.get('model')?.trim() || '';
-      const [modelsRes, combosRes] = await Promise.all([
-        api.get<any>('/v1/models').catch(() => null),
-        api.get<any>('/api/combos').catch(() => null),
+      const [modelsRes, combosRes, aliasesRes, connectionsRes] = await Promise.all([
+        api.get<any>('/v1/models').catch(() => ({ data: [] })),
+        api.get<any>('/api/combos').catch(() => ({ data: [] })),
+        api.get<any>('/api/aliases').catch(() => ({ data: {} })),
+        api.get<any>('/api/connections').catch(() => ({ data: [] })),
       ]);
-      const catalog = new Map<string, { id: string; label: string; kind: 'llm' | 'cloud_agent'; supportsStreaming: boolean }>();
-      const add = (id: string, label = id, kind: 'llm' | 'cloud_agent' = 'llm', supportsStreaming = true) => {
-        if (id) catalog.set(id, { id, label, kind, supportsStreaming });
-      };
-      if (requestedModel) add(requestedModel);
-      if (combosRes) {
-        const cList = combosRes.data || combosRes.combos || (Array.isArray(combosRes) ? combosRes : []);
-        for (const c of cList) {
-          const comboID = c.name || c.provider;
-          const cloud = Array.isArray(c.entries) && c.entries.some((entry: any) => String(entry.model || '').startsWith('hoplite-'));
-          if (comboID) add(comboID, cloud ? `${comboID} · Cloud Agent combo` : comboID, cloud ? 'cloud_agent' : 'llm', !cloud);
-        }
-      }
-      if (modelsRes?.data && Array.isArray(modelsRes.data)) {
-        for (const m of modelsRes.data) {
-          const cloud = m.provider_kind === 'cloud_agent';
-          add(m.id, cloud ? `${m.hoplite_project_name || 'Hoplite'} · ${m.display_name || m.id} · Cloud Agent` : m.id, cloud ? 'cloud_agent' : 'llm', m.supports_streaming !== false);
-        }
-      }
-      if (catalog.size > 0) {
-        availableModels = Array.from(catalog.values()).sort((a, b) => a.kind.localeCompare(b.kind) || a.label.localeCompare(b.label));
-        if (requestedModel && availableModels.some(model => model.id === requestedModel)) {
-          selectedModel = requestedModel;
-        } else if (!availableModels.some(model => model.id === selectedModel)) {
-          selectedModel = availableModels[0].id;
-        }
-      }
+      availableModels = buildCallableCatalog({
+        models: modelsRes?.data || [], combos: combosRes?.data || combosRes?.combos || [],
+        aliases: aliasesRes?.data || {}, connections: connectionsRes?.data || [],
+      });
+      try { recentModels = JSON.parse(localStorage.getItem('lintasan.recentModels') || '[]'); } catch { recentModels = []; }
+      const remembered = localStorage.getItem('lintasan.lastModel') || '';
+      const next = requestedModel || remembered || availableModels[0]?.id || 'gpt-4o';
+      selectedModel = availableModels.some(model => model.id === next) || requestedModel ? next : (availableModels[0]?.id || next);
     } catch {}
+  }
+
+  function selectModel(id: string) {
+    selectedModel = id;
+    recentModels = rememberRecentModel(recentModels, id);
+    localStorage.setItem('lintasan.lastModel', id);
+    localStorage.setItem('lintasan.recentModels', JSON.stringify(recentModels));
   }
 
   onMount(loadModelsAndCombos);
@@ -346,19 +336,9 @@
         <!-- Model selector -->
         <div style="flex: 1; min-width: 180px;">
           <label
-            for="model-select"
             style="display: block; font-size: 11px; font-weight: 600; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;"
           >Model</label>
-          <select
-            id="model-select"
-            class="input-field"
-            style="font-size: 13px; padding: 7px 10px;"
-            bind:value={selectedModel}
-          >
-            {#each availableModels as model}
-              <option value={model.id}>{model.label}</option>
-            {/each}
-          </select>
+          <ModelCombobox models={availableModels} selected={selectedModel} recent={recentModels} recommended={availableModels.find(model => model.kind === 'route')?.id || availableModels.find(model => model.kind === 'provider')?.id} onselect={selectModel} />
           {#if isCloudAgentSelection}
             <div class="cloud-agent-note">☁ Cloud Agent · non-streaming · project-scoped · may run for several minutes</div>
           {/if}
