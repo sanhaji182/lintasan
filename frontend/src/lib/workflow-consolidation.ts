@@ -155,7 +155,16 @@ export function routingDirtyState(dirty: { policy: boolean; combos: boolean; quo
   return { count: scopes.length, scopes };
 }
 
-export function analyticsScope(globalTotal: number, snapshotTotal: number) {
+function comparable(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+export function analyticsScope(globalTotal: unknown, snapshotTotal: unknown) {
+  const globalLabel = comparable(globalTotal) ? 'All recorded requests' : 'All-recorded request count unavailable';
+  const snapshotLabel = comparable(snapshotTotal) ? `${snapshotTotal} retained request rows` : 'Retained request row count unavailable';
+  if (!comparable(globalTotal) || !comparable(snapshotTotal)) {
+    return { globalLabel, snapshotLabel, note: 'Reconciliation is unknown because comparable counts are unavailable.', reconciled: false, state: 'unknown' as const };
+  }
   const difference = globalTotal - snapshotTotal;
   const note = difference > 0
     ? `The all-recorded counter exceeds the retained rows by ${difference}. These independently collected sources do not reconcile.`
@@ -163,10 +172,11 @@ export function analyticsScope(globalTotal: number, snapshotTotal: number) {
       ? `The retained rows exceed the all-recorded counter by ${Math.abs(difference)}. These independently collected sources do not reconcile.`
       : 'The independently collected counts match.';
   return {
-    globalLabel: 'All recorded requests',
-    snapshotLabel: `${snapshotTotal} retained request rows`,
+    globalLabel,
+    snapshotLabel,
     note,
     reconciled: difference === 0,
+    state: difference === 0 ? 'reconciled' as const : 'mismatch' as const,
   };
 }
 

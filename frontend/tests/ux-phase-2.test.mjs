@@ -100,15 +100,31 @@ test('combo order fingerprint changes when rows are reordered', () => {
 test('analytics scope explains a retained snapshot that differs from global counter', () => {
   assert.deepEqual(analyticsScope(28, 20), {
     globalLabel: 'All recorded requests', snapshotLabel: '20 retained request rows',
-    note: 'The all-recorded counter exceeds the retained rows by 8. These independently collected sources do not reconcile.', reconciled: false,
+    note: 'The all-recorded counter exceeds the retained rows by 8. These independently collected sources do not reconcile.', reconciled: false, state: 'mismatch',
   });
   assert.deepEqual(analyticsScope(10, 11), {
     globalLabel: 'All recorded requests', snapshotLabel: '11 retained request rows',
-    note: 'The retained rows exceed the all-recorded counter by 1. These independently collected sources do not reconcile.', reconciled: false,
+    note: 'The retained rows exceed the all-recorded counter by 1. These independently collected sources do not reconcile.', reconciled: false, state: 'mismatch',
   });
   assert.deepEqual(analyticsScope(20, 20), {
     globalLabel: 'All recorded requests', snapshotLabel: '20 retained request rows',
-    note: 'The independently collected counts match.', reconciled: true,
+    note: 'The independently collected counts match.', reconciled: true, state: 'reconciled',
+  });
+});
+
+test('analytics scope is explicitly unknown for missing or incomparable counts', () => {
+  const expected = {
+    globalLabel: 'All-recorded request count unavailable',
+    snapshotLabel: 'Retained request row count unavailable',
+    note: 'Reconciliation is unknown because comparable counts are unavailable.',
+    reconciled: false,
+    state: 'unknown',
+  };
+  assert.deepEqual(analyticsScope(null, undefined), expected);
+  assert.deepEqual(analyticsScope(Number.NaN, Number.POSITIVE_INFINITY), expected);
+  assert.deepEqual(analyticsScope(Number.NEGATIVE_INFINITY, 20), {
+    ...expected,
+    snapshotLabel: '20 retained request rows',
   });
 });
 
