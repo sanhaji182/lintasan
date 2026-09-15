@@ -4,6 +4,7 @@ import {
   buildCallableCatalog, filterCallableModels, groupCallableModels,
   rememberRecentModel, routingDirtyState, analyticsScope,
   buildPolicyPayload, buildQuotaPayload, comboOrderFingerprint, shouldUseStreaming,
+  sourceFreshness,
 } from '../src/lib/workflow-consolidation.ts';
 
 test('catalog combines aliases, combos, provider models and cloud agents without duplicate callable IDs', () => {
@@ -99,7 +100,23 @@ test('combo order fingerprint changes when rows are reordered', () => {
 test('analytics scope explains a retained snapshot that differs from global counter', () => {
   assert.deepEqual(analyticsScope(28, 20), {
     globalLabel: 'All recorded requests', snapshotLabel: '20 retained request rows',
-    note: '8 requests are outside the retained log snapshot or its current filters.', reconciled: false,
+    note: 'The all-recorded counter exceeds the retained rows by 8. These independently collected sources do not reconcile.', reconciled: false,
   });
-  assert.equal(analyticsScope(20, 20).reconciled, true);
+  assert.deepEqual(analyticsScope(10, 11), {
+    globalLabel: 'All recorded requests', snapshotLabel: '11 retained request rows',
+    note: 'The retained rows exceed the all-recorded counter by 1. These independently collected sources do not reconcile.', reconciled: false,
+  });
+  assert.deepEqual(analyticsScope(20, 20), {
+    globalLabel: 'All recorded requests', snapshotLabel: '20 retained request rows',
+    note: 'The independently collected counts match.', reconciled: true,
+  });
+});
+
+test('source freshness distinguishes fresh, stale, failed and unknown collection state', () => {
+  const now = Date.parse('2026-09-15T18:00:45Z');
+  assert.deepEqual(sourceFreshness(null, now, false), { state: 'unknown', ageMs: null });
+  assert.deepEqual(sourceFreshness(null, now, true), { state: 'unknown', ageMs: null });
+  assert.deepEqual(sourceFreshness(now - 5_000, now, false), { state: 'fresh', ageMs: 5_000 });
+  assert.deepEqual(sourceFreshness(now - 31_000, now, false), { state: 'stale', ageMs: 31_000 });
+  assert.deepEqual(sourceFreshness(now - 1_000, now, true), { state: 'stale', ageMs: 1_000 });
 });

@@ -14,6 +14,7 @@
     Activity, Search, Database, Cpu, Server, TriangleAlert,
     CheckCircle2, Gauge, RefreshCw, Layers, Zap
   } from 'lucide-svelte';
+  import { sourceFreshness } from '$lib/workflow-consolidation';
 
   // ── Types ──────────────────────────────────────────────────────────────
   interface SearchMetrics {
@@ -57,7 +58,11 @@
   let httpSeries = $state<HttpSeries[]>([]);
   let cache = $state<CacheStats | null>(null);
   let metricsAvailable = $state(true);
-  let lastUpdated = $state<Date | null>(null);
+  let memoryCollectedAt = $state<number | null>(null);
+  let metricsCollectedAt = $state<number | null>(null);
+  let memoryFailed = $state(false);
+  let metricsFailed = $state(false);
+  let freshnessNow = $state(Date.now());
   let timer: ReturnType<typeof setInterval> | null = null;
 
   // ── Prometheus text parser (minimal) ───────────────────────────────────
@@ -109,16 +114,23 @@
     try {
       memStats = await api.get<MemoryStats>('/v1/memory/stats');
       search = memStats?.search ?? null;
-    } catch { memStats = null; search = null; }
+      memoryCollectedAt = Date.now();
+      memoryFailed = false;
+    } catch {
+      memoryFailed = true;
+      if (memoryCollectedAt == null) { memStats = null; search = null; }
+    }
 
     // /metrics for runtime + http families. Unauthenticated (like /health) but
     // we send the token anyway via api conventions; raw text fetch here.
     try {
       const res = await api.raw('/metrics');
-      if (!res.ok) { metricsAvailable = false; return; }
+      if (!res.ok) { metricsAvailable = false; metricsFailed = true; freshnessNow = Date.now(); return; }
       const text = await res.text();
       const samples = parseProm(text);
       metricsAvailable = true;
+      metricsFailed = false;
+      metricsCollectedAt = Date.now();
 
       const get1 = (n: string) => samples.find(s => s.name === n)?.value ?? null;
       proc = {
@@ -166,8 +178,9 @@
       }
     } catch {
       metricsAvailable = false;
+      metricsFailed = true;
     }
-    lastUpdated = new Date();
+    freshnessNow = Date.now();
   }
 
   async function refresh() {
@@ -203,6 +216,14 @@
   const cacheTotal = $derived(cache ? cache.hits + cache.misses : 0);
   const cacheHitRate = $derived(cache && cacheTotal > 0
     ? Math.round((cache.hits / cacheTotal) * 100) : null);
+  const memoryFreshness = $derived(sourceFreshness(memoryCollectedAt, freshnessNow, memoryFailed));
+  const metricsFreshness = $derived(sourceFreshness(metricsCollectedAt, freshnessNow, metricsFailed));
+
+  function freshnessText(label: string, state: { state: 'fresh' | 'stale' | 'unknown'; ageMs: number | null }, failed: boolean): string {
+    if (state.ageMs == null) return `${label}: freshness unknown${failed ? ' · collection failed' : ''}`;
+    const age = state.ageMs < 1000 ? 'just now' : `${Math.floor(state.ageMs / 1000)}s ago`;
+    return `${label}: ${state.state} · ${state.state === 'fresh' ? 'collected' : 'last collected'} ${age}${failed ? ' · latest collection failed' : ''}`;
+  }
 
   // Warning state: the H3-regression early warning the user asked for.
   //  - capped scans > 0  → search is hitting the cap (store grew past safe size)
@@ -253,6 +274,14 @@
       {refreshing ? 'Refreshing' : 'Refresh'}
     </button>
   </div>
+
+  <div class="source-status" aria-live="polite">
+    <span class:stale={memoryFreshness.state !== 'fresh'}>{freshnessText('Memory stats', memoryFreshness, memoryFailed)}</span>
+    <span class:stale={metricsFreshness.state !== 'fresh'}>{freshnessText('Runtime metrics', metricsFreshness, metricsFailed)}</span>
+  </div>
+  {#if memoryFailed || metricsFailed}
+    <div class="partial-source-warning"><TriangleAlert size={15} /> Some observability sources failed during the latest collection. Available panels retain their last successful values and are marked stale.</div>
+  {/if}
 
   {#if loading}
     <div class="flex justify-center" style="padding: 60px 0;"><Spinner /></div>
@@ -421,15 +450,15 @@
       {/if}
     {/if}
 
-    {#if lastUpdated}
-      <div style="font-size: 11px; color: var(--color-fg-3); margin-top: 16px; text-align: right;">
-        Auto-refreshes every 15s · last updated {lastUpdated.toLocaleTimeString()}
-      </div>
-    {/if}
+    <div style="font-size: 11px; color: var(--color-fg-3); margin-top: 16px; text-align: right;">Auto-refreshes every 15s · freshness is tracked per source</div>
   {/if}
 </div>
 
 <style>
+  .source-status { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+  .source-status span { padding:4px 9px; border-radius:999px; font-size:11px; color:var(--color-success); background:color-mix(in srgb,var(--color-success) 8%,var(--color-bg-card)); border:1px solid color-mix(in srgb,var(--color-success) 25%,transparent); }
+  .source-status span.stale { color:var(--color-warning); background:color-mix(in srgb,var(--color-warning) 8%,var(--color-bg-card)); border-color:color-mix(in srgb,var(--color-warning) 30%,transparent); }
+  .partial-source-warning { display:flex; align-items:center; gap:8px; padding:9px 12px; margin-bottom:10px; border-radius:8px; font-size:12px; color:var(--color-warning); background:color-mix(in srgb,var(--color-warning) 8%,var(--color-bg-card)); border:1px solid color-mix(in srgb,var(--color-warning) 30%,transparent); }
   .warn-banner {
     display: flex;
     align-items: flex-start;

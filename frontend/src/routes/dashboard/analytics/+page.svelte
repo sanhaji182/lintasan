@@ -48,12 +48,17 @@
     loading = true;
     error = '';
     try {
-      const [statsRes, logsRes] = await Promise.all([
-        api.get<any>('/api/dashboard/stats').catch(() => null),
-        api.get<{ data: LogEntry[] }>('/api/logs').catch(() => ({ data: [] }))
+      const [statsResult, logsResult] = await Promise.allSettled([
+        api.get<any>('/api/dashboard/stats'),
+        api.get<{ data: LogEntry[] }>('/api/logs')
       ]);
-      stats = statsRes?.data || statsRes || null;
-      logs = logsRes?.data || [];
+      stats = statsResult.status === 'fulfilled' ? (statsResult.value?.data || statsResult.value || null) : null;
+      logs = logsResult.status === 'fulfilled' ? (logsResult.value?.data || []) : [];
+      if (statsResult.status === 'rejected' && logsResult.status === 'rejected') {
+        const statsMessage = statsResult.reason?.message || 'unavailable';
+        const logsMessage = logsResult.reason?.message || 'unavailable';
+        error = `Dashboard stats: ${statsMessage}. Request logs: ${logsMessage}.`;
+      }
       retrievedAt = new Date();
     } catch (e: any) {
       error = e.message || 'Failed to load analytics data';
@@ -182,16 +187,17 @@
     </div>
     <div class="grid gap-4" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 24px;">
       {#each [
-        { icon: Activity, label: 'Total Requests', value: (stats?.total_requests ?? logs.length).toLocaleString(), color: 'var(--color-primary)' },
-        { icon: Database, label: 'Total Tokens', value: totalTokens.toLocaleString(), color: 'var(--color-success)' },
-        { icon: Zap, label: 'Cache Hit Rate', value: (stats?.cache_hit_rate ?? (logs.length > 0 ? Math.round((statusBreakdown.cached / logs.length) * 100) : 0)) + '%', color: 'var(--color-info)' },
-        { icon: Clock, label: 'Avg Latency', value: formatLatency(stats?.avg_latency ?? avgLatency), color: 'var(--color-warning)' }
+        { icon: Activity, label: 'Total Requests', value: (stats?.total_requests ?? logs.length).toLocaleString(), scope: stats ? scope.globalLabel : scope.snapshotLabel, color: 'var(--color-primary)' },
+        { icon: Database, label: 'Total Tokens', value: totalTokens.toLocaleString(), scope: scope.snapshotLabel, color: 'var(--color-success)' },
+        { icon: Zap, label: 'Cache Hit Rate', value: (stats?.cache_hit_rate ?? (logs.length > 0 ? Math.round((statusBreakdown.cached / logs.length) * 100) : 0)) + '%', scope: stats ? scope.globalLabel : scope.snapshotLabel, color: 'var(--color-info)' },
+        { icon: Clock, label: 'Avg Latency', value: formatLatency(stats?.avg_latency ?? avgLatency), scope: stats ? scope.globalLabel : scope.snapshotLabel, color: 'var(--color-warning)' }
       ] as m}
         <div class="card" style="padding: 18px; position: relative; overflow: hidden;">
           <div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: {m.color};"></div>
           <m.icon size={20} style="color: {m.color}; margin-bottom: 8px;" stroke-width={1.8} />
           <div style="font-size: 20px; font-weight: 700; font-family: var(--font-mono); color: var(--color-fg-0); letter-spacing: -0.3px;">{m.value}</div>
           <div style="font-size: 12px; font-weight: 500; color: var(--color-fg-3); margin-top: 2px;">{m.label}</div>
+          <div class="metric-scope">{m.scope}</div>
         </div>
       {/each}
     </div>
@@ -293,6 +299,7 @@
   .scope-note { margin-bottom:14px; padding:10px 13px; border:1px solid color-mix(in srgb,var(--color-warning) 30%,transparent); background:color-mix(in srgb,var(--color-warning) 8%,var(--color-bg-card)); border-radius:9px; color:var(--color-fg-2); font-size:11px; line-height:1.5; }
   .scope-note.reconciled { border-color:color-mix(in srgb,var(--color-success) 30%,transparent); background:color-mix(in srgb,var(--color-success) 7%,var(--color-bg-card)); }
   .scope-note code { font-family:var(--font-mono); }
+  .metric-scope { margin-top:6px; font-size:10px; color:var(--color-fg-3); }
   .live-stream-badge {
     display: inline-flex;
     align-items: center;

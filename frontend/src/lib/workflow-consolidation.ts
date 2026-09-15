@@ -156,11 +156,22 @@ export function routingDirtyState(dirty: { policy: boolean; combos: boolean; quo
 }
 
 export function analyticsScope(globalTotal: number, snapshotTotal: number) {
-  const difference = Math.max(0, globalTotal - snapshotTotal);
+  const difference = globalTotal - snapshotTotal;
+  const note = difference > 0
+    ? `The all-recorded counter exceeds the retained rows by ${difference}. These independently collected sources do not reconcile.`
+    : difference < 0
+      ? `The retained rows exceed the all-recorded counter by ${Math.abs(difference)}. These independently collected sources do not reconcile.`
+      : 'The independently collected counts match.';
   return {
     globalLabel: 'All recorded requests',
     snapshotLabel: `${snapshotTotal} retained request rows`,
-    note: difference ? `${difference} requests are outside the retained log snapshot or its current filters.` : 'Global and retained snapshot totals currently reconcile.',
+    note,
     reconciled: difference === 0,
   };
+}
+
+export function sourceFreshness(collectedAt: number | null, now: number, failed: boolean, staleAfterMs = 30_000) {
+  if (collectedAt == null) return { state: 'unknown' as const, ageMs: null };
+  const ageMs = Math.max(0, now - collectedAt);
+  return { state: failed || ageMs > staleAfterMs ? 'stale' as const : 'fresh' as const, ageMs };
 }
