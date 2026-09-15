@@ -114,6 +114,38 @@ export function groupCallableModels(rows: CallableModel[], recent: string[], rec
   return groups.filter(group => group.items.length > 0);
 }
 
+export function comboOrderFingerprint(combos: Array<{ id: string }>): string {
+  return JSON.stringify(combos.map(combo => combo.id));
+}
+
+export function buildPolicyPayload(smart: {
+  ml_router_enabled: unknown;
+  ml_router_cheap_model: unknown;
+  ml_router_expensive_model: unknown;
+  ml_router_threshold: unknown;
+  cost_quality_floor: unknown;
+  cost_expensive_anchor: unknown;
+}) {
+  return {
+    ml_router_enabled: smart.ml_router_enabled,
+    ml_router_cheap_model: smart.ml_router_cheap_model,
+    ml_router_expensive_model: smart.ml_router_expensive_model,
+    ml_router_threshold: smart.ml_router_threshold,
+    cost_quality_floor: smart.cost_quality_floor,
+    cost_expensive_anchor: smart.cost_expensive_anchor,
+  };
+}
+
+export function buildQuotaPayload(rows: Array<{ connId: string; maxPerDay: string }>) {
+  const quota_limits: Record<string, { max_tokens_per_day: number }> = {};
+  for (const row of rows) {
+    const id = row.connId.trim();
+    const max = Number.parseInt(row.maxPerDay, 10);
+    if (id && Number.isFinite(max) && max > 0) quota_limits[id] = { max_tokens_per_day: max };
+  }
+  return { quota_limits };
+}
+
 export function routingDirtyState(dirty: { policy: boolean; combos: boolean; quotas: boolean }) {
   const scopes = [dirty.policy && 'Policies', dirty.combos && 'Combos', dirty.quotas && 'Quotas'].filter(Boolean) as string[];
   return { count: scopes.length, scopes };

@@ -9,7 +9,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
-  import { routingDirtyState } from '$lib/workflow-consolidation';
+  import { routingDirtyState, buildPolicyPayload, buildQuotaPayload } from '$lib/workflow-consolidation';
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
@@ -43,6 +43,7 @@
   let advertisedModels = $state<any[]>([]);
   let draggedIndex = $state<number | null>(null);
   let dragOverIndex = $state<number | null>(null);
+  let orderDirty = $state(false);
 
   // New alias form
   let showAliasForm = $state(false);
@@ -91,12 +92,12 @@
   let baseStrategies = $state<Record<string, string>>({});
   let stagedLbStrategy = $state<string>('priority');
 
-  const policyFingerprint = $derived(JSON.stringify([smart, stagedLbStrategy]));
-  const quotasFingerprint = $derived(JSON.stringify(quotaRows));
+  const policyFingerprint = $derived(JSON.stringify([buildPolicyPayload(smart), stagedLbStrategy]));
+  const quotasFingerprint = $derived(JSON.stringify(buildQuotaPayload(quotaRows)));
   const combosDirtyCount = $derived(Object.keys(stagedStrategies).length);
   const dirty = $derived(routingDirtyState({
     policy: savedPolicy !== '' && policyFingerprint !== savedPolicy,
-    combos: combosDirtyCount > 0,
+    combos: combosDirtyCount > 0 || orderDirty,
     quotas: savedQuotas !== '' && quotasFingerprint !== savedQuotas,
   }));
 
@@ -107,6 +108,7 @@
   }
 
   function discardCombos() {
+    if (orderDirty) { loadCombos(); orderDirty = false; return; }
     for (const id of Object.keys(stagedStrategies)) {
       const combo = combos.find(c => c.id === id);
       if (combo) combo.strategy = baseStrategies[id] ?? combo.strategy;
@@ -134,35 +136,24 @@
     }
   }
 
-  async function saveSmart() {
+  async function saveSmart(scope: 'policies' | 'quotas' = section === 'quotas' ? 'quotas' : 'policies') {
     savingSmart = true;
     try {
-      // Rebuild quota_limits map from editor rows (skip blank rows).
-      const limits: Record<string, { max_tokens_per_day: number }> = {};
-      for (const row of quotaRows) {
-        const id = row.connId.trim();
-        const n = parseInt(row.maxPerDay, 10);
-        if (id && Number.isFinite(n) && n > 0) {
-          limits[id] = { max_tokens_per_day: n };
-        }
+      if (scope === 'quotas') {
+        const payload = buildQuotaPayload(quotaRows);
+        await api.post('/api/smart-routing', payload);
+        smart.quota_limits = payload.quota_limits;
+        savedQuotas = JSON.stringify(payload);
+        showToast('Quota scope saved (applied live, no restart)', 'success');
+      } else {
+        await api.post('/api/smart-routing', buildPolicyPayload(smart));
+        savedPolicy = policyFingerprint;
+        showToast('Policy intelligence saved (applied live, no restart)', 'success');
       }
-      await api.post('/api/smart-routing', {
-        ml_router_enabled: smart.ml_router_enabled,
-        ml_router_cheap_model: smart.ml_router_cheap_model,
-        ml_router_expensive_model: smart.ml_router_expensive_model,
-        ml_router_threshold: smart.ml_router_threshold,
-        cost_quality_floor: smart.cost_quality_floor,
-        cost_expensive_anchor: smart.cost_expensive_anchor,
-        quota_limits: limits
-      });
-      smart.quota_limits = limits;
-      savedPolicy = policyFingerprint;
-      savedQuotas = quotasFingerprint;
-      showToast(`Routing ${section === 'quotas' ? 'quota' : 'policy'} scope saved (applied live, no restart)`, 'success');
     } catch (e: any) {
-      showToast(e.message || 'Failed to save smart routing config', 'error');
-    }
-    savingSmart = false;
+      showToast(e.message || `Failed to save ${scope} config`, 'error');
+      throw e;
+    } finally { savingSmart = false; }
   }
 
   function addQuotaRow() {
@@ -267,19 +258,24 @@
   }
 
   async function saveComboStrategies() {
+    for (const [comboId, strategy] of Object.entries(stagedStrategies)) {
+      await api.patch(`/api/routing/combos/${comboId}`, { strategy });
+    }
+    baseStrategies = { ...baseStrategies, ...stagedStrategies };
+    stagedStrategies = {};
+  }
+
+  async function saveCombos() {
     saving = true;
     try {
-      for (const [comboId, strategy] of Object.entries(stagedStrategies)) {
-        await api.patch(`/api/routing/combos/${comboId}`, { strategy });
-      }
-      baseStrategies = { ...baseStrategies, ...stagedStrategies };
-      stagedStrategies = {};
-      showToast('Combo strategy scope saved', 'success');
+      // Fail closed: reorder is never attempted after any strategy PATCH fails.
+      await saveComboStrategies();
+      if (orderDirty) await saveOrder();
+      showToast('Combo scope saved', 'success');
     } catch (e: any) {
-      error = e.message || 'Failed to update strategy';
-      showToast('Failed to save combo strategies', 'error');
-    }
-    saving = false;
+      error = e.message || 'Failed to save combo scope';
+      showToast('Combo save stopped; unsaved changes remain', 'error');
+    } finally { saving = false; }
   }
 
   async function savePolicy() {
@@ -287,7 +283,7 @@
     try {
       await api.post('/api/load-balancer', { strategy: stagedLbStrategy });
       loadBalancerStrategy = stagedLbStrategy;
-      await saveSmart();
+      await saveSmart('policies');
       savedPolicy = policyFingerprint;
       showToast('Policy scope saved', 'success');
     } catch (e: any) { error = e.message || 'Failed to save policy'; }
@@ -295,17 +291,10 @@
   }
 
   async function saveOrder() {
-    saving = true;
-    try {
-      const ordered = combos.map((c, i) => ({ id: c.id, order: i }));
-      await api.put('/api/routing/combos/reorder', { combos: ordered });
-      combos = combos.map((c, i) => ({ ...c, order: i }));
-      showToast('Order saved successfully', 'success');
-    } catch (e: any) {
-      error = e.message || 'Failed to save order';
-      showToast('Failed to save order', 'error');
-    }
-    saving = false;
+    const ordered = combos.map((c, i) => ({ id: c.id, order: i }));
+    await api.put('/api/routing/combos/reorder', { combos: ordered });
+    combos = combos.map((c, i) => ({ ...c, order: i }));
+    orderDirty = false;
   }
 
   function handleDragStart(index: number) {
@@ -323,6 +312,7 @@
       const [moved] = items.splice(draggedIndex, 1);
       items.splice(dragOverIndex, 0, moved);
       combos = items.map((c, i) => ({ ...c, order: i }));
+      orderDirty = true;
     }
     draggedIndex = null;
     dragOverIndex = null;
@@ -385,7 +375,7 @@
       </div>
       <div class="flex items-center gap-2">
         <button class="btn-secondary" onclick={section === 'quotas' ? discardQuotas : discardPolicies} disabled={savingSmart}>Discard</button>
-        <button class="btn-primary flex items-center gap-1.5" onclick={section === 'quotas' ? saveSmart : savePolicy} disabled={savingSmart}>
+        <button class="btn-primary flex items-center gap-1.5" onclick={() => section === 'quotas' ? saveSmart('quotas') : savePolicy()} disabled={savingSmart}>
           <Save size={14} stroke-width={2} />
           {savingSmart ? 'Saving...' : `Save ${section === 'quotas' ? 'Quotas' : 'Policies'}`}
         </button>
@@ -535,10 +525,10 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
-        {#if combosDirtyCount > 0}<button class="btn-secondary" onclick={discardCombos}>Discard strategy edits</button>{/if}
-        <button class="btn-primary flex items-center gap-1.5" onclick={async () => { await saveComboStrategies(); await saveOrder(); }} disabled={saving}>
+        {#if combosDirtyCount > 0 || orderDirty}<button class="btn-secondary" onclick={discardCombos}>Discard strategy edits</button>{/if}
+        <button class="btn-primary flex items-center gap-1.5" onclick={saveCombos} disabled={saving}>
           <Save size={14} stroke-width={2} />
-          {saving ? 'Saving...' : `Save Combos${combosDirtyCount ? ` (${combosDirtyCount})` : ''}`}
+          {saving ? 'Saving...' : `Save Combos${combosDirtyCount + (orderDirty ? 1 : 0) ? ` (${combosDirtyCount + (orderDirty ? 1 : 0)})` : ''}`}
         </button>
       </div>
     </div>

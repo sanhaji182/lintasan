@@ -47,10 +47,17 @@
       // is authoritative and preserves non-streaming Cloud Agent dispatch.
       const hasCloudAgentModels = rawModels.some((model: any) => model.provider_kind === 'cloud_agent');
       void hasCloudAgentModels;
-      availableModels = buildCallableCatalog({
-        models: rawModels, combos: combosRes?.data || combosRes?.combos || [],
+      const comboRows = combosRes?.data || combosRes?.combos || [];
+      const catalogRows = buildCallableCatalog({
+        models: rawModels, combos: comboRows,
         aliases: aliasesRes?.data || {}, connections: connectionsRes?.data || [],
       });
+      const cloudComboIDs = new Set(comboRows.filter((combo: any) =>
+        Array.isArray(combo.entries) && combo.entries.some((entry: any) => String(entry.model || '').startsWith('hoplite-'))
+      ).map((combo: any) => combo.name || combo.provider).filter(Boolean));
+      // A combo may not expose entries in /v1/models, so preserve its long-running
+      // capability explicitly; cloud-agent combos must never use SSE streaming.
+      availableModels = catalogRows.map(model => cloudComboIDs.has(model.id) ? { ...model, kind: 'cloud_agent', supportsStreaming: false } : model);
       try { recentModels = JSON.parse(localStorage.getItem('lintasan.recentModels') || '[]'); } catch { recentModels = []; }
       const remembered = localStorage.getItem('lintasan.lastModel') || '';
       const next = requestedModel || remembered || availableModels[0]?.id || 'gpt-4o';

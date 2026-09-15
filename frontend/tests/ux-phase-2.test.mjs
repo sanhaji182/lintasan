@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildCallableCatalog, filterCallableModels, groupCallableModels,
   rememberRecentModel, routingDirtyState, analyticsScope,
+  buildPolicyPayload, buildQuotaPayload, comboOrderFingerprint,
 } from '../src/lib/workflow-consolidation.ts';
 
 test('catalog combines aliases, combos, provider models and cloud agents without duplicate callable IDs', () => {
@@ -59,6 +60,34 @@ test('picker groups recommended/recent, routes, cloud agents and provider models
 
 test('routing dirty state reports each explicit save scope', () => {
   assert.deepEqual(routingDirtyState({ policy: true, combos: false, quotas: true }), { count: 2, scopes: ['Policies', 'Quotas'] });
+});
+
+test('policy and quota payloads never cross save scopes', () => {
+  const smart = {
+    ml_router_enabled: true,
+    ml_router_cheap_model: 'cheap',
+    ml_router_expensive_model: 'expensive',
+    ml_router_threshold: '0.7',
+    cost_quality_floor: '0.4',
+    cost_expensive_anchor: '0.03',
+    quota_limits: { old: { max_tokens_per_day: 1 } },
+  };
+  assert.deepEqual(buildPolicyPayload(smart), {
+    ml_router_enabled: true,
+    ml_router_cheap_model: 'cheap',
+    ml_router_expensive_model: 'expensive',
+    ml_router_threshold: '0.7',
+    cost_quality_floor: '0.4',
+    cost_expensive_anchor: '0.03',
+  });
+  assert.deepEqual(buildQuotaPayload([{ connId: ' alpha ', maxPerDay: '1200' }, { connId: '', maxPerDay: '3' }, { connId: 'bad', maxPerDay: '0' }]), {
+    quota_limits: { alpha: { max_tokens_per_day: 1200 } },
+  });
+});
+
+test('combo order fingerprint changes when rows are reordered', () => {
+  const rows = [{ id: 'a' }, { id: 'b' }];
+  assert.notEqual(comboOrderFingerprint(rows), comboOrderFingerprint([...rows].reverse()));
 });
 
 test('analytics scope explains a retained snapshot that differs from global counter', () => {
