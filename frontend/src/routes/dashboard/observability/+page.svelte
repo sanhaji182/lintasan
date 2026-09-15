@@ -31,6 +31,8 @@
     backend: string;
     avg_score?: number;
     search?: SearchMetrics;
+    collected_at?: string | number;
+    updated_at?: string | number;
   }
   interface ProcStats {
     goroutines: number | null;
@@ -58,6 +60,10 @@
   let httpSeries = $state<HttpSeries[]>([]);
   let cache = $state<CacheStats | null>(null);
   let metricsAvailable = $state(true);
+  let metricsHasData = $state(false);
+  type SourceState = 'loading' | 'available' | 'missing' | 'error';
+  let memoryState = $state<SourceState>('loading');
+  let metricsState = $state<SourceState>('loading');
   let memoryCollectedAt = $state<number | null>(null);
   let metricsCollectedAt = $state<number | null>(null);
   let memoryFailed = $state(false);
@@ -68,17 +74,21 @@
   // ── Prometheus text parser (minimal) ───────────────────────────────────
   // Parses the exposition format we serve at /metrics. We only need a handful
   // of families, so this stays small. Labels are parsed into a flat object.
-  function parseProm(text: string): { name: string; labels: Record<string, string>; value: number }[] {
-    const out: { name: string; labels: Record<string, string>; value: number }[] = [];
+  function parseProm(text: string): { name: string; labels: Record<string, string>; value: number; timestamp: number | null }[] {
+    const out: { name: string; labels: Record<string, string>; value: number; timestamp: number | null }[] = [];
     for (const raw of text.split('\n')) {
       const line = raw.trim();
       if (!line || line.startsWith('#')) continue;
-      const sp = line.lastIndexOf(' ');
-      if (sp < 0) continue;
-      const metric = line.slice(0, sp);
-      const valStr = line.slice(sp + 1);
+      const fields = line.split(/\s+/);
+      if (fields.length < 2) continue;
+      const metric = fields[0];
+      const valStr = fields[1];
       const value = valStr === '+Inf' ? Infinity : parseFloat(valStr);
       if (Number.isNaN(value)) continue;
+      const rawTimestamp = fields.length > 2 ? Number(fields[2]) : NaN;
+      const timestamp = Number.isFinite(rawTimestamp)
+        ? (rawTimestamp < 1_000_000_000_000 ? rawTimestamp * 1000 : rawTimestamp)
+        : null;
       const brace = metric.indexOf('{');
       let name = metric;
       const labels: Record<string, string> = {};
@@ -103,21 +113,36 @@
           labels[k] = v;
         }
       }
-      out.push({ name, labels, value });
+      out.push({ name, labels, value, timestamp });
     }
     return out;
   }
 
   async function loadAll() {
+    memoryState = 'loading';
+    metricsState = 'loading';
     // /v1/memory/stats already carries the search counters as JSON — primary
     // source so the page works even if /metrics is disabled.
     try {
-      memStats = await api.get<MemoryStats>('/v1/memory/stats');
-      search = memStats?.search ?? null;
-      memoryCollectedAt = Date.now();
-      memoryFailed = false;
+      const nextMemory = await api.get<MemoryStats>('/v1/memory/stats');
+      const validMemory = nextMemory
+        && typeof nextMemory.total_memories === 'number'
+        && typeof nextMemory.available === 'boolean'
+        && typeof nextMemory.backend === 'string';
+      if (!validMemory) {
+        memoryState = 'missing';
+        if (memStats == null) search = null;
+        memoryFailed = false;
+      } else {
+        memStats = nextMemory;
+        search = nextMemory.search ?? null;
+        memoryCollectedAt = sourceTimestamp(nextMemory.collected_at ?? nextMemory.updated_at);
+        memoryState = 'available';
+        memoryFailed = false;
+      }
     } catch {
       memoryFailed = true;
+      memoryState = 'error';
       if (memoryCollectedAt == null) { memStats = null; search = null; }
     }
 
@@ -125,12 +150,28 @@
     // we send the token anyway via api conventions; raw text fetch here.
     try {
       const res = await api.raw('/metrics');
-      if (!res.ok) { metricsAvailable = false; metricsFailed = true; freshnessNow = Date.now(); return; }
+      if (!res.ok) {
+        metricsFailed = true;
+        metricsState = 'error';
+        if (!metricsHasData) metricsAvailable = false;
+        freshnessNow = Date.now();
+        return;
+      }
       const text = await res.text();
       const samples = parseProm(text);
+      if (samples.length === 0) {
+        metricsState = 'missing';
+        metricsFailed = false;
+        if (!metricsHasData) metricsAvailable = false;
+        freshnessNow = Date.now();
+        return;
+      }
       metricsAvailable = true;
+      metricsHasData = true;
       metricsFailed = false;
-      metricsCollectedAt = Date.now();
+      metricsState = 'available';
+      const timestamps = samples.flatMap(sample => sample.timestamp == null ? [] : [sample.timestamp]);
+      metricsCollectedAt = timestamps.length > 0 ? Math.max(...timestamps) : null;
 
       const get1 = (n: string) => samples.find(s => s.name === n)?.value ?? null;
       proc = {
@@ -177,8 +218,9 @@
         if (sm.calls > 0 || sm.max_scan_rows > 0) search = sm;
       }
     } catch {
-      metricsAvailable = false;
       metricsFailed = true;
+      metricsState = 'error';
+      if (!metricsHasData) metricsAvailable = false;
     }
     freshnessNow = Date.now();
   }
@@ -219,10 +261,20 @@
   const memoryFreshness = $derived(sourceFreshness(memoryCollectedAt, freshnessNow, memoryFailed));
   const metricsFreshness = $derived(sourceFreshness(metricsCollectedAt, freshnessNow, metricsFailed));
 
-  function freshnessText(label: string, state: { state: 'fresh' | 'stale' | 'unknown'; ageMs: number | null }, failed: boolean): string {
-    if (state.ageMs == null) return `${label}: freshness unknown${failed ? ' · collection failed' : ''}`;
+  function sourceTimestamp(value: string | number | undefined): number | null {
+    if (value == null) return null;
+    const parsed = typeof value === 'number' ? value : Date.parse(value);
+    if (!Number.isFinite(parsed)) return null;
+    return parsed < 1_000_000_000_000 ? parsed * 1000 : parsed;
+  }
+
+  function freshnessText(label: string, sourceState: SourceState, state: { state: 'fresh' | 'stale' | 'unknown'; ageMs: number | null }, hasData: boolean): string {
+    if (sourceState === 'loading') return `${label}: loading${hasData ? ' · showing previous data' : ''}`;
+    if (sourceState === 'missing') return `${label}: missing · required payload fields absent`;
+    if (sourceState === 'error' && !hasData) return `${label}: error · no data`;
+    if (state.ageMs == null) return `${label}: ${sourceState === 'error' ? 'error · showing previous data · ' : 'available · '}freshness unknown`;
     const age = state.ageMs < 1000 ? 'just now' : `${Math.floor(state.ageMs / 1000)}s ago`;
-    return `${label}: ${state.state} · ${state.state === 'fresh' ? 'collected' : 'last collected'} ${age}${failed ? ' · latest collection failed' : ''}`;
+    return `${label}: ${state.state} · source updated ${age}${sourceState === 'error' ? ' · latest collection failed' : ''}`;
   }
 
   // Warning state: the H3-regression early warning the user asked for.
@@ -276,11 +328,17 @@
   </div>
 
   <div class="source-status" aria-live="polite">
-    <span class:stale={memoryFreshness.state !== 'fresh'}>{freshnessText('Memory stats', memoryFreshness, memoryFailed)}</span>
-    <span class:stale={metricsFreshness.state !== 'fresh'}>{freshnessText('Runtime metrics', metricsFreshness, metricsFailed)}</span>
+    <span class:stale={memoryState !== 'available' || memoryFreshness.state !== 'fresh'}>{freshnessText('Memory stats', memoryState, memoryFreshness, memStats != null)}</span>
+    <span class:stale={metricsState !== 'available' || metricsFreshness.state !== 'fresh'}>{freshnessText('Runtime metrics', metricsState, metricsFreshness, metricsHasData)}</span>
   </div>
-  {#if memoryFailed || metricsFailed}
-    <div class="partial-source-warning"><TriangleAlert size={15} /> Some observability sources failed during the latest collection. Available panels retain their last successful values and are marked stale.</div>
+  {#if memoryState === 'error' && metricsState === 'error' && memStats == null && !metricsHasData}
+    <div class="partial-source-warning"><TriangleAlert size={15} /> Observability unavailable: all sources failed.</div>
+  {:else if memoryState === 'error' && metricsState !== 'error'}
+    <div class="partial-source-warning"><TriangleAlert size={15} /> Partial observability data: memory stats failed. Runtime metrics remain available.</div>
+  {:else if metricsState === 'error' && memoryState !== 'error'}
+    <div class="partial-source-warning"><TriangleAlert size={15} /> Partial observability data: runtime metrics failed. Memory stats remain available.</div>
+  {:else if memoryState === 'missing' && metricsState === 'missing'}
+    <div class="partial-source-warning"><TriangleAlert size={15} /> Observability data is missing from both sources.</div>
   {/if}
 
   {#if loading}
