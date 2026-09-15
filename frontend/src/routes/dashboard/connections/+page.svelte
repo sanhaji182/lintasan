@@ -14,7 +14,7 @@
   import { showToast } from '$lib/toast';
   import { OAUTH_IDE_PRESETS, type OAuthIdePreset } from '$lib/oauthIdePresets';
   import { brandForProvider, logoPaths } from '$lib/oauthIdeBrands';
-  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers, ChevronRight, ChevronDown, Zap, CheckCircle2, AlertCircle, TriangleAlert } from 'lucide-svelte';
+  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, Cloud, ShieldAlert, Layers, ChevronRight, ChevronDown, Zap, CheckCircle2, AlertCircle, TriangleAlert } from 'lucide-svelte';
 
   let connections = $state<any[]>([]);
   let loading = $state(true);
@@ -81,6 +81,8 @@
   // Connection search/filter state
   let searchQuery = $state('');
   let openMenuConnId = $state<string | null>(null);
+  let addMenuOpen = $state(false);
+  let bulkMode = $state(false);
 
   type StatusFilter = 'all' | 'active' | 'inactive' | 'pooled';
   let statusFilter = $state<StatusFilter>('all');
@@ -231,6 +233,14 @@
 
   // Group connections by provider (base_url domain or pool_id)
   let collapsedGroups = $state<Set<string>>(new Set());
+  let initializedCompactGroups = $state(false);
+
+  $effect(() => {
+    if (!initializedCompactGroups && groupedConnections.length > 0) {
+      collapsedGroups = new Set(groupedConnections.map(group => group.key));
+      initializedCompactGroups = true;
+    }
+  });
 
   function extractProvider(url: string): string {
     try {
@@ -1438,41 +1448,22 @@
       </div>
     </div>
     <div class="conn-toolbar-right">
-      <button class="btn-secondary conn-toolbar-btn" onclick={() => { hopliteAccountForm = { id: '', name: '', credential: '' }; showHopliteAccountForm = !showHopliteAccountForm; }}><Plus size={15} /><span class="conn-toolbar-btn-label">Add Hoplite account</span></button>
-      <button 
-        class="btn-secondary conn-toolbar-btn flex items-center gap-1.5" 
-        onclick={() => startBulkTest('All Connections')} 
-        disabled={bulkTesting}
-        title="Test all connections"
-      >
-        <Zap size={14} style="color: var(--color-primary);" />
-        <span class="conn-toolbar-btn-label">Test All</span>
-      </button>
-      <button 
-        class="btn-secondary conn-toolbar-btn flex items-center gap-1.5" 
-        class:active={presetsExpanded}
-        onclick={() => presetsExpanded = !presetsExpanded}
-        title="Toggle preset provider catalogue"
-      >
-        <Sparkles size={14} style="color: var(--color-primary);" />
-        <span class="conn-toolbar-btn-label">Presets</span>
-      </button>
-      <button 
-        class="btn-secondary conn-toolbar-btn flex items-center gap-1.5" 
-        class:active={showCurlImport}
-        onclick={() => { showCurlImport = !showCurlImport; curlResult = null; }} 
-        title="Import from curl"
-      >
-        <Copy size={14} />
-        <span class="conn-toolbar-btn-label">Curl</span>
-      </button>
-      <button class="btn-secondary conn-toolbar-btn" onclick={() => { loading = true; fetchConnections(); fetchPools(); }} title="Refresh connections" aria-label="Refresh">
-        <RefreshCw size={15} />
-      </button>
-      <button class="btn-primary conn-toolbar-btn" onclick={() => showForm = !showForm}>
-        {#if showForm}<X size={15} />{:else}<Plus size={15} />{/if}
-        <span class="conn-toolbar-btn-label">{showForm ? 'Cancel' : 'Add Connection'}</span>
-      </button>
+      <button class="btn-secondary conn-toolbar-btn" class:active={bulkMode} onclick={() => bulkMode = !bulkMode} aria-pressed={bulkMode}><Zap size={14} /><span class="conn-toolbar-btn-label">{bulkMode ? 'Exit bulk mode' : 'Bulk mode'}</span></button>
+      {#if bulkMode}
+        <button class="btn-secondary conn-toolbar-btn flex items-center gap-1.5" onclick={() => startBulkTest('All Connections')} disabled={bulkTesting} title="Test all connections"><TestTube2 size={14} /><span class="conn-toolbar-btn-label">Test all</span></button>
+      {/if}
+      <button class="btn-secondary conn-toolbar-btn" onclick={() => { loading = true; fetchConnections(); fetchPools(); }} title="Refresh connections" aria-label="Refresh"><RefreshCw size={15} /></button>
+      <div class="group-actions-menu-container" style="position:relative">
+        <button class="btn-primary conn-toolbar-btn" onclick={() => addMenuOpen = !addMenuOpen} aria-haspopup="menu" aria-expanded={addMenuOpen}><Plus size={15} /><span class="conn-toolbar-btn-label">Add</span><ChevronDown size={13}/></button>
+        {#if addMenuOpen}
+          <div class="conn-dropdown add-menu" role="menu">
+            <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; showForm=true; }}><Link2 size={13}/> Provider API</button>
+            <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; hopliteAccountForm={id:'',name:'',credential:''}; showHopliteAccountForm=true; }}><Cloud size={13}/> Cloud Agent / Hoplite</button>
+            <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; showCurlImport=true; curlResult=null; }}><Copy size={13}/> Import curl</button>
+            <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; presetsExpanded=true; }}><Sparkles size={13}/> Provider preset</button>
+          </div>
+        {/if}
+      </div>
     </div>
   </div>
 
@@ -2879,7 +2870,12 @@
     border: 1px solid var(--color-border);
     border-radius: 12px;
     flex-wrap: wrap;
+    position: sticky;
+    top: calc(var(--header-h) + 8px);
+    z-index: 20;
+    box-shadow: var(--shadow-sm);
   }
+  .add-menu { right: 0; min-width: 205px; z-index: 30; }
   .conn-toolbar-left {
     display: flex;
     align-items: center;
