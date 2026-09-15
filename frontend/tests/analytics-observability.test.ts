@@ -44,6 +44,20 @@ describe('analytics scope presentation', () => {
     expect(screen.getByText(/all-recorded counter exceeds the retained rows by 8/i)).toBeInTheDocument();
   });
 
+  it('does not fabricate all-recorded reconciliation when dashboard stats fail', async () => {
+    get.mockImplementation(async (path: string) => {
+      if (path === '/api/dashboard/stats') throw new Error('stats offline');
+      return { data: Array.from({ length: 20 }, (_, i) => ({ id: `${i}`, input_tokens: 1, output_tokens: 2, latency_ms: 100, cached: 0, status: 200 })) };
+    });
+    render(AnalyticsPage);
+
+    expect(await screen.findByText(/Dashboard stats unavailable: stats offline/i)).toBeInTheDocument();
+    const totalRequestsCard = screen.getByText('Total Requests').closest('.card')!;
+    expect(within(totalRequestsCard as HTMLElement).getByText('20 retained request rows')).toBeInTheDocument();
+    expect(screen.queryByText(/independently collected counts match/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/gateway’s all-recorded counter/i)).not.toBeInTheDocument();
+  });
+
   it('shows a truthful missing-data state when both analytics sources fail', async () => {
     get.mockRejectedValue(new Error('offline'));
     render(AnalyticsPage);

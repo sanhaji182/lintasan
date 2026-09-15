@@ -37,6 +37,9 @@
   let logs = $state<LogEntry[]>([]);
   let loading = $state(true);
   let error = $state('');
+  let statsError = $state('');
+  let logsError = $state('');
+  let logsAvailable = $state(false);
   let eventSource: EventSource | null = null;
   let sseConnected = $state(false);
   let lastSseUpdate = $state<string | null>(null);
@@ -47,6 +50,8 @@
   async function loadAnalytics() {
     loading = true;
     error = '';
+    statsError = '';
+    logsError = '';
     try {
       const [statsResult, logsResult] = await Promise.allSettled([
         api.get<any>('/api/dashboard/stats'),
@@ -54,10 +59,11 @@
       ]);
       stats = statsResult.status === 'fulfilled' ? (statsResult.value?.data || statsResult.value || null) : null;
       logs = logsResult.status === 'fulfilled' ? (logsResult.value?.data || []) : [];
+      logsAvailable = logsResult.status === 'fulfilled';
+      if (statsResult.status === 'rejected') statsError = statsResult.reason?.message || 'unavailable';
+      if (logsResult.status === 'rejected') logsError = logsResult.reason?.message || 'unavailable';
       if (statsResult.status === 'rejected' && logsResult.status === 'rejected') {
-        const statsMessage = statsResult.reason?.message || 'unavailable';
-        const logsMessage = logsResult.reason?.message || 'unavailable';
-        error = `Dashboard stats: ${statsMessage}. Request logs: ${logsMessage}.`;
+        error = `Dashboard stats: ${statsError}. Request logs: ${logsError}.`;
       }
       retrievedAt = new Date();
     } catch (e: any) {
@@ -147,7 +153,8 @@
 
   let totalTokens = $derived(logs.reduce((s, l) => s + (l.input_tokens || 0) + (l.output_tokens || 0), 0));
   let avgLatency = $derived(logs.length > 0 ? Math.round(logs.reduce((s, l) => s + (l.latency_ms || 0), 0) / logs.length) : 0);
-  let scope = $derived(analyticsScope(stats?.total_requests ?? logs.length, logs.length));
+  let scope = $derived(stats && logsAvailable ? analyticsScope(stats.total_requests, logs.length) : null);
+  let retainedScopeLabel = $derived(logsAvailable ? `${logs.length} retained request rows` : 'Retained request rows unavailable');
 
   function formatLatency(ms: number): string {
     if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
@@ -181,16 +188,31 @@
     <div class="card"><EmptyState icon={TrendingUp} title="No analytics data" description="Analytics will appear once traffic flows through the gateway." /></div>
   {:else}
     <!-- Metric cards -->
-    <div class="scope-note" class:reconciled={scope.reconciled}>
-      <strong>Scope:</strong> Total Requests is the gateway’s all-recorded counter. Breakdowns below use {scope.snapshotLabel} returned by <code>/api/logs</code>. {scope.note}
+    {#if statsError || logsError}
+      <div class="scope-note">
+        <strong>Partial data:</strong>
+        {#if statsError}Dashboard stats unavailable: {statsError}.{/if}
+        {#if logsError}Request logs unavailable: {logsError}.{/if}
+        Metrics below use only the available source and do not claim reconciliation.
+      </div>
+    {/if}
+    <div class="scope-note" class:reconciled={scope?.reconciled === true}>
+      <strong>Scope:</strong>
+      {#if stats && logsAvailable}
+        Total Requests is the gateway’s all-recorded counter. Breakdowns below use {scope!.snapshotLabel} returned by <code>/api/logs</code>. {scope!.note}
+      {:else if stats}
+        Gateway counters use all recorded requests. Retained-row metrics are unavailable because <code>/api/logs</code> was not collected.
+      {:else}
+        Metrics use {retainedScopeLabel} returned by <code>/api/logs</code>. The all-recorded counter is unavailable.
+      {/if}
       {#if retrievedAt}<span> Retrieved {retrievedAt.toLocaleTimeString()}.</span>{/if}
     </div>
     <div class="grid gap-4" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 24px;">
       {#each [
-        { icon: Activity, label: 'Total Requests', value: (stats?.total_requests ?? logs.length).toLocaleString(), scope: stats ? scope.globalLabel : scope.snapshotLabel, color: 'var(--color-primary)' },
-        { icon: Database, label: 'Total Tokens', value: totalTokens.toLocaleString(), scope: scope.snapshotLabel, color: 'var(--color-success)' },
-        { icon: Zap, label: 'Cache Hit Rate', value: (stats?.cache_hit_rate ?? (logs.length > 0 ? Math.round((statusBreakdown.cached / logs.length) * 100) : 0)) + '%', scope: stats ? scope.globalLabel : scope.snapshotLabel, color: 'var(--color-info)' },
-        { icon: Clock, label: 'Avg Latency', value: formatLatency(stats?.avg_latency ?? avgLatency), scope: stats ? scope.globalLabel : scope.snapshotLabel, color: 'var(--color-warning)' }
+        { icon: Activity, label: 'Total Requests', value: (stats?.total_requests ?? logs.length).toLocaleString(), scope: stats ? 'All recorded requests' : retainedScopeLabel, color: 'var(--color-primary)' },
+        { icon: Database, label: 'Total Tokens', value: logsAvailable ? totalTokens.toLocaleString() : '—', scope: retainedScopeLabel, color: 'var(--color-success)' },
+        { icon: Zap, label: 'Cache Hit Rate', value: stats ? stats.cache_hit_rate + '%' : (logsAvailable && logs.length > 0 ? Math.round((statusBreakdown.cached / logs.length) * 100) + '%' : '—'), scope: stats ? 'All recorded requests' : retainedScopeLabel, color: 'var(--color-info)' },
+        { icon: Clock, label: 'Avg Latency', value: stats ? formatLatency(stats.avg_latency) : (logsAvailable && logs.length > 0 ? formatLatency(avgLatency) : '—'), scope: stats ? 'All recorded requests' : retainedScopeLabel, color: 'var(--color-warning)' }
       ] as m}
         <div class="card" style="padding: 18px; position: relative; overflow: hidden;">
           <div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: {m.color};"></div>
