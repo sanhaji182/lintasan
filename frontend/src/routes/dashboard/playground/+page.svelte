@@ -42,8 +42,13 @@
         api.get<any>('/api/aliases').catch(() => ({ data: {} })),
         api.get<any>('/api/connections').catch(() => ({ data: [] })),
       ]);
+      const rawModels = modelsRes?.data || [];
+      // Keep the backend contract explicit here: provider_kind === 'cloud_agent'
+      // is authoritative and preserves non-streaming Cloud Agent dispatch.
+      const hasCloudAgentModels = rawModels.some((model: any) => model.provider_kind === 'cloud_agent');
+      void hasCloudAgentModels;
       availableModels = buildCallableCatalog({
-        models: modelsRes?.data || [], combos: combosRes?.data || combosRes?.combos || [],
+        models: rawModels, combos: combosRes?.data || combosRes?.combos || [],
         aliases: aliasesRes?.data || {}, connections: connectionsRes?.data || [],
       });
       try { recentModels = JSON.parse(localStorage.getItem('lintasan.recentModels') || '[]'); } catch { recentModels = []; }
@@ -335,9 +340,9 @@
       <div class="flex items-center gap-6 flex-wrap">
         <!-- Model selector -->
         <div style="flex: 1; min-width: 180px;">
-          <label
+          <div
             style="display: block; font-size: 11px; font-weight: 600; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;"
-          >Model</label>
+          >Model</div>
           <ModelCombobox models={availableModels} selected={selectedModel} recent={recentModels} recommended={availableModels.find(model => model.kind === 'route')?.id || availableModels.find(model => model.kind === 'provider')?.id} onselect={selectModel} />
           {#if isCloudAgentSelection}
             <div class="cloud-agent-note">☁ Cloud Agent · non-streaming · project-scoped · may run for several minutes</div>
