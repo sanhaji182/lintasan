@@ -280,14 +280,28 @@
 
   async function savePolicy() {
     savingSmart = true;
+    const previousStrategy = loadBalancerStrategy;
     try {
       await api.post('/api/load-balancer', { strategy: stagedLbStrategy });
       loadBalancerStrategy = stagedLbStrategy;
       await saveSmart('policies');
       savedPolicy = policyFingerprint;
       showToast('Policy scope saved', 'success');
-    } catch (e: any) { error = e.message || 'Failed to save policy'; }
-    savingSmart = false;
+    } catch (e: any) {
+      if (loadBalancerStrategy !== previousStrategy) {
+        try {
+          await api.post('/api/load-balancer', { strategy: previousStrategy });
+          loadBalancerStrategy = previousStrategy;
+        } catch (rollbackError: any) {
+          error = `Policy save failed and load-balancer rollback failed: ${rollbackError.message || 'unknown error'}`;
+          showToast(error, 'error');
+          savingSmart = false;
+          return;
+        }
+      }
+      error = e.message || 'Failed to save policy';
+      showToast(`Policy save failed; previous load-balancer strategy restored. ${error}`, 'error');
+    } finally { savingSmart = false; }
   }
 
   async function saveOrder() {
