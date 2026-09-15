@@ -10,6 +10,39 @@ import (
 	"time"
 )
 
+func TestClientBillingUsageUsesAPIKeyAndParsesCreditsAndExpiry(t *testing.T) {
+	const key = "hop_test_secret"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Api-Key"); got != key {
+			t.Fatalf("X-Api-Key = %q, want test key", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/billing/summary":
+			_, _ = w.Write([]byte(`{"ok":true,"billing":{"available":true,"grantedCredits":300,"usedCredits":12.5,"heldCredits":1,"includedCredits":300,"remainingIncludedCredits":286.5,"prepaidCredits":0,"remainingCredits":286.5,"nextResetAt":"2026-09-24T13:41:20Z"}}`))
+		case "/api/billing/plan":
+			_, _ = w.Write([]byte(`{"ok":true,"plan":{"plan":"pro","billingInterval":"annual","seatCount":3}}`))
+		case "/api/billing/subscription":
+			_, _ = w.Write([]byte(`{"ok":true,"subscription":{"configured":true,"plan":"pro","status":"trialing","trialExpiresAt":"2026-09-24T13:41:20Z","currentPeriodEnd":"2026-09-24T13:41:20Z","entitlementActive":true}}`))
+		default:
+			t.Fatalf("unexpected billing path %s", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	client := NewClient(upstream.URL, key, upstream.Client())
+	usage, err := client.GetBillingUsage(context.Background())
+	if err != nil {
+		t.Fatalf("GetBillingUsage: %v", err)
+	}
+	if usage.RemainingCredits != 286.5 || usage.GrantedCredits != 300 || usage.UsedCredits != 12.5 {
+		t.Fatalf("credits = %#v", usage)
+	}
+	if usage.Plan != "pro" || usage.SubscriptionStatus != "trialing" || usage.ExpiresAt != "2026-09-24T13:41:20Z" {
+		t.Fatalf("plan/expiry = %#v", usage)
+	}
+}
+
 func TestClientListProjectsUsesAPIKeyAndParsesResponse(t *testing.T) {
 	const key = "hop_test_secret"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

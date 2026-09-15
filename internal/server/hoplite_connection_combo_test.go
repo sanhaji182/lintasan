@@ -107,6 +107,42 @@ func TestHopliteDiscoveredModelsExposeVirtualCatalog(t *testing.T) {
 	}
 }
 
+func TestHopliteBalanceExposesCreditsLimitAndDaysRemaining(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/billing/summary":
+			_, _ = w.Write([]byte(`{"ok":true,"billing":{"available":true,"grantedCredits":300,"usedCredits":12.5,"remainingCredits":287.5,"nextResetAt":"2099-01-20T00:00:00Z"}}`))
+		case "/api/billing/plan":
+			_, _ = w.Write([]byte(`{"ok":true,"plan":{"plan":"pro","billingInterval":"annual","seatCount":3}}`))
+		case "/api/billing/subscription":
+			_, _ = w.Write([]byte(`{"ok":true,"subscription":{"status":"trialing","trialExpiresAt":"2099-01-20T00:00:00Z"}}`))
+		default:
+			t.Fatalf("unexpected billing path %s", r.URL.Path)
+		}
+	}))
+	defer upstream.Close()
+
+	s, ts := newTestServer(t, &config.Config{MasterKey: "test-master-key-1234567890"})
+	s.hopliteBaseURL, s.hopliteHTTPClient = upstream.URL, upstream.Client()
+	if err := s.credStore().SetCredential(context.Background(), "hoplite", "hop_test"); err != nil {
+		t.Fatal(err)
+	}
+	token := makeKnownAdmin(t, s, "balance-cloud-admin", "correct horse battery")
+	resp := hopliteRequest(t, ts, http.MethodGet, "/api/connections/balances", "", token)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("balance status=%d body=%s", resp.StatusCode, body)
+	}
+	encoded := string(body)
+	for _, want := range []string{`"id":"hoplite-cloud-agent"`, `"balance":"287.50 credits"`, `"total_used":"12.50 credits"`, `"plan_type":"pro · trialing"`, `"days_remaining":`, `"expires_at":"2099-01-20T00:00:00Z"`} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("Hoplite balance missing %q: %s", want, body)
+		}
+	}
+}
+
 func TestHopliteMaskedCredentialPlaceholderNeverOverwritesStoredSecret(t *testing.T) {
 	s, ts := newTestServer(t, &config.Config{MasterKey: "test-master-key-1234567890"})
 	token := makeKnownAdmin(t, s, "masked-cloud-admin", "correct horse battery")

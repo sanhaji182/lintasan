@@ -133,6 +133,65 @@ func NewClient(baseURL, apiKey string, httpClient *http.Client) *Client {
 	return &Client{baseURL: baseURL, apiKey: strings.TrimSpace(apiKey), httpClient: httpClient}
 }
 
+type BillingUsage struct {
+	Available          bool    `json:"available"`
+	GrantedCredits     float64 `json:"grantedCredits"`
+	UsedCredits        float64 `json:"usedCredits"`
+	HeldCredits        float64 `json:"heldCredits"`
+	IncludedCredits    float64 `json:"includedCredits"`
+	RemainingCredits   float64 `json:"remainingCredits"`
+	NextResetAt        string  `json:"nextResetAt,omitempty"`
+	Plan               string  `json:"plan,omitempty"`
+	BillingInterval    string  `json:"billingInterval,omitempty"`
+	SeatCount          int     `json:"seatCount,omitempty"`
+	SubscriptionStatus string  `json:"subscriptionStatus,omitempty"`
+	ExpiresAt          string  `json:"expiresAt,omitempty"`
+}
+
+type billingSummaryEnvelope struct {
+	Billing BillingUsage `json:"billing"`
+}
+
+type billingPlanEnvelope struct {
+	Plan struct {
+		Plan            string `json:"plan"`
+		BillingInterval string `json:"billingInterval"`
+		SeatCount       int    `json:"seatCount"`
+	} `json:"plan"`
+}
+
+type billingSubscriptionEnvelope struct {
+	Subscription struct {
+		Status           string `json:"status"`
+		TrialExpiresAt   string `json:"trialExpiresAt"`
+		CurrentPeriodEnd string `json:"currentPeriodEnd"`
+	} `json:"subscription"`
+}
+
+// GetBillingUsage reads the same read-only billing resources used by Hoplite's
+// own web app. Organization API keys are accepted by these endpoints today;
+// callers must treat authorization failures as unavailable rather than infer.
+func (c *Client) GetBillingUsage(ctx context.Context) (BillingUsage, error) {
+	var summary billingSummaryEnvelope
+	if _, err := c.do(ctx, http.MethodGet, "/api/billing/summary", nil, &summary); err != nil {
+		return BillingUsage{}, err
+	}
+	usage := summary.Billing
+	var plan billingPlanEnvelope
+	if _, err := c.do(ctx, http.MethodGet, "/api/billing/plan", nil, &plan); err == nil {
+		usage.Plan, usage.BillingInterval, usage.SeatCount = plan.Plan.Plan, plan.Plan.BillingInterval, plan.Plan.SeatCount
+	}
+	var subscription billingSubscriptionEnvelope
+	if _, err := c.do(ctx, http.MethodGet, "/api/billing/subscription", nil, &subscription); err == nil {
+		usage.SubscriptionStatus = subscription.Subscription.Status
+		usage.ExpiresAt = subscription.Subscription.TrialExpiresAt
+		if strings.TrimSpace(usage.ExpiresAt) == "" {
+			usage.ExpiresAt = subscription.Subscription.CurrentPeriodEnd
+		}
+	}
+	return usage, nil
+}
+
 func (c *Client) ListProjects(ctx context.Context) ([]Project, ResponseMeta, error) {
 	var envelope struct {
 		Projects []Project `json:"projects"`

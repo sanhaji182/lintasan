@@ -105,6 +105,7 @@
     if (name === '5-hour') return '🕐 5h';
     if (name === 'weekly') return '📅 Week';
     if (name === 'daily') return '📅 Day';
+    if (name === 'credits') return '💳 Credits';
     return name;
   }
 
@@ -2180,6 +2181,9 @@
                           {#each balances[conn.id].rate_windows as win}
                             <span class="conn-limit-seg">{winLabel(win.name)} {Math.round(win.used)}/{Math.round(win.cap)}</span>
                           {/each}
+                          {#if balances[conn.id].days_remaining > 0}
+                            <span class="conn-limit-seg">⏳ {balances[conn.id].days_remaining}d left</span>
+                          {/if}
                           <span class="conn-limit-chev" class:open={expandedBalance === conn.id}><ChevronDown size={11} /></span>
                         </button>
                       {:else if balances[conn.id]?.balance}
@@ -2276,8 +2280,11 @@
                         {#if balances[conn.id].plan_type}
                           <span class="conn-balance-plan">{balances[conn.id].plan_type}</span>
                         {/if}
+                        {#if balances[conn.id].total_used}
+                          <span class="conn-balance-reset">Used {balances[conn.id].total_used}</span>
+                        {/if}
                         {#if balances[conn.id].billing_reset}
-                          <span class="conn-balance-reset">📅 Resets {balances[conn.id].billing_reset}</span>
+                          <span class="conn-balance-reset">📅 {balances[conn.id].days_remaining > 0 ? `${balances[conn.id].days_remaining} days left · ` : ''}{balances[conn.id].billing_reset}</span>
                         {/if}
                       </div>
                       <div class="conn-balance-windows">

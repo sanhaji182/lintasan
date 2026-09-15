@@ -1,9 +1,11 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -38,9 +40,11 @@ type BalanceInfo struct {
 	Error        string `json:"error,omitempty"` // Error message if fetch failed
 
 	// Structured fields (populated for CommandCode, empty for others)
-	RateWindows  []RateWindow `json:"rate_windows,omitempty"`
-	Usage        *UsageStats  `json:"usage,omitempty"`
-	BillingReset string       `json:"billing_reset,omitempty"` // e.g., "Jul 28"
+	RateWindows   []RateWindow `json:"rate_windows,omitempty"`
+	Usage         *UsageStats  `json:"usage,omitempty"`
+	BillingReset  string       `json:"billing_reset,omitempty"` // e.g., "Jul 28"
+	ExpiresAt     string       `json:"expires_at,omitempty"`
+	DaysRemaining int          `json:"days_remaining,omitempty"`
 }
 
 // balanceCache caches balance info per connection ID to avoid spamming providers.
@@ -178,10 +182,50 @@ func (s *Server) handleGetAllBalances(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
+	// Hoplite is a virtual connection backed by the encrypted credential store,
+	// so it is not returned by the connections table query above.
+	if key, ok := s.hopliteCredential(r.Context()); ok {
+		info := s.fetchHopliteBalance(r.Context(), key)
+		results = append(results, result{ID: hopliteConnectionID, Data: info})
+	}
+
 	if results == nil {
 		results = []result{}
 	}
 	writeBalanceJSON(w, http.StatusOK, map[string]any{"data": results})
+}
+
+func (s *Server) fetchHopliteBalance(ctx context.Context, apiKey string) BalanceInfo {
+	usage, err := s.newHopliteClient(apiKey, 10*time.Second).GetBillingUsage(ctx)
+	info := BalanceInfo{ProviderType: "hoplite", Currency: "credits", UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
+	if err != nil {
+		info.Error = "billing details unavailable via Hoplite API key"
+		return info
+	}
+	info.Balance = fmt.Sprintf("%.2f credits", usage.RemainingCredits)
+	info.TotalUsed = fmt.Sprintf("%.2f credits", usage.UsedCredits)
+	info.PlanType = strings.TrimSpace(usage.Plan)
+	if strings.TrimSpace(usage.SubscriptionStatus) != "" {
+		if info.PlanType != "" {
+			info.PlanType += " · "
+		}
+		info.PlanType += usage.SubscriptionStatus
+	}
+	info.ExpiresAt = strings.TrimSpace(usage.ExpiresAt)
+	if info.ExpiresAt == "" {
+		info.ExpiresAt = strings.TrimSpace(usage.NextResetAt)
+	}
+	if expiry, parseErr := time.Parse(time.RFC3339, info.ExpiresAt); parseErr == nil {
+		remaining := time.Until(expiry)
+		if remaining > 0 {
+			info.DaysRemaining = int(math.Ceil(remaining.Hours() / 24))
+		}
+		info.BillingReset = expiry.UTC().Format("Jan 2, 2006")
+	}
+	if usage.GrantedCredits > 0 {
+		info.RateWindows = []RateWindow{{Name: "credits", Used: usage.UsedCredits, Cap: usage.GrantedCredits, Exceeded: usage.RemainingCredits <= 0}}
+	}
+	return info
 }
 
 // fetchProviderBalance detects the provider from the base URL and fetches balance info.
