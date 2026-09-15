@@ -5,6 +5,7 @@
     { label: 'Fallback', path: '/dashboard/fallback' }
   ];
   import { onMount } from 'svelte';
+  import { beforeNavigate } from '$app/navigation';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -32,6 +33,11 @@
     id: string;
     alias: string;
     target: string;
+  }
+  const BUILT_IN_ALIAS_IDS = new Set(['auto', 'auto/coding', 'auto/fast', 'auto/cheap']);
+
+  function isBuiltInAlias(id: string) {
+    return BUILT_IN_ALIAS_IDS.has(id);
   }
 
   let combos = $state<Combo[]>([]);
@@ -74,9 +80,8 @@
   let quotaRows = $state<Array<{ connId: string; maxPerDay: string }>>([]);
 
   // ── Explicit sections + save scopes ────────────────────────────────────
-  // The page is split into three independently-savable scopes. Nothing PATCHes
-  // or POSTs on its own: every mutation is staged locally first and reported in
-  // the sticky dirty bar, so an operator always knows what a Save will apply.
+  // The page is split into three independently-savable scopes. Policy, combo,
+  // and quota mutations are staged locally; aliases are explicitly immediate.
   type Section = 'policies' | 'combos' | 'quotas';
   let section = $state<Section>('policies');
   const SECTIONS: { key: Section; label: string; help: string }[] = [
@@ -100,6 +105,24 @@
     combos: combosDirtyCount > 0 || orderDirty,
     quotas: savedQuotas !== '' && quotasFingerprint !== savedQuotas,
   }));
+
+  const unsavedWarning = 'You have unsaved routing changes. Leave this page and discard them?';
+
+  beforeNavigate((navigation) => {
+    // Native unload confirmation is handled by beforeunload below. Prompt here
+    // only for client-side navigation so users never see two dialogs.
+    if (!navigation.willUnload && dirty.count > 0 && !window.confirm(unsavedWarning)) navigation.cancel();
+  });
+
+  onMount(() => {
+    const protectRefresh = (event: BeforeUnloadEvent) => {
+      if (dirty.count === 0) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', protectRefresh);
+    return () => window.removeEventListener('beforeunload', protectRefresh);
+  });
 
   function discardPolicies() {
     stagedLbStrategy = loadBalancerStrategy;
@@ -340,6 +363,7 @@
         target: newTarget.trim()
       });
       aliases = [...aliases, data.alias];
+      showToast(`Alias “${data.alias.alias}” created and applied immediately`, 'success');
       newAlias = '';
       newTarget = '';
       showAliasForm = false;
@@ -349,9 +373,11 @@
   }
 
   async function deleteAlias(id: string) {
+    if (isBuiltInAlias(id)) return;
     try {
       await api.delete(`/api/routing/aliases/${id}`);
       aliases = aliases.filter(a => a.id !== id);
+      showToast(`Alias “${id}” deleted immediately`, 'success');
     } catch (e: any) {
       error = e.message || 'Failed to delete alias';
     }
@@ -665,7 +691,7 @@
         </div>
         <div>
           <div style="font-size: 15px; font-weight: 600; color: var(--color-fg-0);">Model Aliases</div>
-          <div style="font-size: 12px; color: var(--color-fg-3);">Map friendly names to actual model identifiers.</div>
+          <div style="font-size: 12px; color: var(--color-fg-3);">Map friendly names to actual model identifiers. Alias changes apply immediately and do not use Save Combos.</div>
         </div>
       </div>
       <button
@@ -693,7 +719,7 @@
             placeholder="Target model (e.g. gpt-4-turbo-preview)"
             bind:value={newTarget}
           />
-          <button class="btn-primary" onclick={addAlias}>
+          <button class="btn-primary" onclick={addAlias} aria-label="Create alias">
             <Plus size={14} stroke-width={2} />
           </button>
           <button class="btn-secondary" onclick={() => { showAliasForm = false; newAlias = ''; newTarget = ''; }}>
@@ -728,14 +754,17 @@
                 <span class="font-mono" style="font-size: 13px; color: var(--color-fg-2);">{alias.target}</span>
               </div>
             </div>
-            <button
-              class="btn-icon"
-              style="color: var(--color-error);"
-              onclick={() => deleteAlias(alias.id)}
-              title="Delete alias"
-            >
-              <Trash2 size={14} />
-            </button>
+            {#if !isBuiltInAlias(alias.id)}
+              <button
+                class="btn-icon"
+                style="color: var(--color-error);"
+                onclick={() => deleteAlias(alias.id)}
+                title="Delete alias"
+                aria-label={`Delete alias ${alias.alias}`}
+              >
+                <Trash2 size={14} />
+              </button>
+            {/if}
           </div>
         {/each}
       </div>
