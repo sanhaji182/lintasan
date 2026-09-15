@@ -23,7 +23,11 @@ type cloudComboTarget struct {
 }
 
 func isCloudAgentModel(model string) bool {
-	return strings.HasPrefix(model, "hoplite-agent/") || strings.HasPrefix(model, "hoplite-model/v1/")
+	return strings.HasPrefix(model, "hoplite-agent/") || strings.HasPrefix(model, "hoplite-model/v1/") || strings.HasPrefix(model, "hoplite-model/v2/")
+}
+
+func isHopliteConnectionID(id string) bool {
+	return id == hopliteConnectionID || strings.HasPrefix(id, hopliteConnectionID+"-")
 }
 
 // comboContainsCloudAgent recognizes capability kind from either the stable
@@ -37,7 +41,7 @@ func comboContainsCloudAgent(db *sql.DB, combo map[string]any) bool {
 		}
 		for _, rawID := range asSlice(entry["connection_ids"]) {
 			id := fmt.Sprint(rawID)
-			if id == hopliteConnectionID {
+			if isHopliteConnectionID(id) {
 				return true
 			}
 			var kind string
@@ -78,7 +82,7 @@ func (s *Server) cloudComboTargets(name string) ([]cloudComboTarget, bool) {
 				id := fmt.Sprint(rawID)
 				kind := providerKindLLM
 				_ = s.db.Conn().QueryRow(`SELECT COALESCE(provider_kind,'llm') FROM connections WHERE id=?`, id).Scan(&kind)
-				if isCloudAgentModel(model) || id == hopliteConnectionID {
+				if isCloudAgentModel(model) || isHopliteConnectionID(id) {
 					kind = providerKindCloudAgent
 				}
 				targets = append(targets, cloudComboTarget{Model: model, ConnectionID: id, Kind: kind})
@@ -141,6 +145,11 @@ func (s *Server) handleCloudAgentCombo(w http.ResponseWriter, r *http.Request, m
 	for _, target := range targets {
 		buf := &bufferedResponseWriter{header: make(http.Header)}
 		if target.Kind == providerKindCloudAgent {
+			if accountID, _, _, _, ok := parseHopliteRoutedModelID(target.Model); !ok || accountID != target.ConnectionID {
+				last = buf
+				writeOpenAIError(buf, http.StatusServiceUnavailable, "hoplite_account_mismatch", "Hoplite model does not belong to the selected account")
+				continue
+			}
 			s.handleHopliteCompletion(buf, r, target.Model, false, messages)
 			last = buf
 			if buf.Header().Get("X-Lintasan-Agent-Accepted") == "true" || buf.Header().Get("X-Lintasan-Agent-Acceptance-Uncertain") == "true" || (buf.status >= 200 && buf.status < 300) {

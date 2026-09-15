@@ -318,12 +318,17 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
     var in map[string]any; json.NewDecoder(r.Body).Decode(&in)
     // Hoplite is virtual and returns a standard connection-test envelope so the
     // Connections page can show status/count instead of "unknown".
-    if id,_:=in["id"].(string); id==hopliteConnectionID {
-        client, ok := s.hopliteClient(w, r)
-        if !ok { return }
+    if id,_:=in["id"].(string); isHopliteConnectionID(id) {
+        account, exists := s.hopliteAccountByID(r.Context(), id)
+        if !exists || account.IsActive != 1 { writeJSONStatus(w,http.StatusServiceUnavailable,map[string]any{"error":"Hoplite account is inactive or unavailable"}); return }
+        key, ok := s.hopliteCredentialForAccount(r.Context(), id)
+        if !ok { writeJSONStatus(w,http.StatusPreconditionFailed,map[string]any{"error":"Hoplite credential is not configured"}); return }
+        client := s.newHopliteClient(key, 0)
         started := time.Now()
         projects, _, err := client.ListProjects(r.Context())
-        if err != nil { writeHopliteError(w, err); return }
+        now:=time.Now().UTC().Format(time.RFC3339)
+        if err != nil { _,_=s.db.Conn().Exec(`UPDATE hoplite_accounts SET health_status='unhealthy',last_tested_at=?,last_error=? WHERE id=?`,now,"connection test failed",id); writeHopliteError(w, err); return }
+        _,_=s.db.Conn().Exec(`UPDATE hoplite_accounts SET health_status='healthy',last_tested_at=?,last_error='' WHERE id=?`,now,id)
         writeJSON(w, map[string]any{
             "success": true, "message": "Hoplite connected",
             "latency_ms": time.Since(started).Milliseconds(),
@@ -799,8 +804,8 @@ func (s *Server) handleModelsSyncByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleModelsDiscovered(w http.ResponseWriter, r *http.Request) {
     connID := r.URL.Query().Get("connection_id")
-    if connID == hopliteConnectionID {
-        key, ok := s.hopliteCredential(r.Context())
+    if isHopliteConnectionID(connID) {
+        key, ok := s.hopliteCredentialForAccount(r.Context(),connID)
         if !ok {
             writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "Hoplite credential is not configured"})
             return
@@ -810,10 +815,11 @@ func (s *Server) handleModelsDiscovered(w http.ResponseWriter, r *http.Request) 
         out := []map[string]any{}
         for _, project := range projects {
             if strings.TrimSpace(project.ID)=="" { continue }
-            out=append(out,map[string]any{"id":"hoplite-agent/"+project.ID,"model_id":"hoplite-agent/"+project.ID,"model_name":project.Name+" · Project default","owned_by":"Hoplite Agent","is_active":1,"provider_kind":providerKindCloudAgent,"supports_streaming":false,"long_running":true,"project_scoped":true})
+            projectModelID:=hopliteProjectModelIDForAccount(connID,project.ID)
+            out=append(out,map[string]any{"id":projectModelID,"model_id":projectModelID,"model_name":project.Name+" · Project default","owned_by":"Hoplite Agent","connection_id":connID,"is_active":1,"provider_kind":providerKindCloudAgent,"supports_streaming":false,"long_running":true,"project_scoped":true})
             for _, model := range hoplite.Models() {
-                id:=hopliteSelectedModelID(project.ID,model.ID)
-                out=append(out,map[string]any{"id":id,"model_id":id,"model_name":model.DisplayName,"owned_by":"Hoplite Agent","is_active":1,"provider_kind":providerKindCloudAgent,"supports_streaming":false,"long_running":true,"project_scoped":true})
+                id:=hopliteSelectedModelIDForAccount(connID,project.ID,model.ID)
+                out=append(out,map[string]any{"id":id,"model_id":id,"model_name":model.DisplayName,"owned_by":"Hoplite Agent","connection_id":connID,"is_active":1,"provider_kind":providerKindCloudAgent,"supports_streaming":false,"long_running":true,"project_scoped":true})
             }
         }
         writeData(w,out)

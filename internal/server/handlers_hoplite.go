@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -20,6 +19,10 @@ const (
 )
 
 func (s *Server) registerHopliteRoutes() {
+	s.mux.HandleFunc("GET /api/experimental/cloud-agents/hoplite/accounts", s.handleHopliteAccounts)
+	s.mux.HandleFunc("POST /api/experimental/cloud-agents/hoplite/accounts", s.handleHopliteAccountCreate)
+	s.mux.HandleFunc("PATCH /api/experimental/cloud-agents/hoplite/accounts/{id}", s.handleHopliteAccountPatch)
+	s.mux.HandleFunc("DELETE /api/experimental/cloud-agents/hoplite/accounts/{id}", s.handleHopliteAccountDelete)
 	s.mux.HandleFunc("GET /api/experimental/cloud-agents/hoplite/status", s.handleHopliteStatus)
 	s.mux.HandleFunc("POST /api/experimental/cloud-agents/hoplite/test", s.handleHopliteTest)
 	s.mux.HandleFunc("GET /api/experimental/cloud-agents/hoplite/projects", s.handleHopliteProjects)
@@ -33,15 +36,27 @@ func (s *Server) handleHopliteStatus(w http.ResponseWriter, r *http.Request) {
 	if !requireCredentialManager(w, r) {
 		return
 	}
-	status := s.credStore().GetStatus(r.Context(), hopliteCredentialName, hopliteCredentialEnv)
+	accountID := strings.TrimSpace(r.URL.Query().Get("account_id"))
+	if accountID == "" || accountID == hopliteConnectionID {
+		status := s.credStore().GetStatus(r.Context(), hopliteCredentialName, hopliteCredentialEnv)
+		writeData(w, map[string]any{
+			"account_id": accountID, "configured": status.Configured, "source": status.Source,
+			"masked_value": status.MaskedValue, "env_var": status.EnvVar, "updated_at": status.UpdatedAt,
+			"mode": "cloud-agent", "routing": "isolated",
+		})
+		return
+	}
+	account, exists := s.hopliteAccountByID(r.Context(), accountID)
+	if !exists {
+		writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "Hoplite account not found"})
+		return
+	}
+	status := s.credStore().GetStatus(r.Context(), account.CredentialName, "")
 	writeData(w, map[string]any{
-		"configured":   status.Configured,
-		"source":       status.Source,
-		"masked_value": status.MaskedValue,
-		"env_var":      status.EnvVar,
-		"updated_at":   status.UpdatedAt,
-		"mode":         "cloud-agent",
-		"routing":      "isolated",
+		"account_id": account.ID, "name": account.Name, "is_active": account.IsActive,
+		"health_status": account.HealthStatus, "last_tested_at": account.LastTestedAt,
+		"configured": status.Configured, "source": status.Source, "masked_value": status.MaskedValue,
+		"updated_at": status.UpdatedAt, "mode": "cloud-agent", "routing": "isolated",
 	})
 }
 
@@ -55,12 +70,20 @@ func (s *Server) handleHopliteTest(w http.ResponseWriter, r *http.Request) {
 	}
 	started := time.Now()
 	projects, meta, err := client.ListProjects(r.Context())
+	accountID := strings.TrimSpace(r.URL.Query().Get("account_id"))
+	if accountID == "" {
+		accountID = hopliteConnectionID
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
 	if err != nil {
+		_, _ = s.db.Conn().ExecContext(r.Context(), `UPDATE hoplite_accounts SET health_status='unhealthy',last_tested_at=?,last_error=?,updated_at=? WHERE id=?`, now, "connection test failed", now, accountID)
 		writeHopliteError(w, err)
 		return
 	}
+	_, _ = s.db.Conn().ExecContext(r.Context(), `UPDATE hoplite_accounts SET health_status='healthy',last_tested_at=?,last_error='',updated_at=? WHERE id=?`, now, now, accountID)
 	writeData(w, map[string]any{
 		"ok":                  true,
+		"account_id":          accountID,
 		"checked_at":          time.Now().UTC().Format(time.RFC3339),
 		"latency_ms":          time.Since(started).Milliseconds(),
 		"project_count":       len(projects),
@@ -223,7 +246,20 @@ func (s *Server) handleHopliteMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hopliteClient(w http.ResponseWriter, r *http.Request) (*hoplite.Client, bool) {
-	key, ok := s.hopliteCredential(r.Context())
+	accountID := strings.TrimSpace(r.URL.Query().Get("account_id"))
+	if accountID == "" {
+		accountID = hopliteConnectionID
+	}
+	account, exists := s.hopliteAccountByID(r.Context(), accountID)
+	if !exists && accountID != hopliteConnectionID {
+		writeJSONStatus(w, http.StatusNotFound, map[string]any{"error": "Hoplite account not found"})
+		return nil, false
+	}
+	if exists && account.IsActive != 1 {
+		writeJSONStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "Hoplite account is inactive"})
+		return nil, false
+	}
+	key, ok := s.hopliteCredentialForAccount(r.Context(), accountID)
 	if !ok {
 		writeJSONStatus(w, http.StatusPreconditionFailed, map[string]any{
 			"error":   "hoplite credential not configured",
@@ -235,13 +271,7 @@ func (s *Server) hopliteClient(w http.ResponseWriter, r *http.Request) (*hoplite
 }
 
 func (s *Server) hopliteCredential(ctx context.Context) (string, bool) {
-	if key, ok := s.credStore().GetCredential(ctx, hopliteCredentialName); ok && strings.TrimSpace(key) != "" {
-		return strings.TrimSpace(key), true
-	}
-	if key := strings.TrimSpace(os.Getenv(hopliteCredentialEnv)); key != "" {
-		return key, true
-	}
-	return "", false
+	return s.hopliteCredentialForAccount(ctx, hopliteConnectionID)
 }
 
 func newHopliteOperationID() string {

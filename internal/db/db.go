@@ -251,6 +251,15 @@ func (d *DB) migrate() error {
 			created_at TEXT DEFAULT (datetime('now', 'localtime')),
 			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
+		`CREATE TABLE IF NOT EXISTS hoplite_accounts (
+			id TEXT PRIMARY KEY, name TEXT NOT NULL, credential_name TEXT NOT NULL UNIQUE,
+			is_active INTEGER NOT NULL DEFAULT 1, health_status TEXT NOT NULL DEFAULT 'unknown',
+			last_tested_at TEXT DEFAULT NULL, last_error TEXT NOT NULL DEFAULT '',
+			credits_remaining REAL DEFAULT NULL, expires_at TEXT NOT NULL DEFAULT '',
+			created_at TEXT DEFAULT (datetime('now', 'localtime')), updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+		)`,
+		`ALTER TABLE hoplite_accounts ADD COLUMN credits_remaining REAL DEFAULT NULL`,
+		`ALTER TABLE hoplite_accounts ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''`,
 	}
 
 	for _, m := range migrations {

@@ -50,7 +50,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request, model string, stream bool, messages []hopliteChatMessage) {
-	projectID, selectedModel, _, validModelID := parseHopliteModelID(model)
+	accountID, projectID, selectedModel, _, validModelID := parseHopliteRoutedModelID(model)
 	if !validModelID {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid Hoplite model ID")
 		return
@@ -70,7 +70,26 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "a non-empty user message is required")
 		return
 	}
-	key, ok := s.hopliteCredential(r.Context())
+	account, exists := s.hopliteAccountByID(r.Context(), accountID)
+	if !exists || account.IsActive != 1 {
+		writeOpenAIError(w, http.StatusServiceUnavailable, "hoplite_account_unavailable", "Hoplite account is inactive or unavailable")
+		return
+	}
+	if account.HealthStatus == "unhealthy" {
+		writeOpenAIError(w, http.StatusServiceUnavailable, "hoplite_account_unhealthy", "Hoplite account failed its latest health check")
+		return
+	}
+	if account.CreditsRemaining != nil && *account.CreditsRemaining <= 0 {
+		writeOpenAIError(w, http.StatusServiceUnavailable, "hoplite_account_exhausted", "Hoplite account has no remaining credits")
+		return
+	}
+	if account.ExpiresAt != "" {
+		if expiry, err := time.Parse(time.RFC3339, account.ExpiresAt); err == nil && !expiry.After(time.Now()) {
+			writeOpenAIError(w, http.StatusServiceUnavailable, "hoplite_account_expired", "Hoplite account entitlement has expired")
+			return
+		}
+	}
+	key, ok := s.hopliteCredentialForAccount(r.Context(), accountID)
 	if !ok {
 		writeOpenAIError(w, http.StatusPreconditionFailed, "hoplite_not_configured", "Hoplite credential is not configured")
 		return
@@ -166,6 +185,44 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 func hopliteSelectedModelID(projectID, modelID string) string {
 	encode := func(value string) string { return base64.RawURLEncoding.EncodeToString([]byte(value)) }
 	return "hoplite-model/v1/" + encode(projectID) + "/" + encode(modelID)
+}
+
+func hopliteProjectModelIDForAccount(accountID, projectID string) string {
+	if accountID == "" || accountID == hopliteConnectionID {
+		return "hoplite-agent/" + projectID
+	}
+	return "hoplite-agent/v2/" + encodeHoplitePart(accountID) + "/" + encodeHoplitePart(projectID)
+}
+
+func hopliteSelectedModelIDForAccount(accountID, projectID, modelID string) string {
+	if accountID == "" || accountID == hopliteConnectionID {
+		return hopliteSelectedModelID(projectID, modelID)
+	}
+	return "hoplite-model/v2/" + encodeHoplitePart(accountID) + "/" + encodeHoplitePart(projectID) + "/" + encodeHoplitePart(modelID)
+}
+
+func parseHopliteRoutedModelID(id string) (accountID, projectID, modelID string, selected, ok bool) {
+	if strings.HasPrefix(id, "hoplite-agent/v2/") {
+		parts := strings.Split(strings.TrimPrefix(id, "hoplite-agent/v2/"), "/")
+		if len(parts) != 2 {
+			return "", "", "", false, false
+		}
+		account, aok := decodeHoplitePart(parts[0])
+		project, pok := decodeHoplitePart(parts[1])
+		return account, project, "", false, aok && pok
+	}
+	if strings.HasPrefix(id, "hoplite-model/v2/") {
+		parts := strings.Split(strings.TrimPrefix(id, "hoplite-model/v2/"), "/")
+		if len(parts) != 3 {
+			return "", "", "", false, false
+		}
+		account, aok := decodeHoplitePart(parts[0])
+		project, pok := decodeHoplitePart(parts[1])
+		model, mok := decodeHoplitePart(parts[2])
+		return account, project, model, true, aok && pok && mok && hoplite.IsKnownModel(model)
+	}
+	project, model, selected, ok := parseHopliteModelID(id)
+	return hopliteConnectionID, project, model, selected, ok
 }
 
 func parseHopliteModelID(id string) (projectID, modelID string, selected, ok bool) {
