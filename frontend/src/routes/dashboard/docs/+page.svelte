@@ -223,11 +223,11 @@ curl https://api.openai.com/v1/chat/completions \\
           en_title: 'Your First Request',
           id_content: `Setelah provider terhubung, kirim request chat:
 
-**Gateway API key:** pakai key yang dibuat di Dashboard → API Keys. BUKAN credential provider dari Connections.`,
+**Gateway API key:** buka Dashboard → API Keys → Create Key, lalu salin secret lengkap dari dialog satu kali. Key hanya ditampilkan sekali dan tidak bisa diambil lagi setelah dialog ditutup. BUKAN credential provider dari Connections.`,
 
           en_content: `Once a provider is connected, send your first chat request:
 
-**Gateway API key:** use a key created in Dashboard → API Keys. NOT a provider credential from Connections.`,
+**Gateway API key:** open Dashboard → API Keys → Create Key, then copy the full secret from the one-time dialog. The key is shown once and cannot be retrieved again after the dialog is closed. NOT a provider credential from Connections.`,
           id_code: `# Kirim chat via Lintasan
 curl http://localhost:20180/v1/chat/completions \\
   -H "Authorization: Bearer *** \\

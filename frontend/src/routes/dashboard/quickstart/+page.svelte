@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import { showToast } from '$lib/toast';
   import { deriveQuickstart, buildQuickstartSnippets, type QuickstartConnection, type GatewayKey, type CallableModel } from '$lib/quickstart';
-  import { Check, Circle, Link2, Key, Cpu, Terminal, MessageSquare, Copy, ExternalLink, RefreshCw, Plus } from 'lucide-svelte';
+  import { Check, Circle, Link2, Key, Cpu, Terminal, MessageSquare, Copy, ExternalLink, RefreshCw } from 'lucide-svelte';
 
   let connections = $state<QuickstartConnection[]>([]);
   let keys = $state<GatewayKey[]>([]);
@@ -11,8 +11,6 @@
   let loading = $state(true);
   let error = $state('');
   let sourceErrors = $state<string[]>([]);
-  let creating = $state(false);
-  let newKey = $state('');
   let copied = $state('');
   let snippetTab = $state<'curl' | 'python' | 'javascript'>('curl');
   let baseUrl = $state('/v1');
@@ -21,7 +19,7 @@
   const snippets = $derived(buildQuickstartSnippets({
     baseUrl,
     model: quickstartState.recommendedModel?.id || 'YOUR_CALLABLE_MODEL',
-    gatewayKey: newKey || null,
+    gatewayKey: null,
   }));
 
   async function load() {
@@ -52,20 +50,6 @@
     load();
   });
 
-  async function createGatewayKey() {
-    if (creating) return;
-    creating = true;
-    try {
-      const created = await api.post<any>('/api/keys', { action: 'create', name: 'Quickstart' });
-      newKey = created.key || '';
-      keys = [...keys, created];
-      showToast('Gateway API key created. Copy it now; keep it secret.', 'success');
-    } catch (e: any) {
-      showToast(e.message || 'Could not create gateway API key', 'error');
-    } finally {
-      creating = false;
-    }
-  }
 
   async function copy(value: string, label: string) {
     await navigator.clipboard.writeText(value);
@@ -120,14 +104,7 @@
 
             {#if step.number === 2 && !step.ready}
               <div class="step-actions">
-                <button class="btn-primary" onclick={createGatewayKey} disabled={creating}><Plus size={15} /> {creating ? 'Creating…' : 'Create gateway key'}</button>
-                <a class="text-link" href={step.href}>{step.action}</a>
-              </div>
-            {:else if step.number === 2 && newKey}
-              <div class="secret-once">
-                <div><strong>Copy this new key now</strong><span>It is shown only for this session.</span></div>
-                <code>{newKey}</code>
-                <button class="btn-secondary" onclick={() => copy(newKey, 'Gateway key')}><Copy size={14} /> {copied === 'Gateway key' ? 'Copied' : 'Copy key'}</button>
+                <a class="btn-primary" href="/dashboard/keys"><Key size={15} /> Create gateway key</a>
               </div>
             {:else if step.href}
               <a class="text-link" href={step.href}>{step.action} <ExternalLink size={13} /></a>
@@ -147,7 +124,7 @@
                 </div>
                 <pre><code>{snippets[snippetTab]}</code></pre>
               </div>
-              {#if !newKey}<p class="safe-note">The example uses a placeholder. For safety, existing gateway keys are never revealed here.</p>{/if}
+              <p class="safe-note">The example uses a placeholder. Create and copy a key from API Keys; existing secrets are never revealed here.</p>
             {/if}
           </div>
         </article>
@@ -179,10 +156,7 @@
   .step-actions { display: flex; align-items: center; gap: 14px; margin-top: 12px; flex-wrap: wrap; }
   .btn-primary, .btn-secondary, .text-link { display: inline-flex; align-items: center; justify-content: center; gap: 7px; text-decoration: none; }
   .text-link { margin-top: 11px; color: var(--color-primary); font-size: 13px; font-weight: 650; width: fit-content; }
-  .secret-once { display: grid; grid-template-columns: 1fr auto; gap: 9px 14px; align-items: center; padding: 13px; margin-top: 12px; border-radius: 10px; background: var(--color-warning-light); border: 1px solid color-mix(in srgb, var(--color-warning) 25%, var(--color-border)); }
-  .secret-once div { display: flex; flex-direction: column; }
-  .secret-once span { font-size: 11px; color: var(--color-fg-2); }
-  .secret-once code { grid-column: 1 / -1; overflow-wrap: anywhere; }
+
   .endpoint-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: #0f172a; color: #e2e8f0; border-radius: 10px; padding: 10px 12px; margin-top: 12px; }
   .icon-button { display: grid; place-items: center; flex: none; padding: 7px; border: 0; border-radius: 7px; background: rgba(255,255,255,.1); color: white; cursor: pointer; }
   .snippet-box { margin-top: 10px; overflow: hidden; border-radius: 12px; border: 1px solid #26344d; background: #0b1220; color: #dbeafe; }
@@ -200,7 +174,6 @@
     .hero-card { flex-direction: column; padding: 21px; }
     .progress-card { width: 100%; }
     .step-card { grid-template-columns: 32px minmax(0, 1fr); padding: 16px 13px; }
-    .secret-once { grid-template-columns: 1fr; }
-    .secret-once code { grid-column: auto; }
+
   }
 </style>
