@@ -2505,15 +2505,15 @@
                     title={model.is_active === 1 ? 'Active' : 'Inactive'}
                   ></div>
 
-                  <!-- Main: model id + meta -->
+                  <!-- Main: model name + routing id + meta -->
                   <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
                     <div
                       style="display: flex; align-items: center; gap: 6px; min-width: 0;"
                     >
                       <span
-                        style="font-family: var(--font-mono); font-size: 12px; color: var(--color-fg-0); font-weight: 500; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.4;"
+                        style="font-size: 13px; color: var(--color-fg-0); font-weight: 600; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.4;"
                         title={model.model_id}
-                      >{model.model_id}</span>
+                      >{model.model_name || model.model_id}</span>
                       {#if model.owned_by}
                         <span
                           style="flex-shrink: 0; font-size: 10px; color: var(--color-fg-2); background: var(--color-bg-3); padding: 1px 6px; border-radius: 4px; text-transform: lowercase;"
@@ -2521,6 +2521,15 @@
                         >{model.owned_by}</span>
                       {/if}
                     </div>
+                    {#if model.model_name && model.model_name !== model.model_id}
+                      <div style="display: flex; align-items: center; gap: 6px; min-width: 0;">
+                        <span style="flex-shrink: 0; font-size: 10px; font-weight: 600; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.4px;">Routing ID</span>
+                        <span
+                          style="font-family: var(--font-mono); font-size: 10px; color: var(--color-fg-2); white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.4;"
+                          title={model.model_id}
+                        >{model.model_id}</span>
+                      </div>
+                    {/if}
                     {#if model.discovered_at}
                       <div style="font-size: 10px; color: var(--color-fg-3);">{model.discovered_at}</div>
                     {/if}

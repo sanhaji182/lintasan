@@ -82,7 +82,7 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Connections page: %v", err)
 	}
-	for _, required := range []string{"provider_kind === 'cloud_agent'", "Cloud Agent Providers", "Diagnostics"} {
+	for _, required := range []string{"provider_kind === 'cloud_agent'", "Cloud Agent Providers", "Diagnostics", "model.model_name || model.model_id", "Routing ID"} {
 		if !strings.Contains(string(connections), required) {
 			t.Errorf("Connections missing cloud-agent contract %q", required)
 		}
