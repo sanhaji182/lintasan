@@ -83,6 +83,9 @@
   let openMenuConnId = $state<string | null>(null);
   let addMenuOpen = $state(false);
   let bulkMode = $state(false);
+  let selectedConnectionIds = $state<Set<string>>(new Set());
+  let addMenuButton: HTMLButtonElement;
+  let firstAddMenuItem = $state<HTMLButtonElement>();
 
   type StatusFilter = 'all' | 'active' | 'inactive' | 'pooled';
   let statusFilter = $state<StatusFilter>('all');
@@ -183,6 +186,47 @@
     } catch (e: any) {
       showToast('Failed to disable: ' + e.message, 'error');
     }
+  }
+
+  function toggleBulkMode() {
+    bulkMode = !bulkMode;
+    selectedConnectionIds = new Set();
+  }
+
+  function toggleConnectionSelection(id: string) {
+    const next = new Set(selectedConnectionIds);
+    next.has(id) ? next.delete(id) : next.add(id);
+    selectedConnectionIds = next;
+  }
+
+  async function actOnSelected(action: 'test' | 'enable' | 'disable' | 'delete') {
+    const ids = [...selectedConnectionIds];
+    if (!ids.length) return;
+    try {
+      if (action === 'test') {
+        await startBulkTest('Selected Connections', ids);
+        return;
+      }
+      if (action === 'delete' && !confirm(`Delete ${ids.length} selected connection(s)?`)) return;
+      await api.post(`/api/connections/bulk-${action}`, { ids });
+      selectedConnectionIds = new Set();
+      await fetchConnections();
+    } catch (e: any) {
+      showToast(`Bulk ${action} failed: ${e.message}`, 'error');
+    }
+  }
+
+  async function toggleAddMenu() {
+    addMenuOpen = !addMenuOpen;
+    if (addMenuOpen) {
+      await Promise.resolve();
+      firstAddMenuItem?.focus();
+    }
+  }
+
+  function closeAddMenu() {
+    addMenuOpen = false;
+    addMenuButton?.focus();
   }
 
   // Pool editing state
@@ -357,12 +401,13 @@
   let openGroupMenuKey = $state<string | null>(null);
 
   $effect(() => {
-    if (!openMenuConnId && !openGroupMenuKey) return;
+    if (!openMenuConnId && !openGroupMenuKey && !addMenuOpen) return;
     function handleClick(e: MouseEvent) {
       const target = e.target as HTMLElement;
       if (!target.closest('.kebab-menu-container') && !target.closest('.group-actions-menu-container')) {
         openMenuConnId = null;
         openGroupMenuKey = null;
+        addMenuOpen = false;
       }
     }
     document.addEventListener('click', handleClick, true);
@@ -1448,16 +1493,16 @@
       </div>
     </div>
     <div class="conn-toolbar-right">
-      <button class="btn-secondary conn-toolbar-btn" class:active={bulkMode} onclick={() => bulkMode = !bulkMode} aria-pressed={bulkMode}><Zap size={14} /><span class="conn-toolbar-btn-label">{bulkMode ? 'Exit bulk mode' : 'Bulk mode'}</span></button>
+      <button class="btn-secondary conn-toolbar-btn" class:active={bulkMode} onclick={toggleBulkMode} aria-pressed={bulkMode}><Zap size={14} /><span class="conn-toolbar-btn-label">{bulkMode ? 'Exit bulk mode' : 'Bulk mode'}</span></button>
       {#if bulkMode}
         <button class="btn-secondary conn-toolbar-btn flex items-center gap-1.5" onclick={() => startBulkTest('All Connections')} disabled={bulkTesting} title="Test all connections"><TestTube2 size={14} /><span class="conn-toolbar-btn-label">Test all</span></button>
       {/if}
       <button class="btn-secondary conn-toolbar-btn" onclick={() => { loading = true; fetchConnections(); fetchPools(); }} title="Refresh connections" aria-label="Refresh"><RefreshCw size={15} /></button>
       <div class="group-actions-menu-container" style="position:relative">
-        <button class="btn-primary conn-toolbar-btn" onclick={() => addMenuOpen = !addMenuOpen} aria-haspopup="menu" aria-expanded={addMenuOpen}><Plus size={15} /><span class="conn-toolbar-btn-label">Add</span><ChevronDown size={13}/></button>
+        <button bind:this={addMenuButton} class="btn-primary conn-toolbar-btn" onclick={toggleAddMenu} onkeydown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); toggleAddMenu(); } }} aria-haspopup="menu" aria-expanded={addMenuOpen}><Plus size={15} /><span class="conn-toolbar-btn-label">Add</span><ChevronDown size={13}/></button>
         {#if addMenuOpen}
-          <div class="conn-dropdown add-menu" role="menu">
-            <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; showForm=true; }}><Link2 size={13}/> Provider API</button>
+          <div class="conn-dropdown add-menu" role="menu" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeAddMenu(); } }}>
+            <button bind:this={firstAddMenuItem} class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; showForm=true; }}><Link2 size={13}/> Provider API</button>
             <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; hopliteAccountForm={id:'',name:'',credential:''}; showHopliteAccountForm=true; }}><Cloud size={13}/> Cloud Agent / Hoplite</button>
             <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; showCurlImport=true; curlResult=null; }}><Copy size={13}/> Import curl</button>
             <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; presetsExpanded=true; }}><Sparkles size={13}/> Provider preset</button>
@@ -1466,6 +1511,16 @@
       </div>
     </div>
   </div>
+
+  {#if bulkMode}
+    <div class="bulk-selection-bar" role="region" aria-label="Bulk selection controls">
+      <strong>{selectedConnectionIds.size} selected</strong>
+      <button class="btn-secondary" onclick={() => actOnSelected('test')} disabled={!selectedConnectionIds.size}>Test selected</button>
+      <button class="btn-secondary" onclick={() => actOnSelected('enable')} disabled={!selectedConnectionIds.size}>Enable selected</button>
+      <button class="btn-secondary" onclick={() => actOnSelected('disable')} disabled={!selectedConnectionIds.size}>Disable selected</button>
+      <button class="btn-secondary" onclick={() => actOnSelected('delete')} disabled={!selectedConnectionIds.size}>Delete selected</button>
+    </div>
+  {/if}
 
   {#if showHopliteAccountForm}
     <div class="card mb-5" style="border-color: rgba(139,92,246,.35); background: rgba(139,92,246,.05);">
@@ -2040,7 +2095,10 @@
             <div 
               class="conn-group-header" 
               role="button" 
-              tabindex="0" 
+              tabindex="0"
+              aria-expanded={!isCollapsed}
+              aria-controls={`connection-group-${group.key}`}
+              aria-label={`${group.label}, ${group.active} of ${group.connections.length} active`}
               onclick={() => toggleGroup(group.key)}
               onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleGroup(group.key); } }}
             >
@@ -2144,7 +2202,7 @@
                 : group.connections}
               {@const limit = getGroupLimit(group.key)}
               {@const visibleConns = matchedConns.slice(0, limit)}
-              <div class="conn-group-body">
+              <div class="conn-group-body" id={`connection-group-${group.key}`}>
                 {#if group.connections.length > 15}
                   <div class="group-subtoolbar">
                     <div class="group-subsearch-wrap">
@@ -2168,6 +2226,11 @@
 
                 {#each visibleConns as conn (conn.id)}
                   <div class="conn-row" class:conn-inactive={!conn.is_active}>
+                    {#if bulkMode && conn.provider_kind !== 'cloud_agent'}
+                      <label class="conn-select" title="Select {conn.name}">
+                        <input type="checkbox" aria-label={`Select ${conn.name}`} checked={selectedConnectionIds.has(conn.id)} onchange={() => toggleConnectionSelection(conn.id)} />
+                      </label>
+                    {/if}
                     <div class="conn-row-main">
                       <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
                       <span class="conn-row-name" title={conn.name}>{conn.name}</span>
@@ -2876,6 +2939,18 @@
     box-shadow: var(--shadow-sm);
   }
   .add-menu { right: 0; min-width: 205px; z-index: 30; }
+  .bulk-selection-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin: -8px 0 12px;
+    padding: 8px 12px;
+    border: 1px solid var(--color-primary);
+    border-radius: 10px;
+    background: var(--color-primary-light);
+  }
+  .conn-select { display: inline-flex; align-items: center; padding: 4px; }
   .conn-toolbar-left {
     display: flex;
     align-items: center;
