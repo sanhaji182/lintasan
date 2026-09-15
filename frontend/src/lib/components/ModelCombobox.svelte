@@ -21,13 +21,13 @@
   }
 </script>
 
-<div class="picker" onkeydown={keydown}>
-  <button type="button" class="trigger" aria-haspopup="listbox" aria-expanded={open} onclick={() => open = !open}>
+<div class="picker">
+  <button type="button" class="trigger" aria-haspopup="listbox" aria-expanded={open} onkeydown={keydown} onclick={() => open = !open}>
     <span><code>{current?.id || selected || 'Choose a model'}</code>{#if current}<small>{current.account || current.provider || current.kind.replace('_', ' ')}</small>{/if}</span><ChevronDown size={15} />
   </button>
   {#if open}
     <div class="popover">
-      <label class="search"><Search size={14} /><span class="sr-only">Search models</span><input autofocus role="combobox" aria-expanded="true" aria-controls="model-options" aria-activedescendant={flat[activeIndex] ? `model-${activeIndex}` : undefined} bind:value={query} oninput={() => activeIndex = 0} placeholder="Search callable ID, provider, account…" /></label>
+      <label class="search"><Search size={14} /><span class="sr-only">Search models</span><input role="combobox" aria-expanded="true" aria-controls="model-options" aria-activedescendant={flat[activeIndex] ? `model-${activeIndex}` : undefined} bind:value={query} onkeydown={keydown} oninput={() => activeIndex = 0} placeholder="Search callable ID, provider, account…" /></label>
       <div class="options" id="model-options" role="listbox" aria-label="Callable models">
         {#each groups as group}
           <div class="group" role="group" aria-label={group.label}><div class="group-label">{group.label}</div>
