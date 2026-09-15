@@ -82,7 +82,7 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Connections page: %v", err)
 	}
-	for _, required := range []string{"provider_kind === 'cloud_agent'", "Cloud Agent Providers", "Diagnostics", "model.model_name || model.model_id", "Routing ID", "days_remaining", "total_used", "Credits"} {
+	for _, required := range []string{"provider_kind === 'cloud_agent'", "Cloud Agent Providers", "Diagnostics", "model.model_name || model.model_id", "Routing ID", "days_remaining", "total_used", "Credits", "Add Hoplite account", "/api/experimental/cloud-agents/hoplite/accounts", "Leave blank to keep stored secret", "Edit account"} {
 		if !strings.Contains(string(connections), required) {
 			t.Errorf("Connections missing cloud-agent contract %q", required)
 		}
@@ -107,6 +107,7 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 		"url.searchParams.get('model')",
 		"selectedModel.startsWith('hoplite-agent/')",
 		"selectedModel.startsWith('hoplite-model/v1/')",
+		"selectedModel.startsWith('hoplite-model/v2/')",
 		"stream: !isHopliteModel",
 		"await res.json()",
 		"provider_kind === 'cloud_agent'",

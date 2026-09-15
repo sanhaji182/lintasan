@@ -31,7 +31,7 @@
     { id: 'gpt-4o-mini', label: 'gpt-4o-mini', kind: 'llm', supportsStreaming: true }
   ]);
   let selectedCapability = $derived(availableModels.find(model => model.id === selectedModel));
-  let isCloudAgentSelection = $derived(selectedCapability?.kind === 'cloud_agent' || selectedModel.startsWith('hoplite-agent/') || selectedModel.startsWith('hoplite-model/v1/'));
+  let isCloudAgentSelection = $derived(selectedCapability?.kind === 'cloud_agent' || selectedModel.startsWith('hoplite-agent/') || selectedModel.startsWith('hoplite-model/v1/') || selectedModel.startsWith('hoplite-model/v2/'));
 
   async function loadModelsAndCombos() {
     try {

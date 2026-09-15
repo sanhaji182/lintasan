@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
+  import { page } from '$app/state';
   import { api } from '$lib/api';
   import TabNav from '$lib/components/TabNav.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
@@ -14,7 +15,7 @@
   ];
 
   type Status = { configured: boolean; source: string; masked_value: string; env_var: string; mode: string; routing: string };
-  type AdapterModel = { id: string; object: string; owned_by: string; display_name?: string; hoplite_project_id?: string; hoplite_project_name?: string; hoplite_model_id?: string; provider?: string; context_window_tokens?: number; catalog_eligibility?: string; catalog_revision?: string };
+  type AdapterModel = { id: string; object: string; owned_by: string; display_name?: string; hoplite_project_id?: string; hoplite_project_name?: string; hoplite_account_id?: string; hoplite_model_id?: string; provider?: string; context_window_tokens?: number; catalog_eligibility?: string; catalog_revision?: string };
   type ConnectionTest = { ok: boolean; checked_at: string; latency_ms: number; project_count: number; verified_operations: string[]; thread_create: string; meta?: { rate_limit?: string; rate_limit_policy?: string; request_id?: string } };
   type Project = { id: string; name: string; description?: string; defaultBranch?: string; defaultModel?: string; agentSpeed?: 'standard' | 'fast'; repos?: { repoFullName: string; branch?: string }[] };
   type PullRequest = { url?: string; number?: number; state?: string };
@@ -22,6 +23,7 @@
   type Message = { id: string; role: string; content: string; createdAt?: string };
 
   let status = $state<Status | null>(null);
+  let accountID = $state('');
   let connectionTest = $state<ConnectionTest | null>(null);
   let projects = $state<Project[]>([]);
   let adapterModels = $state<AdapterModel[]>([]);
@@ -33,6 +35,10 @@
   let editingCredential = $state(false);
   let prompt = $state('');
   let title = $state('');
+
+  function accountQuery(prefix = '?'): string {
+    return accountID ? `${prefix}account_id=${encodeURIComponent(accountID)}` : '';
+  }
   let speed = $state<'standard' | 'fast'>('standard');
   let modelMode = $state<'default' | 'catalog' | 'custom'>('default');
   let catalogModel = $state('');
@@ -53,6 +59,7 @@
   let pollTimer: ReturnType<typeof setInterval> | undefined;
 
   onMount(() => {
+    accountID = page.url.searchParams.get('account_id')?.trim() || '';
     void loadStatus();
     pollTimer = setInterval(() => {
       if (agentTestThread && !isTerminal(agentTestThread.status) && !polling) void refreshAgentTest(true);
@@ -141,7 +148,7 @@
   async function loadStatus() {
     loading = true; error = '';
     try {
-      const res = await api.get<{ data: Status }>('/api/experimental/cloud-agents/hoplite/status');
+      const res = await api.get<{ data: Status }>(`/api/experimental/cloud-agents/hoplite/status${accountQuery()}`);
       status = res.data;
       loading = false;
       if (status.configured) await testConnection();
@@ -153,7 +160,11 @@
     if (!credential.trim()) return;
     action = 'credential'; error = ''; notice = '';
     try {
-      await api.put('/api/experimental/credentials/hoplite', { credential: credential.trim() });
+      if (accountID) {
+        await api.patch(`/api/experimental/cloud-agents/hoplite/accounts/${accountID}`, { credential: credential.trim() });
+      } else {
+        await api.put('/api/experimental/credentials/hoplite', { credential: credential.trim() });
+      }
       credential = '';
       editingCredential = false;
       notice = 'Credential encrypted and saved.';
@@ -165,6 +176,9 @@
   async function deleteCredential() {
     action = 'credential'; error = ''; notice = '';
     try {
+      if (accountID) {
+        throw new Error('Delete this account from Connections to confirm removal of its encrypted credential.');
+      }
       await api.delete('/api/experimental/credentials/hoplite');
       projects = []; threads = []; selectedProject = '';
       notice = 'Dashboard credential removed.';
@@ -176,7 +190,7 @@
   async function testConnection() {
     action = 'test'; error = ''; notice = ''; connectionError = ''; connectionTest = null;
     try {
-      const res = await api.post<{ data: ConnectionTest }>('/api/experimental/cloud-agents/hoplite/test', {});
+      const res = await api.post<{ data: ConnectionTest }>(`/api/experimental/cloud-agents/hoplite/test${accountQuery()}`, {});
       connectionTest = res.data;
       notice = `Connection verified — ${res.data.project_count} project(s), ${res.data.latency_ms} ms.`;
       await loadProjects();
@@ -189,10 +203,13 @@
   }
 
   async function loadProjects() {
-    const res = await api.get<{ data: { projects: Project[] } }>('/api/experimental/cloud-agents/hoplite/projects');
+    const res = await api.get<{ data: { projects: Project[] } }>(`/api/experimental/cloud-agents/hoplite/projects${accountQuery()}`);
     projects = res.data.projects || [];
     const modelsRes = await api.get<{ data: AdapterModel[] }>('/v1/models');
-    adapterModels = (modelsRes.data || []).filter((model) => model.id.startsWith('hoplite-agent/') || model.id.startsWith('hoplite-model/v1/'));
+    adapterModels = (modelsRes.data || []).filter((model) => {
+      if (accountID) return model.hoplite_account_id === accountID;
+      return !model.hoplite_account_id || model.hoplite_account_id === 'hoplite-cloud-agent';
+    });
     if (!selectedProject && projects.length) selectedProject = projects[0].id;
     const project = selectedProjectData();
     if (project?.agentSpeed) speed = project.agentSpeed;
@@ -210,7 +227,7 @@
     if (project?.agentSpeed) speed = project.agentSpeed;
     action = 'threads'; error = '';
     try {
-      const res = await api.get<{ data: { threads: Thread[] } }>(`/api/experimental/cloud-agents/hoplite/threads?projectId=${encodeURIComponent(selectedProject)}`);
+      const res = await api.get<{ data: { threads: Thread[] } }>(`/api/experimental/cloud-agents/hoplite/threads?projectId=${encodeURIComponent(selectedProject)}${accountQuery('&')}`);
       threads = res.data.threads || [];
     } catch (e: any) { error = messageOf(e); }
     finally { action = ''; }
@@ -234,7 +251,7 @@
       pendingOperationFingerprint = fingerprint;
     }
     try {
-      const res = await api.post<{ data: { result: { thread: Thread } } }>('/api/experimental/cloud-agents/hoplite/threads', {
+      const res = await api.post<{ data: { result: { thread: Thread } } }>(`/api/experimental/cloud-agents/hoplite/threads${accountQuery()}`, {
         ...operationPayload,
         clientOperationId: pendingOperationId
       });
@@ -251,7 +268,7 @@
     if (!selectedProject || (modelMode === 'catalog' && !catalogModel) || (modelMode === 'custom' && !customModel.trim())) return;
     action = 'agent-test'; error = ''; notice = '';
     try {
-      const res = await api.post<{ data: { result: { thread: Thread } } }>('/api/experimental/cloud-agents/hoplite/threads', {
+      const res = await api.post<{ data: { result: { thread: Thread } } }>(`/api/experimental/cloud-agents/hoplite/threads${accountQuery()}`, {
         projectId: selectedProject,
         title: `Lintasan model test · ${modelLabel()}`,
         prompt: 'Read the repository context and report a concise readiness summary. Do not modify files, do not create commits, and do not open or merge a pull request.',
@@ -276,8 +293,8 @@
     try {
       const id = encodeURIComponent(agentTestThread.id);
       const [threadRes, messageRes] = await Promise.all([
-        api.get<{ data: { thread: Thread } }>(`/api/experimental/cloud-agents/hoplite/threads/${id}`),
-        api.get<{ data: { messages: Message[] } }>(`/api/experimental/cloud-agents/hoplite/threads/${id}/messages`)
+        api.get<{ data: { thread: Thread } }>(`/api/experimental/cloud-agents/hoplite/threads/${id}${accountQuery()}`),
+        api.get<{ data: { messages: Message[] } }>(`/api/experimental/cloud-agents/hoplite/threads/${id}/messages${accountQuery()}`)
       ]);
       agentTestThread = threadRes.data.thread;
       agentTestMessages = messageRes.data.messages || [];
@@ -297,8 +314,8 @@
     action = `thread:${item.id}`; error = '';
     try {
       const [threadRes, messageRes] = await Promise.all([
-        api.get<{ data: { thread: Thread } }>(`/api/experimental/cloud-agents/hoplite/threads/${encodeURIComponent(item.id)}`),
-        api.get<{ data: { messages: Message[] } }>(`/api/experimental/cloud-agents/hoplite/threads/${encodeURIComponent(item.id)}/messages`)
+        api.get<{ data: { thread: Thread } }>(`/api/experimental/cloud-agents/hoplite/threads/${encodeURIComponent(item.id)}${accountQuery()}`),
+        api.get<{ data: { messages: Message[] } }>(`/api/experimental/cloud-agents/hoplite/threads/${encodeURIComponent(item.id)}/messages${accountQuery()}`)
       ]);
       if (selectedThread?.id === item.id) {
         selectedThread = threadRes.data.thread;
@@ -352,7 +369,7 @@
         <div class="actions">
           <button class="secondary" disabled={!!action} onclick={testConnection}><Play size={14} /> {action === 'test' ? 'Testing...' : 'Test connection'}</button>
           <button class="secondary" disabled={!!action} onclick={() => { editingCredential = !editingCredential; credential = ''; }}><Key size={14} /> Update key</button>
-          {#if status.source === 'dashboard'}<button class="danger" disabled={!!action} onclick={deleteCredential}><Trash2 size={14} /> Remove</button>{/if}
+          {#if !accountID && status.source === 'dashboard'}<button class="danger" disabled={!!action} onclick={deleteCredential}><Trash2 size={14} /> Remove</button>{/if}
         </div>
         {#if editingCredential}
           <form class="credential-form update-form" onsubmit={(e) => { e.preventDefault(); saveCredential(); }}>

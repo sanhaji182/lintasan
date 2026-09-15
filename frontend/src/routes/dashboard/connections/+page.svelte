@@ -20,6 +20,9 @@
   let loading = $state(true);
   let error = $state('');
   let showForm = $state(false);
+  let showHopliteAccountForm = $state(false);
+  let hopliteAccountForm = $state({ id: '', name: '', credential: '' });
+  let savingHopliteAccount = $state(false);
   let testing = $state<string | null>(null);
 
   // Balance/credit state
@@ -700,6 +703,28 @@
     finally { loading = false; }
   }
 
+  function editHopliteAccount(conn: any) {
+    hopliteAccountForm = { id: conn.id, name: conn.name, credential: '' };
+    showHopliteAccountForm = true;
+  }
+
+  async function saveHopliteAccount() {
+    if (!hopliteAccountForm.name.trim() || (!hopliteAccountForm.id && !hopliteAccountForm.credential.trim())) { showToast('Account name and API key are required', 'error'); return; }
+    savingHopliteAccount = true;
+    try {
+      if (hopliteAccountForm.id) {
+        const body: any = { name: hopliteAccountForm.name.trim() };
+        if (hopliteAccountForm.credential.trim()) body.credential = hopliteAccountForm.credential.trim();
+        await api.patch(`/api/experimental/cloud-agents/hoplite/accounts/${hopliteAccountForm.id}`, body);
+      } else {
+        await api.post('/api/experimental/cloud-agents/hoplite/accounts', { name: hopliteAccountForm.name.trim(), credential: hopliteAccountForm.credential.trim() });
+      }
+      showHopliteAccountForm = false; hopliteAccountForm = { id: '', name: '', credential: '' };
+      await fetchConnections(); fetchBalances(); showToast('Hoplite account saved', 'success');
+    } catch (e: any) { showToast('Failed to save Hoplite account: ' + e.message, 'error'); }
+    finally { savingHopliteAccount = false; }
+  }
+
   async function fetchBalances() {
     balancesLoading = true;
     try {
@@ -1189,11 +1214,17 @@
   });
 
   async function deleteConn(id: string) {
-    if (!confirm('Delete this connection?')) return;
+    const conn = connections.find(c => c.id === id);
+    const warning = conn?.provider_kind === 'cloud_agent'
+      ? `Delete Hoplite account “${conn.name}”? This permanently removes its separately encrypted API key and account routing identity.`
+      : 'Delete this connection?';
+    if (!confirm(warning)) return;
     try {
       await api.delete('/api/connections/' + id);
       connections = connections.filter(c => c.id !== id);
-    } catch (e: any) { error = e.message; }
+      delete balances[id];
+      showToast(conn?.provider_kind === 'cloud_agent' ? 'Hoplite account deleted' : 'Connection deleted', 'success');
+    } catch (e: any) { error = e.message; showToast('Delete failed: ' + e.message, 'error'); }
   }
 
   async function testNewConnection() {
@@ -1407,6 +1438,7 @@
       </div>
     </div>
     <div class="conn-toolbar-right">
+      <button class="btn-secondary conn-toolbar-btn" onclick={() => { hopliteAccountForm = { id: '', name: '', credential: '' }; showHopliteAccountForm = !showHopliteAccountForm; }}><Plus size={15} /><span class="conn-toolbar-btn-label">Add Hoplite account</span></button>
       <button 
         class="btn-secondary conn-toolbar-btn flex items-center gap-1.5" 
         onclick={() => startBulkTest('All Connections')} 
@@ -1443,6 +1475,15 @@
       </button>
     </div>
   </div>
+
+  {#if showHopliteAccountForm}
+    <div class="card mb-5" style="border-color: rgba(139,92,246,.35); background: rgba(139,92,246,.05);">
+      <div class="flex items-center justify-between mb-4"><h3>{hopliteAccountForm.id ? 'Edit Hoplite account' : 'Add Hoplite account'}</h3><button class="btn-secondary" onclick={() => showHopliteAccountForm=false}><X size={14}/> Cancel</button></div>
+      <div class="grid grid-cols-1 md:grid-cols-2" style="gap:12px"><label>Display name<input class="input-field" bind:value={hopliteAccountForm.name} placeholder="Work account" /></label><label>Organization API Key<input class="input-field" type="password" bind:value={hopliteAccountForm.credential} placeholder={hopliteAccountForm.id ? 'Leave blank to keep stored secret' : 'hop_…'} /></label></div>
+      <p style="font-size:12px;color:var(--color-fg-3)">Each account is encrypted separately. A masked secret is never submitted or used as a replacement.</p>
+      <button class="btn-primary" onclick={saveHopliteAccount} disabled={savingHopliteAccount}>{savingHopliteAccount ? 'Saving…' : 'Save Hoplite account'}</button>
+    </div>
+  {/if}
 
   <!-- Create form -->
   {#if showForm}
@@ -2260,10 +2301,13 @@
                           <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
                             <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; syncModels(conn.id); }}><RefreshCw size={13} /> Sync Models</button>
                             <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}><Cpu size={13} /> View Models</button>
-                            {#if !conn.pool_id}
+                            {#if conn.provider_kind === 'cloud_agent'}
+                              <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; editHopliteAccount(conn); }}><Pencil size={13} /> Edit account</button>
+                              <a class="conn-dropdown-item" href={`/dashboard/experimental/hoplite?account_id=${encodeURIComponent(conn.id)}`}><Settings size={13} /> Diagnostics</a>
+                            {:else if !conn.pool_id}
                               <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={13} /> Edit Pool</button>
                             {/if}
-                            <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={13} /> Copy Full Key</button>
+                            {#if conn.provider_kind !== 'cloud_agent'}<button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={13} /> Copy Full Key</button>{/if}
                             <div class="conn-dropdown-divider"></div>
                             <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}><Trash2 size={13} /> Delete</button>
                           </div>
