@@ -95,6 +95,13 @@
   }
 
   function projectModelID(project: Project) {
+    const advertised = adapterModels.find((model) =>
+      model.hoplite_project_id === project.id &&
+      model.hoplite_account_id === (accountID || 'hoplite-cloud-agent') &&
+      model.catalog_eligibility === 'project-default'
+    );
+    if (advertised) return advertised.id;
+    if (accountID) return '';
     return `hoplite-agent/${project.id}`;
   }
 

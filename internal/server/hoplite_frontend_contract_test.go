@@ -78,6 +78,24 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 		t.Fatal("Hoplite onboarding must not describe the adapter as isolated from LLM routing")
 	}
 
+	// Project-default Copy and Test actions must use the exact account-qualified
+	// ID advertised by /v1/models. A secondary account must never fall back to
+	// the legacy default-account alias, because project IDs can overlap.
+	for _, required := range []string{
+		"model.catalog_eligibility === 'project-default'",
+		"model.hoplite_account_id === accountID",
+		"if (accountID) return '';",
+		"copyModelID(project)",
+		"encodeURIComponent(projectModelID(project))",
+	} {
+		if !strings.Contains(body, required) {
+			t.Errorf("Hoplite secondary-account project-default action missing contract %q", required)
+		}
+	}
+	if strings.Contains(body, "function projectModelID(project: Project) {\n    return `hoplite-agent/${project.id}`;") {
+		t.Fatal("project-default actions must not always emit the legacy default-account alias")
+	}
+
 	connections, err := os.ReadFile(filepath.Join(root, "routes", "dashboard", "connections", "+page.svelte"))
 	if err != nil {
 		t.Fatalf("read Connections page: %v", err)
