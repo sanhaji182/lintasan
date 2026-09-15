@@ -97,18 +97,30 @@ test('combo order fingerprint changes when rows are reordered', () => {
   assert.notEqual(comboOrderFingerprint(rows), comboOrderFingerprint([...rows].reverse()));
 });
 
-test('analytics scope explains a retained snapshot that differs from global counter', () => {
-  assert.deepEqual(analyticsScope(28, 20), {
+test('analytics scope preserves signed discrepancies for either query completion order', () => {
+  const globalFinishedLater = analyticsScope(28, 20);
+  assert.deepEqual(globalFinishedLater, {
     globalLabel: 'All recorded requests', snapshotLabel: '20 retained request rows',
-    note: 'The all-recorded counter exceeds the retained rows by 8. These independently collected sources do not reconcile.', reconciled: false, state: 'mismatch',
+    note: 'The all-recorded counter exceeds the retained rows by 8. These independently collected sources do not reconcile.',
+    discrepancy: 8, reconciled: false, state: 'mismatch',
   });
-  assert.deepEqual(analyticsScope(10, 11), {
+
+  const snapshotFinishedLater = analyticsScope(10, 11);
+  assert.deepEqual(snapshotFinishedLater, {
     globalLabel: 'All recorded requests', snapshotLabel: '11 retained request rows',
-    note: 'The retained rows exceed the all-recorded counter by 1. These independently collected sources do not reconcile.', reconciled: false, state: 'mismatch',
+    note: 'The retained rows exceed the all-recorded counter by 1. These independently collected sources do not reconcile.',
+    discrepancy: -1, reconciled: false, state: 'mismatch',
   });
+
+  assert.notEqual(globalFinishedLater.discrepancy, snapshotFinishedLater.discrepancy);
+  assert.equal(snapshotFinishedLater.reconciled, false, 'a reverse race mismatch must not be presented as reconciled');
+  assert.match(snapshotFinishedLater.note, /skew|mismatch|do not reconcile|unknown/i);
+});
+
+test('analytics scope reconciles exactly when both comparable counts match', () => {
   assert.deepEqual(analyticsScope(20, 20), {
     globalLabel: 'All recorded requests', snapshotLabel: '20 retained request rows',
-    note: 'The independently collected counts match.', reconciled: true, state: 'reconciled',
+    note: 'The independently collected counts match.', discrepancy: 0, reconciled: true, state: 'reconciled',
   });
 });
 
@@ -117,6 +129,7 @@ test('analytics scope is explicitly unknown for missing or incomparable counts',
     globalLabel: 'All-recorded request count unavailable',
     snapshotLabel: 'Retained request row count unavailable',
     note: 'Reconciliation is unknown because comparable counts are unavailable.',
+    discrepancy: null,
     reconciled: false,
     state: 'unknown',
   };
@@ -126,6 +139,12 @@ test('analytics scope is explicitly unknown for missing or incomparable counts',
     ...expected,
     snapshotLabel: '20 retained request rows',
   });
+});
+
+test('analytics scope does not invent filters or mismatch causes absent from its inputs', () => {
+  for (const result of [analyticsScope(28, 20), analyticsScope(10, 11), analyticsScope(null, 11)]) {
+    assert.doesNotMatch(result.note, /filter|sampling|retention policy|delayed aggregation|excluded categor/i);
+  }
 });
 
 test('source freshness distinguishes fresh, stale, failed and unknown collection state', () => {

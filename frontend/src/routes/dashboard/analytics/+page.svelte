@@ -152,8 +152,8 @@
   });
 
   let totalTokens = $derived(logs.reduce((s, l) => s + (l.input_tokens || 0) + (l.output_tokens || 0), 0));
-  let avgLatency = $derived(logs.length > 0 ? Math.round(logs.reduce((s, l) => s + (l.latency_ms || 0), 0) / logs.length) : 0);
   let scope = $derived(stats && logsAvailable ? analyticsScope(stats.total_requests, logs.length) : null);
+  let statsScopeLabel = $derived(stats ? 'All recorded requests' : 'All-recorded statistics unavailable');
   let retainedScopeLabel = $derived(logsAvailable ? `${logs.length} retained request rows` : 'Retained request rows unavailable');
 
   function formatLatency(ms: number): string {
@@ -209,10 +209,10 @@
     </div>
     <div class="grid gap-4" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 24px;">
       {#each [
-        { icon: Activity, label: 'Total Requests', value: (stats?.total_requests ?? logs.length).toLocaleString(), scope: stats ? 'All recorded requests' : retainedScopeLabel, color: 'var(--color-primary)' },
+        { icon: Activity, label: 'Total Requests', value: stats ? stats.total_requests.toLocaleString() : '—', scope: statsScopeLabel, color: 'var(--color-primary)' },
         { icon: Database, label: 'Total Tokens', value: logsAvailable ? totalTokens.toLocaleString() : '—', scope: retainedScopeLabel, color: 'var(--color-success)' },
-        { icon: Zap, label: 'Cache Hit Rate', value: stats ? stats.cache_hit_rate + '%' : (logsAvailable && logs.length > 0 ? Math.round((statusBreakdown.cached / logs.length) * 100) + '%' : '—'), scope: stats ? 'All recorded requests' : retainedScopeLabel, color: 'var(--color-info)' },
-        { icon: Clock, label: 'Avg Latency', value: stats ? formatLatency(stats.avg_latency) : (logsAvailable && logs.length > 0 ? formatLatency(avgLatency) : '—'), scope: stats ? 'All recorded requests' : retainedScopeLabel, color: 'var(--color-warning)' }
+        { icon: Zap, label: 'Cache Hit Rate', value: stats ? stats.cache_hit_rate + '%' : '—', scope: statsScopeLabel, color: 'var(--color-info)' },
+        { icon: Clock, label: 'Avg Latency', value: stats ? formatLatency(stats.avg_latency) : '—', scope: statsScopeLabel, color: 'var(--color-warning)' }
       ] as m}
         <div class="card" style="padding: 18px; position: relative; overflow: hidden;">
           <div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: {m.color};"></div>

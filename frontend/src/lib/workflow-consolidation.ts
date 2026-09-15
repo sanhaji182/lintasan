@@ -163,7 +163,7 @@ export function analyticsScope(globalTotal: unknown, snapshotTotal: unknown) {
   const globalLabel = comparable(globalTotal) ? 'All recorded requests' : 'All-recorded request count unavailable';
   const snapshotLabel = comparable(snapshotTotal) ? `${snapshotTotal} retained request rows` : 'Retained request row count unavailable';
   if (!comparable(globalTotal) || !comparable(snapshotTotal)) {
-    return { globalLabel, snapshotLabel, note: 'Reconciliation is unknown because comparable counts are unavailable.', reconciled: false, state: 'unknown' as const };
+    return { globalLabel, snapshotLabel, note: 'Reconciliation is unknown because comparable counts are unavailable.', discrepancy: null, reconciled: false, state: 'unknown' as const };
   }
   const difference = globalTotal - snapshotTotal;
   const note = difference > 0
@@ -175,6 +175,7 @@ export function analyticsScope(globalTotal: unknown, snapshotTotal: unknown) {
     globalLabel,
     snapshotLabel,
     note,
+    discrepancy: difference,
     reconciled: difference === 0,
     state: difference === 0 ? 'reconciled' as const : 'mismatch' as const,
   };
