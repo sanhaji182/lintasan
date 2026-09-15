@@ -19,7 +19,7 @@ import (
 // Models endpoint - OpenAI compatible
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Conn().Query(`
-		SELECT m.model_id, c.name as connection_name, m.owned_by
+		SELECT m.model_id, c.id as connection_id, c.name as connection_name, m.owned_by
 		FROM discovered_models m
 		JOIN connections c ON m.connection_id = c.id
 		WHERE m.is_active = 1 AND c.is_active = 1
@@ -41,6 +41,8 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		CatalogEligibility  string `json:"catalog_eligibility,omitempty"`
 		CatalogRevision     string `json:"catalog_revision,omitempty"`
 		ProviderKind        string `json:"provider_kind,omitempty"`
+		ConnectionID        string `json:"connection_id,omitempty"`
+		Source              string `json:"source"`
 		SupportsStreaming   *bool  `json:"supports_streaming,omitempty"`
 		LongRunning         bool   `json:"long_running,omitempty"`
 		ProjectScoped       bool   `json:"project_scoped,omitempty"`
@@ -50,9 +52,9 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
-			var modelID, connName string
+			var modelID, connectionID, connName string
 			var ownedBy sql.NullString
-			if err := rows.Scan(&modelID, &connName, &ownedBy); err != nil {
+			if err := rows.Scan(&modelID, &connectionID, &connName, &ownedBy); err != nil {
 				continue
 			}
 			owner := connName
@@ -60,10 +62,12 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 				owner = ownedBy.String
 			}
 			modelsList = append(modelsList, Model{
-				ID:      modelID,
-				Object:  "model",
-				Created: time.Now().Unix(),
-				OwnedBy: owner,
+				ID:           modelID,
+				Object:       "model",
+				Created:      time.Now().Unix(),
+				OwnedBy:      owner,
+				ConnectionID: connectionID,
+				Source:       "discovered",
 			})
 		}
 		// Check for iteration errors after the loop
@@ -81,6 +85,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 					Object:  "model",
 					Created: time.Now().Unix(),
 					OwnedBy: p.Name,
+					Source:  "catalog",
 				})
 			}
 		}
@@ -109,13 +114,13 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 				}
 				noStreaming := false
 				modelsList = append(modelsList, Model{
-					ID: hopliteProjectModelIDForAccount(account.ID, project.ID), Object: "model", Created: time.Now().Unix(), OwnedBy: "Hoplite Agent",
+					ID: hopliteProjectModelIDForAccount(account.ID, project.ID), Object: "model", Created: time.Now().Unix(), OwnedBy: "Hoplite Agent", ConnectionID: account.ID, Source: "dynamic",
 					DisplayName: account.Name + " · " + project.Name + " · Project default", HopliteProjectID: project.ID, HopliteProjectName: project.Name, HopliteAccountID: account.ID,
 					CatalogEligibility: "project-default", ProviderKind: "cloud_agent", SupportsStreaming: &noStreaming, LongRunning: true, ProjectScoped: true,
 				})
 				for _, model := range hoplite.Models() {
 					modelsList = append(modelsList, Model{
-						ID: hopliteSelectedModelIDForAccount(account.ID, project.ID, model.ID), Object: "model", Created: time.Now().Unix(), OwnedBy: "Hoplite Agent",
+						ID: hopliteSelectedModelIDForAccount(account.ID, project.ID, model.ID), Object: "model", Created: time.Now().Unix(), OwnedBy: "Hoplite Agent", ConnectionID: account.ID, Source: "dynamic",
 						DisplayName: account.Name + " · " + project.Name + " · " + model.DisplayName, HopliteProjectID: project.ID, HopliteProjectName: project.Name, HopliteAccountID: account.ID,
 						HopliteModelID: model.ID, Provider: model.Provider, ContextWindowTokens: model.ContextTokens,
 						CatalogEligibility: model.Plan, CatalogRevision: hoplite.ModelCatalogRevision,

@@ -8,6 +8,7 @@
     BarChart3, Cpu, BookOpen
   } from 'lucide-svelte';
   import { api } from '$lib/api';
+  import { deriveLandingMetrics } from '$lib/landing-metrics';
   import LogoMark from '$lib/components/LogoMark.svelte';
 
   let version = $state('v0.x');
@@ -15,10 +16,8 @@
   let checkingAuth = $state(true);
   let isAuthenticated = $state(false);
 
-  // Animated metric counters
-  let animatedCount = $state({ providers: 0, models: 0, requests: 0, uptime: '—' });
-  const targetCount = { providers: 100, models: 350, requests: 1_000_000 };
-  let countersStarted = $state(false);
+  let metricInput = $state<{ status: 'loading' } | { status: 'error' } | { status: 'ready'; providers: number; models: number }>({ status: 'loading' });
+  const landingMetrics = $derived(deriveLandingMetrics(metricInput));
 
   const features = [
     {
@@ -70,7 +69,10 @@
     try {
       const h = await fetch('/health').then(r => r.ok ? r.json() : null);
       if (h?.version) version = h.version;
-    } catch {}
+      const providers = Number(h?.catalog?.providers || 0);
+      const models = Number(h?.catalog?.models || 0);
+      metricInput = providers > 0 || models > 0 ? { status: 'ready', providers, models } : { status: 'error' };
+    } catch { metricInput = { status: 'error' }; }
 
     const token = localStorage.getItem('lintasan_token');
     if (!token) { checkingAuth = false; return; }
@@ -82,36 +84,12 @@
       localStorage.removeItem('lintasan_user');
     } finally { checkingAuth = false; }
 
-    // Animate counters
-    if (!countersStarted) {
-      countersStarted = true;
-      const dur = 1500;
-      const start = performance.now();
-      function tick() {
-        const el = Math.min((performance.now() - start) / dur, 1);
-        const p = 1 - Math.pow(1 - el, 3);
-        animatedCount.providers = Math.round(p * targetCount.providers);
-        animatedCount.models = Math.round(p * targetCount.models);
-        animatedCount.requests = Math.round(p * targetCount.requests);
-        if (el < 1) requestAnimationFrame(tick);
-        else {
-          animatedCount.providers = targetCount.providers;
-          animatedCount.models = targetCount.models;
-          animatedCount.requests = targetCount.requests;
-        }
-      }
-      requestAnimationFrame(tick);
-    }
+
   });
 
   const ctaHref = $derived(checkingAuth ? '/login' : (isAuthenticated ? '/dashboard' : '/login'));
   const ctaLabel = $derived(checkingAuth ? 'Loading...' : (isAuthenticated ? 'Go to Dashboard' : 'Get Started'));
 
-  function formatNum(n: number): string {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(0) + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(0) + 'K';
-    return String(n);
-  }
 </script>
 
 <svelte:head>
@@ -120,6 +98,7 @@
 </svelte:head>
 
 <div class="landing" class:mounted>
+  <a class="landing-skip" href="#main-content">Skip to content</a>
   <!-- Floating decorative elements -->
   <div class="deco-glow deco-glow-1"></div>
   <div class="deco-glow deco-glow-2"></div>
@@ -140,7 +119,7 @@
     </nav>
   </header>
 
-  <main>
+  <main id="main-content" tabindex="-1">
     <!-- Hero with gradient background -->
     <section class="hero">
       <div class="hero-bg">
@@ -182,25 +161,19 @@
     <!-- Metrics strip with gradient accent -->
     <section class="metrics-strip">
       <div class="metrics-inner">
-        <div class="metric-item">
-          <div class="metric-val">{formatNum(animatedCount.providers)}+</div>
-          <div class="metric-label">Provider Presets</div>
-        </div>
-        <div class="metric-divider"></div>
-        <div class="metric-item">
-          <div class="metric-val">{formatNum(animatedCount.models)}+</div>
-          <div class="metric-label">Supported Models</div>
-        </div>
-        <div class="metric-divider"></div>
-        <div class="metric-item">
-          <div class="metric-val">{formatNum(animatedCount.requests)}+</div>
-          <div class="metric-label">Requests / Day</div>
-        </div>
-        <div class="metric-divider"></div>
-        <div class="metric-item">
-          <div class="metric-val">99.9%</div>
-          <div class="metric-label">Uptime SLA</div>
-        </div>
+        {#if landingMetrics.kind === 'loading'}
+          {#each Array(3) as _}
+            <div class="metric-item" aria-hidden="true"><div class="metric-skeleton"></div><div class="metric-skeleton small"></div></div>
+          {/each}
+        {:else}
+          {#each landingMetrics.items as metric, i}
+            {#if i > 0}<div class="metric-divider"></div>{/if}
+            <div class="metric-item">
+              <div class="metric-val" class:proof={landingMetrics.kind === 'fallback'}>{metric.value}</div>
+              <div class="metric-label">{metric.label}</div>
+            </div>
+          {/each}
+        {/if}
       </div>
     </section>
 
@@ -348,6 +321,13 @@
     overflow-x: hidden;
   }
   .landing.mounted { opacity: 1; }
+  .landing-skip {
+    position: fixed; top: 8px; left: 12px; z-index: 100;
+    transform: translateY(-150%); padding: 9px 14px; border-radius: 9px;
+    background: #4f46e5; color: white; font-size: 13px; font-weight: 700;
+    text-decoration: none; transition: transform .15s ease;
+  }
+  .landing-skip:focus { transform: translateY(0); }
 
   /* Decorative elements */
   .deco-glow {
@@ -598,6 +578,13 @@
     margin-bottom: 4px;
     font-variant-numeric: tabular-nums;
   }
+  .metric-val.proof { font-size: clamp(18px, 3vw, 24px); }
+  .metric-skeleton {
+    width: min(112px, 80%); height: 25px; margin: 0 auto 8px; border-radius: 7px;
+    background: linear-gradient(90deg, #e2e8f0 20%, #f8fafc 50%, #e2e8f0 80%);
+    background-size: 220% 100%; animation: metricShimmer 1.4s infinite;
+  }
+  .metric-skeleton.small { width: min(82px, 65%); height: 10px; }
   .metric-label {
     font-size: 12px;
     font-weight: 600;
@@ -610,6 +597,7 @@
     background: #e2e8f0;
     flex-shrink: 0;
   }
+  @keyframes metricShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 
   .section-header {
     text-align: center;

@@ -223,11 +223,11 @@ curl https://api.openai.com/v1/chat/completions \\
           en_title: 'Your First Request',
           id_content: `Setelah provider terhubung, kirim request chat:
 
-**API key:** pakai API key yang kamu set di dashboard (Users → buka user → copy API key). BUKAN API key provider.`,
+**Gateway API key:** pakai key yang dibuat di Dashboard → API Keys. BUKAN credential provider dari Connections.`,
 
           en_content: `Once a provider is connected, send your first chat request:
 
-**API key:** use the API key you set in the dashboard (Users → open user → copy API key). NOT the provider's API key.`,
+**Gateway API key:** use a key created in Dashboard → API Keys. NOT a provider credential from Connections.`,
           id_code: `# Kirim chat via Lintasan
 curl http://localhost:20180/v1/chat/completions \\
   -H "Authorization: Bearer *** \\
@@ -407,8 +407,8 @@ Lintasan reads: URL, headers (-H), body (-d), and method (-X).`,
 - Token di-attach otomatis oleh dashboard frontend
 - Untuk API dari luar: \`Authorization: Bearer <JWT>\`
 
-**Proxy API Key (untuk OpenAI-compatible endpoint):**
-- Buka Dashboard → Users → pilih user → copy **API Key**
+**Gateway API Key (untuk OpenAI-compatible endpoint):**
+- Buka Dashboard → API Keys → buat/copy **Gateway API Key**
 - Kirim via: \`Authorization: Bearer <API_KEY>\`
 - Atau: \`api-key: <API_KEY>\` header
 
@@ -423,8 +423,8 @@ Lintasan reads: URL, headers (-H), body (-d), and method (-X).`,
 - Token is auto-attached by the dashboard frontend
 - For external API calls: \`Authorization: Bearer <JWT>\`
 
-**Proxy API Key (for OpenAI-compatible endpoints):**
-- Go to Dashboard → Users → select user → copy **API Key**
+**Gateway API Key (for OpenAI-compatible endpoints):**
+- Go to Dashboard → API Keys → create/copy a **Gateway API Key**
 - Send via: \`Authorization: Bearer <API_KEY>\`
 - Or: \`api-key: <API_KEY>\` header
 
@@ -1516,7 +1516,7 @@ OPENAI_BASE_URL="http://localhost:20180/v1"
 → Lintasan belum jalan. Cek: \`./lintasan start\` atau \`systemctl status lintasan\`
 
 **"Invalid API key"**
-→ API key salah. Pastikan pakai **API key dari dashboard Users**, bukan API key provider.
+→ API key salah. Pastikan pakai **gateway API key dari dashboard API Keys**, bukan credential provider.
 
 **"All routes failed"**
 → Semua provider gagal. Cek: Test Connection di dashboard per provider.
@@ -1530,7 +1530,7 @@ OPENAI_BASE_URL="http://localhost:20180/v1"
 → Lintasan isn't running. Check: \`./lintasan start\` or \`systemctl status lintasan\`
 
 **"Invalid API key"**
-→ Wrong API key. Make sure you're using the **API key from dashboard Users**, NOT the provider API key.
+→ Wrong API key. Use a **gateway API key from Dashboard → API Keys**, NOT a provider credential.
 
 **"All routes failed"**
 → All providers failed. Check: Test Connection in dashboard per provider.

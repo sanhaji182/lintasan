@@ -9,8 +9,9 @@ import { page } from '$app/state';
 
   const pageTitles: Record<string, string> = {
     '/dashboard': 'Overview',
-    '/dashboard/connections': 'Accounts',
-    '/dashboard/providers': 'Providers',
+    '/dashboard/quickstart': 'Quickstart',
+    '/dashboard/connections': 'Connections',
+    '/dashboard/providers': 'Provider Catalog',
     '/dashboard/experimental': 'Experimental',
     '/dashboard/experimental/hoplite': 'Hoplite Cloud Agent',
     '/dashboard/discover': 'Discover',
@@ -43,9 +44,10 @@ import { page } from '$app/state';
 <Sidebar bind:open={sidebarOpen} />
 
 <div class="dashboard-shell">
+  <a class="skip-link" href="#dashboard-content">Skip to content</a>
   <Header {title} bind:open={sidebarOpen} />
 
-  <main class="dashboard-main">
+  <main class="dashboard-main" id="dashboard-content" tabindex="-1">
    {@render children()}
   </main>
 </div>
@@ -66,7 +68,25 @@ import { page } from '$app/state';
     animation: fadeInUp 0.4s ease-out;
   }
 
+  .skip-link {
+    position: fixed;
+    top: 8px;
+    left: calc(var(--sidebar-w) + 12px);
+    z-index: 100;
+    transform: translateY(-150%);
+    padding: 9px 14px;
+    border-radius: 9px;
+    background: var(--color-primary);
+    color: white;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+    transition: transform .15s ease;
+  }
+  .skip-link:focus { transform: translateY(0); }
+
   @media (max-width: 768px) {
+    .skip-link { left: 12px; }
     .dashboard-shell {
       margin-left: 0 !important;
     }

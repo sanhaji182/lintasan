@@ -100,7 +100,7 @@
   {:else if error}
     <div class="card"><EmptyState icon={AlertCircle} title="Failed to load API keys" description={error} action={async () => { loading = true; error = ''; try { const res = await api.get<any>('/api/keys'); keys = res.data || []; } catch (e: any) { error = e.message || 'Failed to load API keys'; } loading = false; }} actionLabel="Retry" /></div>
   {:else if keys.length === 0}
-    <div class="card"><EmptyState icon={Key} title="No API keys" description="Create your first API key." /></div>
+    <div class="card"><EmptyState icon={Key} title="No gateway API keys" description="Create a gateway API key for OpenAI-compatible client access. Provider credentials stay under Connections." /></div>
   {:else}
     <div class="card" style="padding: 0; overflow: hidden;">
       <div style="overflow-x: auto;">

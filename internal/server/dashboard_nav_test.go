@@ -37,6 +37,10 @@ func TestEveryDashboardRouteIsReachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read dashboard/+layout.svelte: %v", err)
 	}
+	navigation, err := os.ReadFile(filepath.Join(root, "lib", "navigation.ts"))
+	if err != nil {
+		t.Fatalf("read navigation.ts: %v", err)
+	}
 
 	// Any page linked from anywhere in the app counts as reachable, not just
 	// the sidebar — a route reached from a button on another page is fine.
@@ -91,7 +95,7 @@ func TestEveryDashboardRouteIsReachable(t *testing.T) {
 	// Sanity: the sidebar must actually be the source we think it is, so a
 	// refactor that renames the nav arrays fails loudly instead of silently
 	// making every route look "unlinked from the sidebar".
-	if !strings.Contains(string(sidebar), "/dashboard/connections") {
-		t.Fatal("Sidebar.svelte no longer lists /dashboard/connections — nav structure changed, update this guard")
+	if !strings.Contains(string(sidebar), "navigationGroups") || !strings.Contains(string(navigation), "/dashboard/connections") {
+		t.Fatal("Sidebar navigation no longer sources the route registry containing /dashboard/connections — update this guard")
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/mcp"
 	"github.com/sanhaji182/lintasan-go/internal/metrics"
 	"github.com/sanhaji182/lintasan-go/internal/mitm"
+	"github.com/sanhaji182/lintasan-go/internal/models"
 	"github.com/sanhaji182/lintasan-go/internal/plugin"
 	"github.com/sanhaji182/lintasan-go/internal/rtk"
 	"github.com/sanhaji182/lintasan-go/internal/version"
@@ -347,11 +348,17 @@ func (s *Server) routes() {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	catalog := models.Catalog()
+	catalogModels := 0
+	for _, provider := range catalog {
+		catalogModels += len(provider.Models)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"status":  "ok",
 		"version": version.Version,
 		"uptime":  time.Since(s.startTime).String(),
+		"catalog": map[string]int{"providers": len(catalog), "models": catalogModels},
 	})
 }
 

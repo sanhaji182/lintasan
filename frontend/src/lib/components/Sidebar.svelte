@@ -1,253 +1,106 @@
 <script lang="ts">
   import { page } from '$app/state';
   import {
-    LayoutDashboard, Link2, GitBranch,
-    BarChart3, Key, Users, UserCircle, Webhook,
-    Database, Settings, Puzzle, MessageSquare, BookOpen,
-    Brain, Globe, Server, Sun, Moon, Upload, Plug
+    LayoutDashboard, Link2, GitBranch, BarChart3, Key, Users, UserCircle, Webhook,
+    Database, Settings, Puzzle, MessageSquare, BookOpen, Brain, Globe, Server,
+    Sun, Moon, Upload, Plug, Rocket, FlaskConical, ChevronDown
   } from 'lucide-svelte';
   import { theme } from '$lib/stores/theme';
   import LogoMark from '$lib/components/LogoMark.svelte';
+  import { navigationGroups, routeIsActive, groupIsInitiallyOpen } from '$lib/navigation';
 
   let { open = $bindable(false) }: { open?: boolean } = $props();
+  let expanded = $state<Record<string, boolean>>({});
+  const pathname = $derived(page.url.pathname);
 
-  const menuItems = [
-    { label: 'Overview', path: '/dashboard', icon: LayoutDashboard },
-    { label: 'Connections', path: '/dashboard/connections', icon: Link2 },
-    { label: 'Providers', path: '/dashboard/providers', icon: Server },
-    { label: 'Routing', path: '/dashboard/routing', icon: GitBranch },
-    { label: 'Analytics', path: '/dashboard/analytics', icon: BarChart3 },
-    { label: 'Memory', path: '/dashboard/memory', icon: Brain },
-  ];
+  const icons: Record<string, any> = {
+    overview: LayoutDashboard, quickstart: Rocket, playground: MessageSquare,
+    connections: Link2, providers: Server, routing: GitBranch, observability: BarChart3,
+    keys: Key, teams: Users, users: UserCircle, webhooks: Webhook, memory: Brain,
+    mcp: Plug, translator: Globe, plugins: Puzzle, backup: Database, migrate: Upload,
+    labs: FlaskConical, settings: Settings, docs: BookOpen,
+  };
 
-  const manageItems = [
-    { label: 'API Keys', path: '/dashboard/keys', icon: Key },
-    { label: 'Teams', path: '/dashboard/teams', icon: Users },
-    { label: 'User Management', path: '/dashboard/users', icon: UserCircle },
-    { label: 'Webhooks', path: '/dashboard/webhooks', icon: Webhook },
-    { label: 'Backup', path: '/dashboard/backup', icon: Database },
-    { label: 'Migrate', path: '/dashboard/migrate', icon: Upload },
-    { label: 'Settings', path: '/dashboard/settings', icon: Settings },
-  ];
-
-  const toolItems = [
-    { label: 'MCP Server', path: '/dashboard/mcp', icon: Plug },
-    { label: 'Translator', path: '/dashboard/translator', icon: Globe },
-    { label: 'Plugins', path: '/dashboard/plugins', icon: Puzzle },
-    { label: 'Playground', path: '/dashboard/playground', icon: MessageSquare },
-    { label: 'Docs', path: '/dashboard/docs', icon: BookOpen },
-  ];
-
-  function isActive(path: string) {
-    if (path === '/dashboard') return page.url.pathname === '/dashboard';
-    if (path === '/dashboard/analytics') {
-      return page.url.pathname.startsWith('/dashboard/analytics') ||
-             page.url.pathname.startsWith('/dashboard/usage') ||
-             page.url.pathname.startsWith('/dashboard/savings') ||
-             page.url.pathname.startsWith('/dashboard/logs') ||
-             page.url.pathname.startsWith('/dashboard/observability');
-    }
-    if (path === '/dashboard/connections') {
-      return page.url.pathname.startsWith('/dashboard/connections') ||
-             page.url.pathname.startsWith('/dashboard/discover') ||
-             page.url.pathname.startsWith('/dashboard/oauth-ide') ||
-             page.url.pathname.startsWith('/dashboard/experimental');
-    }
-    if (path === '/dashboard/routing') {
-      return page.url.pathname.startsWith('/dashboard/routing') ||
-             page.url.pathname.startsWith('/dashboard/fallback');
-    }
-    return page.url.pathname.startsWith(path);
+  function isGroupOpen(label: (typeof navigationGroups)[number]['label']) {
+    return expanded[label] ?? groupIsInitiallyOpen(label, pathname);
   }
 
-  // Version is fetched from /health (single source of truth in the Go binary)
-  // rather than hardcoded, so the sidebar never drifts from the actual build.
+  function toggleGroup(label: string) {
+    expanded[label] = !isGroupOpen(label as (typeof navigationGroups)[number]['label']);
+  }
+
   let version = $state('');
   $effect(() => {
-    fetch('/health')
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => { if (d?.version) version = d.version; })
-      .catch(() => {});
+    fetch('/health').then(r => r.ok ? r.json() : null).then(d => { if (d?.version) version = d.version; }).catch(() => {});
   });
-
 </script>
 
-{#if open}
-  <button class="overlay" onclick={() => open = false} aria-label="Close sidebar"></button>
-{/if}
+{#if open}<button class="overlay" onclick={() => open = false} aria-label="Close sidebar"></button>{/if}
 
 <aside class="sidebar" class:open>
   <div class="sidebar-brand">
     <LogoMark size={36} variant={$theme === 'dark' ? 'dark' : 'light'} decorative />
-    <div>
-      <div class="sb-name">Lintasan</div>
-      <div class="sb-version">{version}</div>
-    </div>
+    <div><div class="sb-name">Lintasan</div><div class="sb-version">{version}</div></div>
   </div>
 
-  <nav class="sidebar-nav">
-    {#each [{ label: 'MENU', items: menuItems }, { label: 'MANAGE', items: manageItems }, { label: 'TOOLS', items: toolItems }] as group}
+  <nav class="sidebar-nav" aria-label="Dashboard navigation">
+    {#each navigationGroups as group}
       <div class="nav-group">
-        <div class="nav-group-label">{group.label}</div>
-        {#each group.items as item}
-          {@const active = isActive(item.path)}
-          <a
-            href={item.path}
-            class="nav-item"
-            class:active
-            onclick={() => open = false}
-          >
-            <item.icon size={18} stroke-width={1.6} />
-            <span>{item.label}</span>
-            {#if 'experimental' in item && item.experimental}
-              <span class="nav-lab">LAB</span>
-            {/if}
-          </a>
-        {/each}
+        {#if group.collapsible}
+          <button class="nav-group-toggle" aria-expanded={isGroupOpen(group.label)} onclick={() => toggleGroup(group.label)}>
+            <span>{group.label}</span><ChevronDown size={14} class={isGroupOpen(group.label) ? 'rotated' : ''} />
+          </button>
+        {:else}
+          <div class="nav-group-label">{group.label}</div>
+        {/if}
+        {#if !group.collapsible || isGroupOpen(group.label)}
+          <div class="nav-items">
+            {#each group.items as item}
+              {@const active = routeIsActive(item.path, pathname)}
+              {@const Icon = icons[item.icon]}
+              <a href={item.path} class="nav-item" class:active aria-current={active ? 'page' : undefined} onclick={() => open = false}>
+                <Icon size={18} stroke-width={1.6} /><span>{item.label}</span>
+                {#if item.label === 'Labs'}<span class="nav-lab">LAB</span>{/if}
+              </a>
+            {/each}
+          </div>
+        {/if}
       </div>
     {/each}
   </nav>
 
   <div class="sidebar-footer">
     <button class="theme-btn" onclick={() => theme.toggle()}>
-      {#if $theme === 'light'}
-        <Moon size={16} /> Dark mode
-      {:else}
-        <Sun size={16} /> Light mode
-      {/if}
+      {#if $theme === 'light'}<Moon size={16} /> Dark mode{:else}<Sun size={16} /> Light mode{/if}
     </button>
   </div>
 </aside>
 
 <style>
-  .overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    z-index: 45;
-    background: rgba(15, 23, 42, 0.3);
-    backdrop-filter: blur(4px);
-  }
-
-  .sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    height: 100%;
-    z-index: 50;
-    width: var(--sidebar-w);
-    background: #ffffff;
-    border-right: 1px solid #e2e8f0;
-    display: flex;
-    flex-direction: column;
-    transition: transform 0.25s ease;
-  }
-
-  .sidebar-brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 20px 20px 16px;
-    border-bottom: 1px solid #f1f5f9;
-  }
-
-
-  .sb-name {
-    font-size: 15px;
-    font-weight: 700;
-    color: #1e293b;
-    letter-spacing: -0.2px;
-  }
-
-  .sb-version {
-    font-size: 11px;
-    color: #94a3b8;
-    font-family: 'JetBrains Mono', monospace;
-  }
-
-  .sidebar-nav {
-    flex: 1;
-    overflow-y: auto;
-    padding: 12px 10px;
-  }
-
-  .nav-group { margin-bottom: 20px; }
-
-  .nav-group-label {
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    color: #94a3b8;
-    text-transform: uppercase;
-    padding: 6px 12px 8px;
-  }
-
-  .nav-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 500;
-    color: #475569;
-    text-decoration: none;
-    margin-bottom: 2px;
-    transition: background 0.15s, color 0.15s;
-  }
-
-  .nav-item:hover {
-    background: #f8fafc;
-    color: #1e293b;
-  }
-
-  .nav-item.active {
-    background: #eef2ff;
-    color: #4f46e5;
-    font-weight: 600;
-  }
-
-  .nav-lab {
-    margin-left: auto;
-    font-size: 8px;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    padding: 2px 5px;
-    border-radius: 4px;
-    background: rgba(139, 92, 246, 0.15);
-    color: #7c3aed;
-  }
-
-  .sidebar-footer {
-    padding: 16px 14px;
-    border-top: 1px solid #f1f5f9;
-  }
-
-  .theme-btn {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    padding: 10px 12px;
-    background: none;
-    border: 1px solid #e2e8f0;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 500;
-    color: #475569;
-    cursor: pointer;
-  }
-  .theme-btn:hover { background: #f8fafc; }
-
+  .overlay { display: none; position: fixed; inset: 0; z-index: 45; background: rgba(15,23,42,.3); backdrop-filter: blur(4px); }
+  .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 50; width: var(--sidebar-w); background: var(--color-bg-sidebar); border-right: 1px solid var(--color-sidebar-border); display: flex; flex-direction: column; transition: transform .25s ease; }
+  .sidebar-brand { display: flex; align-items: center; gap: 12px; padding: 18px 20px 15px; border-bottom: 1px solid var(--color-border-light); }
+  .sb-name { font-size: 15px; font-weight: 700; color: var(--color-fg-0); letter-spacing: -.2px; }
+  .sb-version { min-height: 16px; font: 11px var(--font-mono); color: var(--color-fg-3); }
+  .sidebar-nav { flex: 1; overflow-y: auto; padding: 10px; }
+  .nav-group { margin-bottom: 10px; }
+  .nav-group-label, .nav-group-toggle { width: 100%; font-size: 10px; font-weight: 750; letter-spacing: .07em; color: var(--color-fg-3); text-transform: uppercase; padding: 7px 12px; }
+  .nav-group-toggle { display: flex; align-items: center; justify-content: space-between; background: none; border: 0; cursor: pointer; border-radius: 7px; }
+  .nav-group-toggle:hover { background: var(--color-bg-sidebar-hover); color: var(--color-fg-1); }
+  .nav-group-toggle :global(svg) { transition: transform .2s; }
+  .nav-group-toggle :global(svg.rotated) { transform: rotate(180deg); }
+  .nav-items { animation: reveal .18s ease-out; }
+  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 9px; font-size: 13px; font-weight: 500; color: var(--color-fg-2); text-decoration: none; margin-bottom: 1px; transition: background .15s, color .15s; }
+  .nav-item:hover { background: var(--color-bg-sidebar-hover); color: var(--color-fg-0); }
+  .nav-item.active { background: var(--color-primary-light); color: var(--color-primary); font-weight: 650; }
+  .nav-lab { margin-left: auto; font-size: 8px; font-weight: 800; letter-spacing: .04em; padding: 2px 5px; border-radius: 4px; background: var(--color-purple-light); color: var(--color-purple); }
+  .sidebar-footer { padding: 13px 14px; border-top: 1px solid var(--color-border-light); }
+  .theme-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; background: none; border: 1px solid var(--color-border); border-radius: 9px; font-size: 13px; font-weight: 500; color: var(--color-fg-2); cursor: pointer; }
+  .theme-btn:hover { background: var(--color-bg-sidebar-hover); }
+  @keyframes reveal { from { opacity: 0; transform: translateY(-3px); } }
   @media (max-width: 768px) {
-    .sidebar {
-      transform: translateX(-100%);
-    }
-    .sidebar.open {
-      transform: translateX(0);
-    }
-    .overlay {
-      display: block;
-    }
+    .sidebar { transform: translateX(-100%); }
+    .sidebar.open { transform: translateX(0); }
+    .overlay { display: block; }
   }
 </style>

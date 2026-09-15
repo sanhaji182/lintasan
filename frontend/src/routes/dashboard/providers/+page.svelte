@@ -125,8 +125,7 @@
   <!-- Header -->
   <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
     <div>
-      <h1 style="font-size: 24px; font-weight: 700; color: var(--color-fg-0); letter-spacing: -0.5px; margin-bottom: 2px;">Providers</h1>
-      <p style="font-size: 13px; color: var(--color-fg-3);">Model catalog with pricing &amp; capabilities</p>
+      <p style="font-size: 13px; color: var(--color-fg-3); margin: 0;">Browse provider templates, model pricing, and capabilities. Configured accounts live under Connections.</p>
     </div>
   </div>
 
