@@ -245,7 +245,7 @@
         <Activity size={20} style="color: var(--color-primary);" /> Observability
       </h2>
       <p style="font-size: 13px; color: var(--color-fg-2); margin-top: 2px;">
-        Search hot-path health, process runtime, and HTTP traffic. Scrape-friendly at <code style="font-family: var(--font-mono); font-size: 12px;">/metrics</code>.
+        Search hot-path health, process runtime, and HTTP traffic. Process and HTTP counters are cumulative since this process started; memory-search counters follow the configured memory backend. Scrape-friendly at <code style="font-family: var(--font-mono); font-size: 12px;">/metrics</code>.
       </p>
     </div>
     <button class="btn-secondary flex items-center gap-2" onclick={refresh} disabled={refreshing}>

@@ -9,6 +9,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
+  import { routingDirtyState } from '$lib/workflow-consolidation';
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
@@ -71,6 +72,53 @@
   // Quota limit editor rows derived from the quota_limits map
   let quotaRows = $state<Array<{ connId: string; maxPerDay: string }>>([]);
 
+  // ── Explicit sections + save scopes ────────────────────────────────────
+  // The page is split into three independently-savable scopes. Nothing PATCHes
+  // or POSTs on its own: every mutation is staged locally first and reported in
+  // the sticky dirty bar, so an operator always knows what a Save will apply.
+  type Section = 'policies' | 'combos' | 'quotas';
+  let section = $state<Section>('policies');
+  const SECTIONS: { key: Section; label: string; help: string }[] = [
+    { key: 'policies', label: 'Policies', help: 'Global load-balancer strategy, ML routing and cost ranking.' },
+    { key: 'combos', label: 'Combos', help: 'Ordered failover chains and per-combo strategy.' },
+    { key: 'quotas', label: 'Quotas', help: 'Per-connection daily token ceilings.' },
+  ];
+  let savedPolicy = $state('');
+  let savedQuotas = $state('');
+  // Per-combo strategy edits are staged until the Combos scope is saved, so the
+  // page never PATCHes a single combo behind the operator's back.
+  let stagedStrategies = $state<Record<string, string>>({});
+  let baseStrategies = $state<Record<string, string>>({});
+  let stagedLbStrategy = $state<string>('priority');
+
+  const policyFingerprint = $derived(JSON.stringify([smart, stagedLbStrategy]));
+  const quotasFingerprint = $derived(JSON.stringify(quotaRows));
+  const combosDirtyCount = $derived(Object.keys(stagedStrategies).length);
+  const dirty = $derived(routingDirtyState({
+    policy: savedPolicy !== '' && policyFingerprint !== savedPolicy,
+    combos: combosDirtyCount > 0,
+    quotas: savedQuotas !== '' && quotasFingerprint !== savedQuotas,
+  }));
+
+  function discardPolicies() {
+    stagedLbStrategy = loadBalancerStrategy;
+    delete stagedStrategies[''];
+    loadSmart().then(() => { savedPolicy = policyFingerprint; savedQuotas = quotasFingerprint; });
+  }
+
+  function discardCombos() {
+    for (const id of Object.keys(stagedStrategies)) {
+      const combo = combos.find(c => c.id === id);
+      if (combo) combo.strategy = baseStrategies[id] ?? combo.strategy;
+    }
+    stagedStrategies = {};
+  }
+
+  function discardQuotas() {
+    quotaRows = Object.entries(smart.quota_limits || {}).map(([connId, v]) => ({ connId, maxPerDay: String((v as any)?.max_tokens_per_day ?? '') }));
+    savedQuotas = quotasFingerprint;
+  }
+
   async function loadSmart() {
     try {
       const res = await api.get<{ data: SmartConfig }>('/api/smart-routing');
@@ -108,7 +156,9 @@
         quota_limits: limits
       });
       smart.quota_limits = limits;
-      showToast('Smart routing config saved (applied live, no restart)', 'success');
+      savedPolicy = policyFingerprint;
+      savedQuotas = quotasFingerprint;
+      showToast(`Routing ${section === 'quotas' ? 'quota' : 'policy'} scope saved (applied live, no restart)`, 'success');
     } catch (e: any) {
       showToast(e.message || 'Failed to save smart routing config', 'error');
     }
@@ -145,6 +195,8 @@
         entries: Array.isArray(c.entries) ? c.entries : [],
         containsCloudAgent: Array.isArray(c.entries) && c.entries.some((entry: any) => String(entry.model || '').startsWith('hoplite-'))
       })) : [];
+      baseStrategies = Object.fromEntries(combos.map(combo => [combo.id, combo.strategy]));
+      stagedStrategies = {};
     } catch {
       combos = [];
     }
@@ -181,8 +233,9 @@
     try {
       const res = await api.get<{ data: { strategy: string } }>('/api/load-balancer');
       loadBalancerStrategy = res.data?.strategy || 'priority';
+      stagedLbStrategy = loadBalancerStrategy;
     } catch {
-      loadBalancerStrategy = 'priority';
+      loadBalancerStrategy = 'priority'; stagedLbStrategy = 'priority';
     }
   }
 
@@ -198,34 +251,47 @@
   onMount(async () => {
     loading = true;
     await Promise.all([loadCombos(), loadAliases(), loadLoadBalancer(), loadSmart(), loadAdvertisedModels()]);
+    savedPolicy = policyFingerprint;
+    savedQuotas = quotasFingerprint;
     loading = false;
   });
 
-  async function updateStrategy(comboId: string, strategy: string) {
+  function updateStrategy(comboId: string, strategy: string) {
     const combo = combos.find(c => c.id === comboId);
     if (combo?.containsCloudAgent && strategy !== 'priority') {
       showToast('Cloud Agent combos only support priority/fallback to prevent duplicate jobs', 'error');
       return;
     }
     if (combo) combo.strategy = strategy;
-    try {
-      await api.patch(`/api/routing/combos/${comboId}`, { strategy });
-      showToast('Strategy updated', 'success');
-    } catch (e: any) {
-      error = e.message || 'Failed to update strategy';
-      showToast('Failed to update strategy', 'error');
-    }
+    stagedStrategies = { ...stagedStrategies, [comboId]: strategy };
   }
 
-  async function setGlobalStrategy(strategy: string) {
+  async function saveComboStrategies() {
+    saving = true;
     try {
-      await api.post('/api/load-balancer', { strategy });
-      loadBalancerStrategy = strategy;
-      showToast(`Load balancer set to ${strategy}`, 'success');
+      for (const [comboId, strategy] of Object.entries(stagedStrategies)) {
+        await api.patch(`/api/routing/combos/${comboId}`, { strategy });
+      }
+      baseStrategies = { ...baseStrategies, ...stagedStrategies };
+      stagedStrategies = {};
+      showToast('Combo strategy scope saved', 'success');
     } catch (e: any) {
       error = e.message || 'Failed to update strategy';
-      showToast('Failed to update strategy', 'error');
+      showToast('Failed to save combo strategies', 'error');
     }
+    saving = false;
+  }
+
+  async function savePolicy() {
+    savingSmart = true;
+    try {
+      await api.post('/api/load-balancer', { strategy: stagedLbStrategy });
+      loadBalancerStrategy = stagedLbStrategy;
+      await saveSmart();
+      savedPolicy = policyFingerprint;
+      showToast('Policy scope saved', 'success');
+    } catch (e: any) { error = e.message || 'Failed to save policy'; }
+    savingSmart = false;
   }
 
   async function saveOrder() {
@@ -291,7 +357,17 @@
 <TabNav tabs={__tabs} />
 
 
+<div class="routing-section-nav" aria-label="Routing configuration sections">
+  {#each SECTIONS as item}
+    <button class:active={section === item.key} onclick={() => section = item.key}><span>{item.label}</span><small>{item.help}</small></button>
+  {/each}
+</div>
+{#if dirty.count > 0}
+  <div class="dirty-bar" role="status"><strong>{dirty.count} unsaved {dirty.count === 1 ? 'scope' : 'scopes'}:</strong> {dirty.scopes.join(', ')}. Changes are local until you use the Save button in that section.</div>
+{/if}
+
 <div style="display: flex; flex-direction: column; gap: 24px;">
+  {#if section === 'policies' || section === 'quotas'}
   <!-- Smart Routing Intelligence Section (ML routing, cost, quota) -->
   <div class="card">
     <div class="flex items-center justify-between" style="margin-bottom: 20px;">
@@ -307,12 +383,16 @@
           <div style="font-size: 12px; color: var(--color-fg-3);">ML model selection, cost-aware ranking, and per-connection quota. Applied live, no restart.</div>
         </div>
       </div>
-      <button class="btn-primary flex items-center gap-1.5" onclick={saveSmart} disabled={savingSmart}>
-        <Save size={14} stroke-width={2} />
-        {savingSmart ? 'Saving...' : 'Save'}
-      </button>
+      <div class="flex items-center gap-2">
+        <button class="btn-secondary" onclick={section === 'quotas' ? discardQuotas : discardPolicies} disabled={savingSmart}>Discard</button>
+        <button class="btn-primary flex items-center gap-1.5" onclick={section === 'quotas' ? saveSmart : savePolicy} disabled={savingSmart}>
+          <Save size={14} stroke-width={2} />
+          {savingSmart ? 'Saving...' : `Save ${section === 'quotas' ? 'Quotas' : 'Policies'}`}
+        </button>
+      </div>
     </div>
 
+    {#if section === 'policies'}
     <!-- ML Routing -->
     <div class="smart-block">
       <div class="flex items-center justify-between" style="margin-bottom: 12px;">
@@ -371,7 +451,9 @@
         </label>
       </div>
     </div>
+    {/if}
 
+    {#if section === 'quotas'}
     <!-- Quota Limits -->
     <div class="smart-block">
       <div class="flex items-center justify-between" style="margin-bottom: 12px;">
@@ -400,8 +482,11 @@
         </div>
       {/if}
     </div>
+    {/if}
   </div>
+  {/if}
 
+  {#if section === 'policies'}
   <!-- Load Balancer Section -->
   <div class="card">
     <div class="flex items-center justify-between" style="margin-bottom: 20px;">
@@ -422,8 +507,8 @@
       {#each strategies as s}
         <button
           class="badge"
-          style="font-size: 12px; padding: 6px 14px; cursor: pointer; border: 1px solid {loadBalancerStrategy === s.value ? 'var(--color-primary)' : 'var(--color-border)'}; background: {loadBalancerStrategy === s.value ? 'var(--color-primary-light)' : 'var(--color-bg-body)'}; color: {loadBalancerStrategy === s.value ? 'var(--color-primary)' : 'var(--color-fg-2)'}; border-radius: var(--radius-sm); transition: var(--transition);"
-          onclick={() => setGlobalStrategy(s.value)}
+          style="font-size: 12px; padding: 6px 14px; cursor: pointer; border: 1px solid {stagedLbStrategy === s.value ? 'var(--color-primary)' : 'var(--color-border)'}; background: {stagedLbStrategy === s.value ? 'var(--color-primary-light)' : 'var(--color-bg-body)'}; color: {stagedLbStrategy === s.value ? 'var(--color-primary)' : 'var(--color-fg-2)'}; border-radius: var(--radius-sm); transition: var(--transition);"
+          onclick={() => stagedLbStrategy = s.value}
         >
           <s.icon size={14} style="display: inline; vertical-align: -2px; margin-right: 4px;" />
           {s.label}
@@ -431,7 +516,9 @@
       {/each}
     </div>
   </div>
+  {/if}
 
+  {#if section === 'combos'}
   <!-- Combos Section -->
   <div class="card">
     <div class="flex items-center justify-between" style="margin-bottom: 20px;">
@@ -447,10 +534,13 @@
           <div style="font-size: 12px; color: var(--color-fg-3);">Drag to reorder priority. Top combo is tried first.</div>
         </div>
       </div>
-      <button class="btn-primary flex items-center gap-1.5" onclick={saveOrder} disabled={saving}>
-        <Save size={14} stroke-width={2} />
-        {saving ? 'Saving...' : 'Save Order'}
-      </button>
+      <div class="flex items-center gap-2">
+        {#if combosDirtyCount > 0}<button class="btn-secondary" onclick={discardCombos}>Discard strategy edits</button>{/if}
+        <button class="btn-primary flex items-center gap-1.5" onclick={async () => { await saveComboStrategies(); await saveOrder(); }} disabled={saving}>
+          <Save size={14} stroke-width={2} />
+          {saving ? 'Saving...' : `Save Combos${combosDirtyCount ? ` (${combosDirtyCount})` : ''}`}
+        </button>
+      </div>
     </div>
 
     {#if advertisedModels.some(model => model.provider_kind === 'cloud_agent')}
@@ -647,6 +737,7 @@
       </div>
     {/if}
   </div>
+  {/if}
 
   {#if error}
     <div
@@ -664,6 +755,12 @@
 </div>
 
 <style>
+  .routing-section-nav { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
+  .routing-section-nav button { text-align:left; border:1px solid var(--color-border); background:var(--color-bg-card); border-radius:10px; padding:11px 13px; cursor:pointer; color:var(--color-fg-1); }
+  .routing-section-nav button.active { border-color:var(--color-primary); background:var(--color-primary-light); color:var(--color-primary); }
+  .routing-section-nav span { display:block; font-size:13px; font-weight:700; }
+  .routing-section-nav small { display:block; margin-top:3px; font-size:10px; color:var(--color-fg-3); line-height:1.35; }
+  .dirty-bar { position:sticky; top:calc(var(--header-h) + 8px); z-index:20; padding:9px 13px; margin-bottom:16px; border:1px solid color-mix(in srgb,var(--color-warning) 35%,transparent); border-radius:9px; background:color-mix(in srgb,var(--color-warning) 10%,var(--color-bg-card)); color:var(--color-fg-1); font-size:11px; box-shadow:var(--shadow-sm); }
   .smart-block {
     padding: 16px;
     background: var(--color-bg-body);
@@ -758,6 +855,7 @@
     background: var(--color-error-light);
   }
   @media (max-width: 768px) {
+    .routing-section-nav { grid-template-columns:1fr; }
     .combo-card {
       flex-direction: column;
       align-items: flex-start;

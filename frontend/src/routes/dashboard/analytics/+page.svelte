@@ -12,6 +12,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { TrendingUp, Zap, Database, Clock, Activity, Server, Cpu, AlertCircle } from 'lucide-svelte/icons';
+  import { analyticsScope } from '$lib/workflow-consolidation';
 
   interface LogEntry {
     id: string;
@@ -39,6 +40,7 @@
   let eventSource: EventSource | null = null;
   let sseConnected = $state(false);
   let lastSseUpdate = $state<string | null>(null);
+  let retrievedAt = $state<Date | null>(null);
 
   const COLORS = ['#3c50e0', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16', '#f97316'];
 
@@ -52,6 +54,7 @@
       ]);
       stats = statsRes?.data || statsRes || null;
       logs = logsRes?.data || [];
+      retrievedAt = new Date();
     } catch (e: any) {
       error = e.message || 'Failed to load analytics data';
     }
@@ -139,6 +142,7 @@
 
   let totalTokens = $derived(logs.reduce((s, l) => s + (l.input_tokens || 0) + (l.output_tokens || 0), 0));
   let avgLatency = $derived(logs.length > 0 ? Math.round(logs.reduce((s, l) => s + (l.latency_ms || 0), 0) / logs.length) : 0);
+  let scope = $derived(analyticsScope(stats?.total_requests ?? logs.length, logs.length));
 
   function formatLatency(ms: number): string {
     if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
@@ -153,9 +157,9 @@
   <div class="flex items-center justify-between" style="margin-bottom: 20px;">
     <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Analytics</h2>
     <div class="flex items-center gap-2">
-      <div class="live-stream-badge" class:connected={sseConnected} title={sseConnected ? `Connected to SSE stream (last: ${lastSseUpdate || 'just now'})` : 'Connecting to live stream...'}>
+      <div class="live-stream-badge" class:connected={sseConnected} title={sseConnected ? `SSE transport connected${lastSseUpdate ? `; latest counter event ${lastSseUpdate}` : '; waiting for a counter event'}` : 'SSE transport disconnected'}>
         <span class="live-pulse-dot" class:active={sseConnected}></span>
-        <span>{sseConnected ? 'Live Stream' : 'Connecting'}</span>
+        <span>{sseConnected ? 'Counter stream connected' : 'Counter stream offline'}</span>
       </div>
       <button class="btn-secondary flex items-center gap-1.5" style="padding: 5px 12px; font-size: 12px;" onclick={loadAnalytics} title="Reload analytics">
         <Clock size={13} />
@@ -172,6 +176,10 @@
     <div class="card"><EmptyState icon={TrendingUp} title="No analytics data" description="Analytics will appear once traffic flows through the gateway." /></div>
   {:else}
     <!-- Metric cards -->
+    <div class="scope-note" class:reconciled={scope.reconciled}>
+      <strong>Scope:</strong> Total Requests is the gateway’s all-recorded counter. Breakdowns below use {scope.snapshotLabel} returned by <code>/api/logs</code>. {scope.note}
+      {#if retrievedAt}<span> Retrieved {retrievedAt.toLocaleTimeString()}.</span>{/if}
+    </div>
     <div class="grid gap-4" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 24px;">
       {#each [
         { icon: Activity, label: 'Total Requests', value: (stats?.total_requests ?? logs.length).toLocaleString(), color: 'var(--color-primary)' },
@@ -282,6 +290,9 @@
 </div>
 
 <style>
+  .scope-note { margin-bottom:14px; padding:10px 13px; border:1px solid color-mix(in srgb,var(--color-warning) 30%,transparent); background:color-mix(in srgb,var(--color-warning) 8%,var(--color-bg-card)); border-radius:9px; color:var(--color-fg-2); font-size:11px; line-height:1.5; }
+  .scope-note.reconciled { border-color:color-mix(in srgb,var(--color-success) 30%,transparent); background:color-mix(in srgb,var(--color-success) 7%,var(--color-bg-card)); }
+  .scope-note code { font-family:var(--font-mono); }
   .live-stream-badge {
     display: inline-flex;
     align-items: center;
