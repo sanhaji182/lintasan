@@ -21,10 +21,19 @@ describe('analytics scope presentation', () => {
   });
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-  it('keeps loading visible while both analytics sources are pending', () => {
-    get.mockImplementation(() => new Promise(() => {}));
+  it.each([
+    ['/api/dashboard/stats', '/api/logs'],
+    ['/api/logs', '/api/dashboard/stats'],
+  ])('keeps loading visible without stale cards while %s is pending and %s has settled', async (pendingPath, settledPath) => {
+    get.mockImplementation((path: string) => path === pendingPath
+      ? new Promise(() => {})
+      : Promise.resolve(settledPath === '/api/dashboard/stats'
+        ? { total_requests: 28, cache_hit_rate: 25, avg_latency: 120 }
+        : { data: [{ id: '1', input_tokens: 1, output_tokens: 2, latency_ms: 100, cached: 0, status: 200 }] }));
     render(AnalyticsPage);
     expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
+    expect(screen.queryByText('Total Requests')).not.toBeInTheDocument();
+    expect(screen.queryByText(/retained request rows|all recorded requests/i)).not.toBeInTheDocument();
   });
 
   it('labels every metric card with its contract-backed scope', async () => {
@@ -44,7 +53,7 @@ describe('analytics scope presentation', () => {
     expect(screen.getByText(/all-recorded counter exceeds the retained rows by 8/i)).toBeInTheDocument();
   });
 
-  it('does not fabricate all-recorded reconciliation when dashboard stats fail', async () => {
+  it('keeps stats-backed cards unavailable instead of changing their scope when dashboard stats fail', async () => {
     get.mockImplementation(async (path: string) => {
       if (path === '/api/dashboard/stats') throw new Error('stats offline');
       return { data: Array.from({ length: 20 }, (_, i) => ({ id: `${i}`, input_tokens: 1, output_tokens: 2, latency_ms: 100, cached: 0, status: 200 })) };
@@ -52,10 +61,37 @@ describe('analytics scope presentation', () => {
     render(AnalyticsPage);
 
     expect(await screen.findByText(/Dashboard stats unavailable: stats offline/i)).toBeInTheDocument();
-    const totalRequestsCard = screen.getByText('Total Requests').closest('.card')!;
-    expect(within(totalRequestsCard as HTMLElement).getByText('20 retained request rows')).toBeInTheDocument();
+    for (const label of ['Total Requests', 'Cache Hit Rate', 'Avg Latency']) {
+      const card = screen.getAllByText(label)[0].closest('.card')!;
+      expect(within(card as HTMLElement).getByText('All-recorded statistics unavailable')).toBeInTheDocument();
+      expect(within(card as HTMLElement).getByText('—')).toBeInTheDocument();
+      expect(within(card as HTMLElement).queryByText(/retained request rows/i)).not.toBeInTheDocument();
+    }
+    const totalTokensCard = screen.getByText('Total Tokens').closest('.card')!;
+    expect(within(totalTokensCard as HTMLElement).getByText('20 retained request rows')).toBeInTheDocument();
+    expect(within(totalTokensCard as HTMLElement).getByText('60')).toBeInTheDocument();
     expect(screen.queryByText(/independently collected counts match/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/gateway’s all-recorded counter/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/filter(?:ed|ing)?|caused by|due to/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps retained-row token scope unavailable when request logs fail', async () => {
+    get.mockImplementation(async (path: string) => {
+      if (path === '/api/logs') throw new Error('logs offline');
+      return { total_requests: 28, cache_hit_rate: 25, avg_latency: 120 };
+    });
+    render(AnalyticsPage);
+
+    expect(await screen.findByText(/Request logs unavailable: logs offline/i)).toBeInTheDocument();
+    for (const label of ['Total Requests', 'Cache Hit Rate', 'Avg Latency']) {
+      const card = screen.getAllByText(label)[0].closest('.card')!;
+      expect(within(card as HTMLElement).getByText('All recorded requests')).toBeInTheDocument();
+    }
+    const totalTokensCard = screen.getByText('Total Tokens').closest('.card')!;
+    expect(within(totalTokensCard as HTMLElement).getByText('Retained request rows unavailable')).toBeInTheDocument();
+    expect(within(totalTokensCard as HTMLElement).getByText('—')).toBeInTheDocument();
+    expect(within(totalTokensCard as HTMLElement).queryByText(/\d+ retained request rows/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/filter(?:ed|ing)?|caused by|due to/i)).not.toBeInTheDocument();
   });
 
   it('keeps an empty retained snapshot truthful when dashboard stats fail', async () => {
@@ -67,7 +103,12 @@ describe('analytics scope presentation', () => {
 
     expect(await screen.findByText(/Dashboard stats unavailable: stats offline/i)).toBeInTheDocument();
     const totalRequestsCard = screen.getByText('Total Requests').closest('.card')!;
-    expect(within(totalRequestsCard as HTMLElement).getByText('0 retained request rows')).toBeInTheDocument();
+    expect(within(totalRequestsCard as HTMLElement).getByText('All-recorded statistics unavailable')).toBeInTheDocument();
+    expect(within(totalRequestsCard as HTMLElement).getByText('—')).toBeInTheDocument();
+    expect(within(totalRequestsCard as HTMLElement).queryByText(/retained request rows/i)).not.toBeInTheDocument();
+    const totalTokensCard = screen.getByText('Total Tokens').closest('.card')!;
+    expect(within(totalTokensCard as HTMLElement).getByText('0 retained request rows')).toBeInTheDocument();
+    expect(within(totalTokensCard as HTMLElement).getByText('0')).toBeInTheDocument();
     expect(screen.queryByText(/independently collected counts match/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/gateway’s all-recorded counter/i)).not.toBeInTheDocument();
   });
