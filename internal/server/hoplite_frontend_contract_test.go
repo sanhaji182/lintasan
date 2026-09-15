@@ -124,7 +124,7 @@ func TestHopliteCloudAgentFrontendContract(t *testing.T) {
 		"selectedModel.startsWith('hoplite-agent/')",
 		"selectedModel.startsWith('hoplite-model/v1/')",
 		"selectedModel.startsWith('hoplite-model/v2/')",
-		"stream: !isHopliteModel",
+		"shouldUseStreaming(selectedCapability)",
 		"await res.json()",
 		"provider_kind === 'cloud_agent'",
 		"Cloud Agent · non-streaming · project-scoped",
