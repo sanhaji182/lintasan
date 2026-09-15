@@ -55,6 +55,8 @@
   let showAliasForm = $state(false);
   let newAlias = $state('');
   let newTarget = $state('');
+  let aliasFeedback = $state('');
+  let aliasFeedbackKind = $state<'success' | 'error'>('success');
 
   // Smart Routing Intelligence config (ML routing, cost, quota)
   interface SmartConfig {
@@ -357,29 +359,44 @@
 
   async function addAlias() {
     if (!newAlias.trim() || !newTarget.trim()) return;
+    const aliasName = newAlias.trim();
+    error = '';
+    aliasFeedback = '';
     try {
       const data = await api.post<{ alias: Alias }>('/api/routing/aliases', {
-        alias: newAlias.trim(),
+        alias: aliasName,
         target: newTarget.trim()
       });
       aliases = [...aliases, data.alias];
-      showToast(`Alias “${data.alias.alias}” created and applied immediately`, 'success');
+      aliasFeedback = `Alias “${data.alias.alias}” created and applied immediately`;
+      aliasFeedbackKind = 'success';
+      showToast(aliasFeedback, 'success');
       newAlias = '';
       newTarget = '';
       showAliasForm = false;
     } catch (e: any) {
-      error = e.message || 'Failed to add alias';
+      const reason = e.message || 'Request failed';
+      aliasFeedback = `Alias “${aliasName}” was not created: ${reason}`;
+      aliasFeedbackKind = 'error';
+      showToast(aliasFeedback, 'error');
     }
   }
 
   async function deleteAlias(id: string) {
     if (isBuiltInAlias(id)) return;
+    error = '';
+    aliasFeedback = '';
     try {
       await api.delete(`/api/routing/aliases/${id}`);
       aliases = aliases.filter(a => a.id !== id);
-      showToast(`Alias “${id}” deleted immediately`, 'success');
+      aliasFeedback = `Alias “${id}” deleted immediately`;
+      aliasFeedbackKind = 'success';
+      showToast(aliasFeedback, 'success');
     } catch (e: any) {
-      error = e.message || 'Failed to delete alias';
+      const reason = e.message || 'Request failed';
+      aliasFeedback = `Alias “${id}” was not deleted: ${reason}`;
+      aliasFeedbackKind = 'error';
+      showToast(aliasFeedback, 'error');
     }
   }
 </script>
@@ -691,7 +708,7 @@
         </div>
         <div>
           <div style="font-size: 15px; font-weight: 600; color: var(--color-fg-0);">Model Aliases</div>
-          <div style="font-size: 12px; color: var(--color-fg-3);">Map friendly names to actual model identifiers. Alias changes apply immediately and do not use Save Combos.</div>
+          <div style="font-size: 12px; color: var(--color-fg-3);">Map friendly names to actual model identifiers. Creating or deleting an alias applies immediately and does not use Save Combos.</div>
         </div>
       </div>
       <button
@@ -702,6 +719,12 @@
         Add Alias
       </button>
     </div>
+
+    {#if aliasFeedback}
+      <div class="alias-feedback" class:error={aliasFeedbackKind === 'error'} role={aliasFeedbackKind === 'error' ? 'alert' : 'status'}>
+        {aliasFeedback}
+      </div>
+    {/if}
 
     {#if showAliasForm}
       <div class="alias-form">
@@ -774,6 +797,7 @@
 
   {#if error}
     <div
+      role="alert"
       class="flex items-center gap-2"
       style="
         padding: 12px 16px; border-radius: var(--radius-sm);
@@ -794,6 +818,8 @@
   .routing-section-nav span { display:block; font-size:13px; font-weight:700; }
   .routing-section-nav small { display:block; margin-top:3px; font-size:10px; color:var(--color-fg-3); line-height:1.35; }
   .dirty-bar { position:sticky; top:calc(var(--header-h) + 8px); z-index:20; padding:9px 13px; margin-bottom:16px; border:1px solid color-mix(in srgb,var(--color-warning) 35%,transparent); border-radius:9px; background:color-mix(in srgb,var(--color-warning) 10%,var(--color-bg-card)); color:var(--color-fg-1); font-size:11px; box-shadow:var(--shadow-sm); }
+  .alias-feedback { margin-bottom:14px; padding:9px 12px; border:1px solid color-mix(in srgb,var(--color-success) 35%,transparent); border-radius:8px; background:var(--color-success-light); color:var(--color-success); font-size:12px; font-weight:600; }
+  .alias-feedback.error { border-color:color-mix(in srgb,var(--color-error) 35%,transparent); background:var(--color-error-light); color:var(--color-error); }
   .smart-block {
     padding: 16px;
     background: var(--color-bg-body);
