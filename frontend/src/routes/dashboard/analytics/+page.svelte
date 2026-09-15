@@ -184,7 +184,7 @@
     <Spinner />
   {:else if error}
     <div class="card"><EmptyState icon={AlertCircle} title="Failed to load analytics" description={error} action={loadAnalytics} actionLabel="Retry" /></div>
-  {:else if logs.length === 0 && !stats}
+  {:else if logs.length === 0 && !stats && !statsError && !logsError}
     <div class="card"><EmptyState icon={TrendingUp} title="No analytics data" description="Analytics will appear once traffic flows through the gateway." /></div>
   {:else}
     <!-- Metric cards -->
