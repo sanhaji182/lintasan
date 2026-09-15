@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/sanhaji182/lintasan-go/internal/config"
+	"github.com/sanhaji182/lintasan-go/internal/hoplite"
 )
 
 func TestConnectionsRepresentHopliteAsMaskedCloudAgent(t *testing.T) {
@@ -64,9 +65,44 @@ func TestConnectionTestDispatchesHopliteVirtualConnection(t *testing.T) {
 	if projectCalls.Load() != 1 {
 		t.Fatalf("Hoplite project probe calls=%d want=1", projectCalls.Load())
 	}
-	for _, want := range []string{`"ok":true`, `"project_count":1`, `"thread_create":"not_tested"`} {
+	for _, want := range []string{`"success":true`, `"models_count":21`, `"project_count":1`, `"thread_create":"not_tested"`} {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("Hoplite connection test response missing %s: %s", want, body)
+		}
+	}
+}
+
+func TestHopliteDiscoveredModelsExposeVirtualCatalog(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"projects":[{"id":"proj_1","name":"Acme"}]}`))
+	}))
+	defer upstream.Close()
+
+	s, ts := newTestServer(t, &config.Config{MasterKey: "test-master-key-1234567890"})
+	s.hopliteBaseURL, s.hopliteHTTPClient = upstream.URL, upstream.Client()
+	if err := s.credStore().SetCredential(context.Background(), "hoplite", "hop_test"); err != nil {
+		t.Fatal(err)
+	}
+	token := makeKnownAdmin(t, s, "discovered-cloud-admin", "correct horse battery")
+	resp := hopliteRequest(t, ts, http.MethodGet, "/api/models/discovered?connection_id=hoplite-cloud-agent", "", token)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Hoplite discovered models status=%d body=%s", resp.StatusCode, body)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	items, _ := envelope["data"].([]any)
+	if len(items) != len(hoplite.Models())+1 {
+		t.Fatalf("Hoplite discovered model count=%d want=%d body=%s", len(items), len(hoplite.Models())+1, body)
+	}
+	encoded := string(body)
+	for _, want := range []string{"hoplite-agent/proj_1", "hoplite-model/v1/", `"provider_kind":"cloud_agent"`, `"supports_streaming":false`} {
+		if !strings.Contains(encoded, want) {
+			t.Fatalf("Hoplite discovered response missing %q: %s", want, body)
 		}
 	}
 }

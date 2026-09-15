@@ -17,6 +17,7 @@ import (
     "github.com/sanhaji182/lintasan-go/internal/cost"
     "github.com/sanhaji182/lintasan-go/internal/discover"
     "github.com/sanhaji182/lintasan-go/internal/errfmt"
+    "github.com/sanhaji182/lintasan-go/internal/hoplite"
     "github.com/sanhaji182/lintasan-go/internal/provider"
 )
 
@@ -315,10 +316,20 @@ func truncateBody(b []byte, n int) string { if len(b)<=n { return string(b) }; r
 
 func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request){
     var in map[string]any; json.NewDecoder(r.Body).Decode(&in)
-    // Hoplite is a virtual Cloud Agent connection backed by the encrypted
-    // credential store, so it has no row/base_url in the connections table.
+    // Hoplite is virtual and returns a standard connection-test envelope so the
+    // Connections page can show status/count instead of "unknown".
     if id,_:=in["id"].(string); id==hopliteConnectionID {
-        s.handleHopliteTest(w, r)
+        client, ok := s.hopliteClient(w, r)
+        if !ok { return }
+        started := time.Now()
+        projects, _, err := client.ListProjects(r.Context())
+        if err != nil { writeHopliteError(w, err); return }
+        writeJSON(w, map[string]any{
+            "success": true, "message": "Hoplite connected",
+            "latency_ms": time.Since(started).Milliseconds(),
+            "models_count": len(projects)*(len(hoplite.Models())+1),
+            "project_count": len(projects), "thread_create": "not_tested",
+        })
         return
     }
     base,_:=in["base_url"].(string); if base==""{base,_=in["baseUrl"].(string)}
@@ -788,6 +799,26 @@ func (s *Server) handleModelsSyncByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleModelsDiscovered(w http.ResponseWriter, r *http.Request) {
     connID := r.URL.Query().Get("connection_id")
+    if connID == hopliteConnectionID {
+        key, ok := s.hopliteCredential(r.Context())
+        if !ok {
+            writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "Hoplite credential is not configured"})
+            return
+        }
+        projects, _, err := s.newHopliteClient(key, 3*time.Second).ListProjects(r.Context())
+        if err != nil { writeHopliteError(w, err); return }
+        out := []map[string]any{}
+        for _, project := range projects {
+            if strings.TrimSpace(project.ID)=="" { continue }
+            out=append(out,map[string]any{"id":"hoplite-agent/"+project.ID,"model_id":"hoplite-agent/"+project.ID,"model_name":project.Name+" · Project default","owned_by":"Hoplite Agent","is_active":1,"provider_kind":providerKindCloudAgent,"supports_streaming":false,"long_running":true,"project_scoped":true})
+            for _, model := range hoplite.Models() {
+                id:=hopliteSelectedModelID(project.ID,model.ID)
+                out=append(out,map[string]any{"id":id,"model_id":id,"model_name":model.DisplayName,"owned_by":"Hoplite Agent","is_active":1,"provider_kind":providerKindCloudAgent,"supports_streaming":false,"long_running":true,"project_scoped":true})
+            }
+        }
+        writeData(w,out)
+        return
+    }
     var rows *sql.Rows
     var err error
     if connID != "" {

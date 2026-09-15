@@ -246,9 +246,16 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 	// It appears once configured (including an invalid credential for diagnostics)
 	// and therefore does not change empty-install connection semantics.
 	if hopliteStatus.Configured {
+		modelsCount := 0
+		if key, ok := s.hopliteCredential(r.Context()); ok {
+			client := s.newHopliteClient(key, 3*time.Second)
+			if projects, _, err := client.ListProjects(r.Context()); err == nil {
+				modelsCount = len(projects) * (len(hoplite.Models()) + 1)
+			}
+		}
 		hopliteConnection := ConnResponse{
 			ID: hopliteConnectionID, Name: "Hoplite", BaseURL: "https://api.hoplite.sh", Format: "hoplite-agent",
-			IsActive: 1, ProviderKind: providerKindCloudAgent, CredentialLabel: "Organization API Key",
+			IsActive: 1, ModelsCount: modelsCount, ProviderKind: providerKindCloudAgent, CredentialLabel: "Organization API Key",
 			CredentialConfigured: hopliteStatus.Configured, CredentialMasked: hopliteStatus.MaskedValue,
 			SupportsStreaming: false, LongRunning: true, ProjectScoped: true,
 		}
