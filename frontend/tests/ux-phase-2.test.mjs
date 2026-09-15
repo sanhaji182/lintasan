@@ -4,7 +4,7 @@ import {
   buildCallableCatalog, filterCallableModels, groupCallableModels,
   rememberRecentModel, routingDirtyState, analyticsScope,
   buildPolicyPayload, buildQuotaPayload, comboOrderFingerprint, shouldUseStreaming,
-  sourceFreshness,
+  sourceFreshness, selectCatalogModel,
 } from '../src/lib/workflow-consolidation.ts';
 
 test('catalog combines aliases, combos, provider models and cloud agents without duplicate callable IDs', () => {
@@ -16,7 +16,7 @@ test('catalog combines aliases, combos, provider models and cloud agents without
       { id: 'hoplite-account/a', name: 'Hoplite Work', is_active: 1, provider_kind: 'cloud_agent' },
     ],
     models: [
-      { id: 'gpt-mini', connection_id: 'openai-1', owned_by: 'openai', context_window: 128000 },
+      { id: 'gpt-mini', connection_id: 'openai-1', owned_by: 'openai', context_window_tokens: 128000 },
       { id: 'gpt-mini', connection_id: 'openai-1', owned_by: 'openai' },
       { id: 'hoplite-agent/a/project', connection_id: 'hoplite-account/a', provider_kind: 'cloud_agent', supports_streaming: false },
     ],
@@ -28,12 +28,35 @@ test('catalog combines aliases, combos, provider models and cloud agents without
   assert.equal(rows.find(row => row.id === 'hoplite-agent/a/project')?.supportsStreaming, false);
 });
 
+test('catalog preserves authoritative context metadata and legacy compatibility', () => {
+  const rows = buildCallableCatalog({
+    models: [
+      { id: 'authoritative', context_window_tokens: 200000, context_window: 128000 },
+      { id: 'legacy', context_window: 64000 },
+    ],
+    aliases: {}, combos: [], connections: [],
+  });
+  assert.equal(rows.find(row => row.id === 'authoritative')?.contextWindow, 200000);
+  assert.equal(rows.find(row => row.id === 'legacy')?.contextWindow, 64000);
+});
+
 test('catalog does not invent missing health, context, capabilities, or price', () => {
   const [row] = buildCallableCatalog({ models: [{ id: 'plain', owned_by: 'custom' }], aliases: {}, combos: [], connections: [] });
   assert.equal(row.health, 'unknown');
   assert.equal(row.contextWindow, null);
   assert.equal(row.price, null);
   assert.deepEqual(row.capabilities, []);
+});
+
+test('playground selects only models present in the loaded callable catalog', () => {
+  const rows = buildCallableCatalog({
+    models: [{ id: 'catalog-first' }, { id: 'remembered-model' }],
+    aliases: {}, combos: [], connections: [],
+  });
+  assert.equal(selectCatalogModel(rows, 'catalog-first', 'remembered-model'), 'catalog-first');
+  assert.equal(selectCatalogModel(rows, 'stale-query-model', 'remembered-model'), 'remembered-model');
+  assert.equal(selectCatalogModel(rows, 'stale-query-model', 'stale-remembered-model'), 'catalog-first');
+  assert.equal(selectCatalogModel([], 'stale-query-model', 'stale-remembered-model'), '');
 });
 
 test('fuzzy model search tolerates separators and matches route/account metadata', () => {

@@ -3,7 +3,7 @@
   import { page } from '$app/state';
   import { api } from '$lib/api';
   import ModelCombobox from '$lib/components/ModelCombobox.svelte';
-  import { buildCallableCatalog, rememberRecentModel, shouldUseStreaming, type CallableModel } from '$lib/workflow-consolidation';
+  import { buildCallableCatalog, rememberRecentModel, selectCatalogModel, shouldUseStreaming, type CallableModel } from '$lib/workflow-consolidation';
   import {
     Send, Bot, User, Settings2, Thermometer, Hash,
     Copy, Trash2, ChevronDown, ChevronUp, Brain, Sparkles
@@ -60,8 +60,7 @@
       availableModels = catalogRows.map(model => cloudComboIDs.has(model.id) ? { ...model, kind: 'cloud_agent', supportsStreaming: false } : model);
       try { recentModels = JSON.parse(localStorage.getItem('lintasan.recentModels') || '[]'); } catch { recentModels = []; }
       const remembered = localStorage.getItem('lintasan.lastModel') || '';
-      const next = requestedModel || remembered || availableModels[0]?.id || 'gpt-4o';
-      selectedModel = availableModels.some(model => model.id === next) || requestedModel ? next : (availableModels[0]?.id || next);
+      selectedModel = selectCatalogModel(availableModels, requestedModel, remembered);
     } catch {}
   }
 

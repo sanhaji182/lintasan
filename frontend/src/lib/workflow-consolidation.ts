@@ -87,7 +87,8 @@ export function buildCallableCatalog(input: CatalogInput): CallableModel[] {
       health: clean(model.health_status) || clean(conn?.health_status) || (conn && !conn.is_active ? 'inactive' : 'unknown'),
       supportsStreaming: typeof model.supports_streaming === 'boolean' ? model.supports_streaming :
         (typeof conn?.supports_streaming === 'boolean' ? conn.supports_streaming : null),
-      contextWindow: Number.isFinite(model.context_window) ? model.context_window : null,
+      contextWindow: Number.isFinite(model.context_window_tokens) ? model.context_window_tokens :
+        (Number.isFinite(model.context_window) ? model.context_window : null),
       price: model.price ?? model.pricing ?? null, capabilities });
   }
   return out;
@@ -99,6 +100,13 @@ export function filterCallableModels(rows: CallableModel[], query: string): Call
 
 export function rememberRecentModel(current: string[], id: string, limit = 5): string[] {
   return [id, ...current.filter(item => item !== id)].slice(0, limit);
+}
+
+export function selectCatalogModel(rows: CallableModel[], requested: string, remembered: string): string {
+  const callableIDs = new Set(rows.map(row => row.id));
+  if (requested && callableIDs.has(requested)) return requested;
+  if (remembered && callableIDs.has(remembered)) return remembered;
+  return rows[0]?.id || '';
 }
 
 export function groupCallableModels(rows: CallableModel[], recent: string[], recommended?: string | null) {
