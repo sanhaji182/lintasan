@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { Search, ChevronDown, Check, Cloud, Route, Server } from 'lucide-svelte';
   import { filterCallableModels, groupCallableModels, type CallableModel } from '$lib/workflow-consolidation';
 
@@ -6,13 +7,20 @@
     models: CallableModel[]; selected: string; recent?: string[]; recommended?: string | null; onselect: (id: string) => void;
   }>();
   let open = $state(false), query = $state(''), activeIndex = $state(0);
+  let searchInput = $state<HTMLInputElement>();
   const current = $derived(models.find((model: CallableModel) => model.id === selected));
   const groups = $derived(groupCallableModels(filterCallableModels(models, query), recent, recommended));
   const flat = $derived(groups.flatMap(group => group.items));
 
+  async function openPicker() {
+    open = true;
+    await tick();
+    searchInput?.focus();
+  }
+  function togglePicker() { if (open) open = false; else void openPicker(); }
   function choose(model: CallableModel) { onselect(model.id); query = ''; open = false; }
   function keydown(event: KeyboardEvent) {
-    if (!open && ['ArrowDown', 'Enter', ' '].includes(event.key)) { event.preventDefault(); open = true; return; }
+    if (!open && event.key === 'ArrowDown') { event.preventDefault(); void openPicker(); return; }
     if (!open) return;
     if (event.key === 'ArrowDown') { event.preventDefault(); activeIndex = Math.min(activeIndex + 1, flat.length - 1); }
     if (event.key === 'ArrowUp') { event.preventDefault(); activeIndex = Math.max(activeIndex - 1, 0); }
@@ -22,12 +30,12 @@
 </script>
 
 <div class="picker">
-  <button type="button" class="trigger" aria-haspopup="listbox" aria-expanded={open} onkeydown={keydown} onclick={() => open = !open}>
+  <button type="button" class="trigger" aria-haspopup="listbox" aria-expanded={open} onkeydown={keydown} onclick={togglePicker}>
     <span><code>{current?.id || selected || 'Choose a model'}</code>{#if current}<small>{current.account || current.provider || current.kind.replace('_', ' ')}</small>{/if}</span><ChevronDown size={15} />
   </button>
   {#if open}
     <div class="popover">
-      <label class="search"><Search size={14} /><span class="sr-only">Search models</span><input role="combobox" aria-expanded="true" aria-controls="model-options" aria-activedescendant={flat[activeIndex] ? `model-${activeIndex}` : undefined} bind:value={query} onkeydown={keydown} oninput={() => activeIndex = 0} placeholder="Search callable ID, provider, account…" /></label>
+      <label class="search"><Search size={14} /><span class="sr-only">Search models</span><input bind:this={searchInput} role="combobox" aria-expanded="true" aria-controls="model-options" aria-activedescendant={flat[activeIndex] ? `model-${activeIndex}` : undefined} bind:value={query} onkeydown={keydown} oninput={() => activeIndex = 0} placeholder="Search callable ID, provider, account…" /></label>
       <div class="options" id="model-options" role="listbox" aria-label="Callable models">
         {#each groups as group}
           <div class="group" role="group" aria-label={group.label}><div class="group-label">{group.label}</div>

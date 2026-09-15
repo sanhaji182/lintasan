@@ -118,8 +118,8 @@ func TestAuthFailureFailsOverToNextCandidate(t *testing.T) {
 
 	h, database := newAuthProxy(t)
 	defer database.Close()
-	addAuthConnection(t, database, "qoder", srvDenied.URL, 0)  // higher priority
-	addAuthConnection(t, database, "cerebras", srvOK.URL, 1)   // next candidate
+	addAuthConnection(t, database, "qoder", srvDenied.URL, 100) // higher priority
+	addAuthConnection(t, database, "cerebras", srvOK.URL, 0)    // next candidate
 	addAuthModel(t, database, "qoder", "m")
 	addAuthModel(t, database, "cerebras", "m")
 
