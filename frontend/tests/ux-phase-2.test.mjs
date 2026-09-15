@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildCallableCatalog, filterCallableModels, groupCallableModels,
   rememberRecentModel, routingDirtyState, analyticsScope,
-  buildPolicyPayload, buildQuotaPayload, comboOrderFingerprint,
+  buildPolicyPayload, buildQuotaPayload, comboOrderFingerprint, shouldUseStreaming,
 } from '../src/lib/workflow-consolidation.ts';
 
 test('catalog combines aliases, combos, provider models and cloud agents without duplicate callable IDs', () => {
@@ -56,6 +56,12 @@ test('picker groups recommended/recent, routes, cloud agents and provider models
   assert.equal(groups[0].items[0].id, 'gpt-mini');
   assert.equal(groups.flatMap(group => group.items).filter(item => item.id === 'gpt-mini').length, 1);
   assert.equal(rememberRecentModel(['a', 'b', 'a'], 'c', 3).join(','), 'c,a,b');
+});
+
+test('cloud-agent direct IDs and cloud-agent combos stay non-streaming', () => {
+  assert.equal(shouldUseStreaming({ id: 'hoplite-agent/project', kind: 'cloud_agent', supportsStreaming: false }), false);
+  assert.equal(shouldUseStreaming({ id: 'agent-combo', kind: 'route', provider: 'Cloud Agent combo', supportsStreaming: false }), false);
+  assert.equal(shouldUseStreaming({ id: 'gpt-mini', kind: 'provider', supportsStreaming: null }), true);
 });
 
 test('routing dirty state reports each explicit save scope', () => {

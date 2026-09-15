@@ -3,7 +3,7 @@
   import { page } from '$app/state';
   import { api } from '$lib/api';
   import ModelCombobox from '$lib/components/ModelCombobox.svelte';
-  import { buildCallableCatalog, rememberRecentModel, type CallableModel } from '$lib/workflow-consolidation';
+  import { buildCallableCatalog, rememberRecentModel, shouldUseStreaming, type CallableModel } from '$lib/workflow-consolidation';
   import {
     Send, Bot, User, Settings2, Thermometer, Hash,
     Copy, Trash2, ChevronDown, ChevronUp, Brain, Sparkles
@@ -153,7 +153,7 @@
         }
       }
 
-      const isHopliteModel = isCloudAgentSelection;
+      const streamResponse = shouldUseStreaming(selectedCapability);
       const res = await api.raw('/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -161,7 +161,7 @@
           model: selectedModel,
           messages: apiMessages,
           temperature,
-          stream: !isHopliteModel,
+          stream: streamResponse,
         }),
         signal: streamAbort.signal,
       });
@@ -171,10 +171,10 @@
         throw new Error(errBody || `HTTP ${res.status}`);
       }
 
-      if (isHopliteModel) {
+      if (!streamResponse) {
         const payload = await res.json();
         const choice = payload?.choices?.[0]?.message;
-        const content = choice?.content || 'Hoplite completed without returning a message.';
+        const content = choice?.content || 'The model completed without returning a message.';
         const lastIdx = messages.length - 1;
         messages[lastIdx] = {
           ...messages[lastIdx],

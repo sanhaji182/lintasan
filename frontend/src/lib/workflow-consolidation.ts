@@ -114,6 +114,10 @@ export function groupCallableModels(rows: CallableModel[], recent: string[], rec
   return groups.filter(group => group.items.length > 0);
 }
 
+export function shouldUseStreaming(model: Pick<CallableModel, 'kind' | 'supportsStreaming'> | undefined): boolean {
+  return model?.kind !== 'cloud_agent' && model?.supportsStreaming !== false;
+}
+
 export function comboOrderFingerprint(combos: Array<{ id: string }>): string {
   return JSON.stringify(combos.map(combo => combo.id));
 }
