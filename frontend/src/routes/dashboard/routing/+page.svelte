@@ -367,8 +367,12 @@
         alias: aliasName,
         target: newTarget.trim()
       });
-      aliases = [...aliases, data.alias];
-      aliasFeedback = `Alias “${data.alias.alias}” created and applied immediately`;
+      const savedAlias = data.alias;
+      const existingIndex = aliases.findIndex(alias => alias.id === savedAlias.id);
+      aliases = existingIndex === -1
+        ? [...aliases, savedAlias]
+        : aliases.map((alias, index) => index === existingIndex ? savedAlias : alias);
+      aliasFeedback = `Alias “${savedAlias.alias}” created and applied immediately`;
       aliasFeedbackKind = 'success';
       showToast(aliasFeedback, 'success');
       newAlias = '';

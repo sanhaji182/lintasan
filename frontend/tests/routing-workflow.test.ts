@@ -220,6 +220,26 @@ describe('Routing save boundaries', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Alias “friendly” deleted immediately');
   });
 
+  it('upserts an existing alias in place without rendering duplicate keyed rows', async () => {
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    expect(screen.getByText('target-model')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: /Add Alias/i }));
+    await fireEvent.input(screen.getByPlaceholderText(/Alias name/i), { target: { value: 'automatic' } });
+    await fireEvent.input(screen.getByPlaceholderText(/Target model/i), { target: { value: 'replacement-model' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Create alias/i }));
+
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/routing/aliases', {
+      alias: 'automatic',
+      target: 'replacement-model'
+    }));
+    expect(screen.getAllByText('automatic')).toHaveLength(1);
+    expect(screen.getByText('replacement-model')).toBeInTheDocument();
+    expect(screen.queryByText('target-model')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Delete alias automatic/i })).toBeInTheDocument();
+  });
+
   it('shows truthful failure feedback and keeps aliases unchanged when immediate operations fail', async () => {
     mocks.post.mockRejectedValueOnce(new Error('Create request rejected'));
     mocks.del.mockRejectedValueOnce(new Error('Delete request rejected'));
