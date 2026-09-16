@@ -1,441 +1,158 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
-  import StatCard from '$lib/components/StatCard.svelte';
-  import StatusBadge from '$lib/components/StatusBadge.svelte';
-  import Spinner from '$lib/components/Spinner.svelte';
-  import EmptyState from '$lib/components/EmptyState.svelte';
-  import {
-    Activity, Zap, Clock, Coins, RefreshCw, ArrowUpRight,
-    CircleAlert, Link2, CheckCircle2
-  } from 'lucide-svelte/icons';
+  import { deriveOverview, type OverviewState } from '$lib/overview-state';
+  import { Activity, ArrowRight, CheckCircle2, CircleAlert, Clock3, Gauge, Link2, RefreshCw, Route, Sparkles, Zap } from 'lucide-svelte';
 
-  interface DashboardStats {
-    total_requests: number;
-    cache_hit_rate: number;
-    avg_latency: number;
-    active_connections: number;
-    uptime: string;
-  }
-
-  interface RecentRequest {
-    id: string;
-    model: string;
-    provider: string;
-    status: number;
-    input_tokens: number;
-    output_tokens: number;
-    created_at?: string;
-    latency_ms?: number;
-    cached?: boolean;
-  }
-
-  interface ConnectionStatus {
-    id: string;
-    name: string;
-    base_url: string;
-    format: string;
-    is_active: number;
-    priority: number;
-    models_count: number;
-    created_at: string;
-  }
-
-  let stats = $state<DashboardStats | null>(null);
-  let recentRequests = $state<RecentRequest[]>([]);
-  let connections = $state<ConnectionStatus[]>([]);
   let loading = $state(true);
-  let error = $state<string | null>(null);
   let refreshing = $state(false);
+  let sources = $state<any>(null);
 
-  async function fetchDashboardData() {
-    try {
-      error = null;
-      // Fetch independently — don't let one hanging endpoint block the whole page
-      const statsPromise = api.get<DashboardStats>('/api/dashboard/stats').catch(() => null);
-      const logsPromise = api.get<{ data: RecentRequest[] }>('/api/logs').catch(() => ({ data: [] }));
-      const connectionsPromise = api.get<{ data: ConnectionStatus[] }>('/api/connections').catch(() => ({ data: [] }));
-
-      const [statsData, logsData, connectionsData] = await Promise.all([
-        statsPromise, logsPromise, connectionsPromise
-      ]);
-      stats = (statsData as any)?.data || statsData;
-      recentRequests = (logsData?.data || []).slice(0, 10);
-      connections = connectionsData?.data || [];
-    } catch (e: any) {
-      error = e.message || 'Failed to load dashboard data';
-    } finally {
-      loading = false;
-      refreshing = false;
-    }
+  function unwrap<T>(result: PromiseSettledResult<any>, fallbackKey = 'data'): PromiseSettledResult<T> {
+    if (result.status === 'rejected') return result;
+    return { status: 'fulfilled', value: result.value?.[fallbackKey] ?? result.value };
   }
 
-  async function handleRefresh() {
-    refreshing = true;
-    await fetchDashboardData();
+  async function load() {
+    const results = await Promise.allSettled([
+      fetch('/health').then(async response => { if (!response.ok) throw new Error('Health unavailable'); return response.json(); }),
+      api.get('/api/dashboard/stats'),
+      api.get('/api/logs'),
+      api.get('/api/connections'),
+    ]);
+    sources = {
+      health: unwrap(results[0], 'data'),
+      stats: unwrap(results[1], 'data'),
+      logs: unwrap(results[2], 'data'),
+      connections: unwrap(results[3], 'data'),
+    };
+    loading = false;
+    refreshing = false;
   }
 
-  onMount(() => {
-    fetchDashboardData();
-  });
+  async function refresh() { refreshing = true; await load(); }
+  onMount(load);
 
-  function formatNumber(n: number): string {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'K';
-    return n.toLocaleString();
+  const overview: OverviewState | null = $derived(sources ? deriveOverview(sources) : null);
+  const metricCards = $derived(overview ? [
+    { label: 'Requests', ...overview.requests, icon: Activity, tone: 'blue' },
+    { label: 'Average latency', ...overview.latency, icon: Clock3, tone: 'amber' },
+    { label: 'Recent tokens', ...overview.tokens, icon: Zap, tone: 'violet' },
+    { label: 'Provider accounts', ...overview.providers, icon: Link2, tone: 'green' },
+  ] : []);
+
+  function formatTime(value?: string) {
+    if (!value) return 'Time unavailable';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(-Math.max(0, Math.round((Date.now() - date.getTime()) / 60000)), 'minute');
   }
-
-  function formatLatency(ms: number): string {
-    return ms >= 1000 ? (ms / 1000).toFixed(1) + 's' : ms + 'ms';
-  }
-
-  function timeAgo(ts: string): string {
-    const diff = Date.now() - new Date(ts).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
-  }
-
-  const activeConnections = $derived(connections.filter(c => c.is_active).length);
-  const totalConnections = $derived(connections.length);
 </script>
 
-<svelte:head>
-  <title>Overview — Lintasan</title>
-</svelte:head>
+<svelte:head><title>Command Center — Lintasan</title></svelte:head>
 
-{#if loading}
-  <!-- Skeleton loading state -->
-  <div style="margin-bottom: 24px;">
-    <div class="flex items-center justify-between" style="margin-bottom: 24px;">
-      <div>
-        <div class="skeleton" style="width: 200px; height: 24px; margin-bottom: 8px;"></div>
-        <div class="skeleton" style="width: 280px; height: 14px;"></div>
-      </div>
-      <div class="skeleton" style="width: 90px; height: 36px; border-radius: var(--radius-sm);"></div>
+<section class="overview-shell" aria-labelledby="overview-title">
+  <header class="hero">
+    <div>
+      <div class="eyebrow"><Sparkles size={14} /> Command Center</div>
+      <h2 id="overview-title">Know what needs attention.</h2>
+      <p>Live gateway signals, provider readiness, and the shortest path to your next action.</p>
     </div>
+    <button class="btn-secondary refresh" onclick={refresh} disabled={loading || refreshing}>
+      <span class:spinning={refreshing}><RefreshCw size={15} /></span> Refresh
+    </button>
+  </header>
 
-    <div
-      class="grid gap-5"
-      style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 24px;"
-    >
-      {#each Array(4) as _}
-        <div class="card" style="padding: 20px;">
-          <div class="skeleton" style="width: 44px; height: 44px; border-radius: 12px; margin-bottom: 16px;"></div>
-          <div class="skeleton" style="width: 60%; height: 28px; margin-bottom: 6px;"></div>
-          <div class="skeleton" style="width: 80%; height: 12px;"></div>
-        </div>
+  {#if loading}
+    <div class="hero-status skeleton-block" aria-label="Loading gateway status"></div>
+    <div class="metric-grid" aria-label="Loading metrics">{#each Array(4) as _}<div class="metric skeleton-block"></div>{/each}</div>
+  {:else if overview}
+    <article class="hero-status" class:attention={overview.gateway.tone !== 'success'}>
+      <div class="status-icon">{#if overview.gateway.tone === 'success'}<CheckCircle2 size={22} />{:else}<CircleAlert size={22} />{/if}</div>
+      <div><span class="status-kicker">Gateway status</span><strong>{overview.gateway.label}</strong><small>{overview.gateway.detail}</small></div>
+      <a href="/dashboard/analytics">Open observability <ArrowRight size={14} /></a>
+    </article>
+
+    {#if overview.failedSources.length}
+      <div class="source-warning" role="alert"><CircleAlert size={17} /><span><strong>Some live data is unavailable.</strong> {overview.failedSources.join(', ')} could not be loaded. Available panels remain current.</span></div>
+    {/if}
+
+    <div class="metric-grid">
+      {#each metricCards as metric}
+        {@const Icon = metric.icon}
+        <article class="metric" data-tone={metric.tone}>
+          <div class="metric-icon"><Icon size={18} /></div>
+          <span>{metric.label}</span><strong>{metric.value}</strong><small>{metric.detail}</small>
+        </article>
       {/each}
     </div>
 
-    <div class="grid gap-5" style="grid-template-columns: 1fr 340px;">
-      <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="padding: 18px 20px; border-bottom: 1px solid var(--color-border);">
-          <div class="skeleton" style="width: 130px; height: 16px;"></div>
-        </div>
-        <div style="padding: 16px 20px;">
-          {#each Array(5) as _}
-            <div class="flex items-center gap-3" style="margin-bottom: 14px;">
-              <div class="skeleton" style="width: 28px; height: 28px; border-radius: 6px; flex-shrink: 0;"></div>
-              <div style="flex: 1;">
-                <div class="skeleton" style="width: 70%; height: 12px; margin-bottom: 4px;"></div>
-                <div class="skeleton" style="width: 40%; height: 10px;"></div>
+    <div class="workspace-grid">
+      <section class="panel activity-panel">
+        <header><div><span class="section-kicker">Traffic</span><h3>Recent requests</h3></div><a href="/dashboard/analytics">View analytics <ArrowRight size={14} /></a></header>
+        {#if overview.recentRequests.length}
+          <div class="request-list">
+            {#each overview.recentRequests.slice(0, 7) as request}
+              <div class="request-row">
+                <span class:failed={request.status != null && (request.status < 200 || request.status >= 300)} class="request-dot"></span>
+                <div><strong>{request.model || 'Unknown model'}</strong><small>{request.provider || 'Provider unavailable'}</small></div>
+                <span class="request-meta">{request.latency_ms != null ? `${request.latency_ms}ms` : 'Latency unavailable'}</span>
+                <span class="request-time">{formatTime(request.created_at)}</span>
               </div>
-              <div class="skeleton" style="width: 50px; height: 20px; border-radius: 999px;"></div>
-            </div>
-          {/each}
-        </div>
-      </div>
-      <div class="card" style="padding: 0; overflow: hidden;">
-        <div style="padding: 18px 20px; border-bottom: 1px solid var(--color-border);">
-          <div class="skeleton" style="width: 100px; height: 16px;"></div>
-        </div>
-        <div style="padding: 16px 20px;">
-          {#each Array(4) as _}
-            <div class="flex items-center gap-3" style="margin-bottom: 12px;">
-              <div class="skeleton" style="width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;"></div>
-              <div style="flex: 1;">
-                <div class="skeleton" style="width: 60%; height: 12px; margin-bottom: 4px;"></div>
-                <div class="skeleton" style="width: 40%; height: 10px;"></div>
-              </div>
-              <div class="skeleton" style="width: 55px; height: 20px; border-radius: 999px;"></div>
-            </div>
-          {/each}
-        </div>
-      </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="empty"><Activity size={24} /><strong>No recorded requests</strong><span>Send a request from Playground or your application to see activity here.</span><a href="/dashboard/playground">Open Playground</a></div>
+        {/if}
+      </section>
+
+      <aside class="right-rail">
+        <section class="panel action-panel">
+          <span class="section-kicker">Next steps</span><h3>Build your gateway</h3>
+          <a class="quick-action" href="/dashboard/connections"><span><Link2 size={17} /><b>Manage connections</b><small>Add, test, and organize provider accounts.</small></span><ArrowRight size={15} /></a>
+          <a class="quick-action" href="/dashboard/routing"><span><Route size={17} /><b>Shape routing</b><small>Control priorities, combos, and fallback.</small></span><ArrowRight size={15} /></a>
+          <a class="quick-action" href="/dashboard/quickstart"><span><Gauge size={17} /><b>Open Quickstart</b><small>Connect a client with verified values.</small></span><ArrowRight size={15} /></a>
+        </section>
+
+        <section class="panel provider-panel">
+          <header><div><span class="section-kicker">Providers</span><h3>Account readiness</h3></div><a href="/dashboard/connections">Manage</a></header>
+          {#if overview.connections.length}
+            {#each overview.connections.slice(0, 5) as connection}
+              <div class="provider-row"><span class:active={connection.is_active} class="provider-dot"></span><div><strong>{connection.name}</strong><small>{connection.format || 'Format unavailable'}</small></div><span>{connection.is_active ? 'Active' : 'Inactive'}</span></div>
+            {/each}
+          {:else}
+            <div class="empty compact"><Link2 size={22} /><strong>No provider accounts</strong><a href="/dashboard/connections">Add a connection</a></div>
+          {/if}
+        </section>
+      </aside>
     </div>
-  </div>
-{:else if error}
-  <div class="card" style="text-align: center;">
-    <div class="flex flex-col items-center gap-3">
-      <CircleAlert size={32} style="color: var(--color-error);" />
-      <div style="font-size: 14px; color: var(--color-fg-1);">{error}</div>
-      <button class="btn-primary" onclick={handleRefresh}>
-        <RefreshCw size={14} style="display: inline; vertical-align: middle; margin-right: 4px;" />
-        Retry
-      </button>
-    </div>
-  </div>
-{:else}
-  <!-- Page header -->
-  <div class="flex items-center justify-between" style="margin-bottom: 24px;">
-    <div>
-      <h2 style="font-size: 20px; font-weight: 700; color: var(--color-fg-0); letter-spacing: -0.3px;">
-        Dashboard Overview
-      </h2>
-      <p style="font-size: 13px; color: var(--color-fg-2); margin-top: 2px;">
-        Monitor your AI gateway performance and connections
-      </p>
-    </div>
-    <button
-      class="btn-secondary"
-      onclick={handleRefresh}
-      disabled={refreshing}
-      style="display: flex; align-items: center; gap: 6px;"
-    >
-      <RefreshCw
-        size={14}
-        style="animation: {refreshing ? 'spin 0.8s linear infinite' : 'none'};"
-      />
-      Refresh
-    </button>
-  </div>
-
-  <!-- Stat cards -->
-  <div
-    class="grid gap-5"
-    style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin-bottom: 24px; animation: fadeInUp 0.4s ease-out;"
-  >
-    <StatCard
-      label="Total Requests"
-      value={formatNumber((stats as any)?.total_requests ?? 0)}
-      icon={Activity}
-      color="var(--color-primary)"
-      subtitle="Last 24 hours"
-    />
-    <StatCard
-      label="Cache Hit Rate"
-      value="{(stats as any)?.cache_hit_rate ?? 0}%"
-      icon={Zap}
-      color="var(--color-success)"
-      subtitle="Requests served from cache"
-    />
-    <StatCard
-      label="Avg Latency"
-      value={formatLatency((stats as any)?.avg_latency ?? 0)}
-      icon={Clock}
-      color="var(--color-warning)"
-      subtitle="Mean response time"
-    />
-    <StatCard
-      label="Tokens Today"
-      value="0"
-      icon={Coins}
-      color="var(--color-purple)"
-      subtitle="Total tokens processed"
-    />
-  </div>
-
-  <!-- Bottom section: two columns -->
-  <div class="grid gap-5 dashboard-grid-bottom">
-    <!-- Recent requests table -->
-    <div class="card" style="padding: 0; overflow: hidden;">
-      <div
-        class="flex items-center justify-between"
-        style="padding: 18px 20px; border-bottom: 1px solid var(--color-border);"
-      >
-        <div class="flex items-center gap-2">
-          <Activity size={16} style="color: var(--color-primary);" />
-          <span style="font-size: 14px; font-weight: 600; color: var(--color-fg-0);">Recent Requests</span>
-        </div>
-        <a
-          href="/dashboard/logs"
-          class="flex items-center gap-1"
-          style="font-size: 12px; font-weight: 500; color: var(--color-primary); text-decoration: none;"
-        >
-          View all
-          <ArrowUpRight size={13} />
-        </a>
-      </div>
-
-      {#if recentRequests.length === 0}
-        <EmptyState
-          icon={Activity}
-          title="No recent requests"
-          description="Requests will appear here once traffic flows through the gateway"
-        />
-      {:else}
-        <div style="overflow-x: auto;">
-          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
-            <thead>
-              <tr style="background: var(--color-bg-body);">
-                <th class="table-header">Model</th>
-                <th class="table-header">Provider</th>
-                <th class="table-header">Status</th>
-                <th class="table-header">Latency</th>
-                <th class="table-header">Tokens</th>
-                <th class="table-header">Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {#each recentRequests as req, i}
-                <tr
-                  class="table-row"
-                  style="animation: fadeInUp {0.3 + i * 0.05}s ease-out;"
-                >
-                  <td class="table-cell" style="font-weight: 500; color: var(--color-fg-0);">
-                    <div class="flex items-center gap-2">
-                      {#if req.cached}
-                        <span
-                          class="inline-block"
-                          style="width: 6px; height: 6px; border-radius: 50%; background: var(--color-info);"
-                          title="Cached"
-                        ></span>
-                      {/if}
-                      {req.model}
-                    </div>
-                  </td>
-                  <td class="table-cell">
-                    <span
-                      class="inline-block px-2 py-0.5 rounded-md text-xs font-mono"
-                      style="background: var(--color-bg-body); color: var(--color-fg-2); font-size: 11px;"
-                    >{req.provider}</span>
-                  </td>
-                  <td class="table-cell">
-                    <StatusBadge status={req.status >= 200 && req.status < 300 ? 'success' : req.status >= 400 ? 'error' : 'pending'} />
-                  </td>
-                  <td class="table-cell font-mono" style="color: var(--color-fg-2);">
-                    {formatLatency(req.latency_ms || 0)}
-                  </td>
-                  <td class="table-cell font-mono" style="color: var(--color-fg-2);">
-                    {formatNumber((req.input_tokens || 0) + (req.output_tokens || 0))}
-                  </td>
-                  <td class="table-cell" style="color: var(--color-fg-3); font-size: 12px;">
-                    {req.created_at ? timeAgo(req.created_at) : '—'}
-                  </td>
-                </tr>
-              {/each}
-            </tbody>
-          </table>
-        </div>
-      {/if}
-    </div>
-
-    <!-- Connection status sidebar -->
-    <div class="card" style="padding: 0; overflow: hidden;">
-      <div
-        class="flex items-center justify-between"
-        style="padding: 18px 20px; border-bottom: 1px solid var(--color-border);"
-      >
-        <div class="flex items-center gap-2">
-          <Link2 size={16} style="color: var(--color-primary);" />
-          <span style="font-size: 14px; font-weight: 600; color: var(--color-fg-0);">Connections</span>
-        </div>
-        <a
-          href="/dashboard/connections"
-          class="flex items-center gap-1"
-          style="font-size: 12px; font-weight: 500; color: var(--color-primary); text-decoration: none;"
-        >
-          Manage
-          <ArrowUpRight size={13} />
-        </a>
-      </div>
-
-      <!-- Summary strip -->
-      <div
-        class="flex items-center gap-4"
-        style="padding: 14px 20px; border-bottom: 1px solid var(--color-border-light);"
-      >
-        <div class="flex items-center gap-1.5">
-          <CheckCircle2 size={14} style="color: var(--color-success);" />
-          <span style="font-size: 12px; font-weight: 500; color: var(--color-fg-2);">
-            {activeConnections} active
-          </span>
-        </div>
-        <div style="width: 1px; height: 14px; background: var(--color-border);" class="hidden sm:block"></div>
-        <span style="font-size: 12px; color: var(--color-fg-3);">
-          {totalConnections} total
-        </span>
-      </div>
-
-      {#if connections.length === 0}
-        <EmptyState
-          icon={Link2}
-          title="No connections"
-          description="Add a provider connection to get started"
-        />
-      {:else}
-        <div style="padding: 8px;">
-          {#each connections as conn}
-            <div
-              class="flex items-center justify-between rounded-lg transition-all duration-200"
-              style="padding: 10px 12px; margin-bottom: 2px;"
-            >
-              <div class="flex items-center gap-3">
-                <div
-                  class="flex items-center justify-center rounded-lg"
-                  style="
-                    width: 32px; height: 32px;
-                    background: {conn.is_active ? 'var(--color-success-light)' : 'var(--color-error-light)'};
-                  "
-                >
-                  <Link2
-                    size={16}
-                    style="color: {conn.is_active ? 'var(--color-success)' : 'var(--color-error)'};"
-                  />
-                </div>
-                <div>
-                  <div style="font-size: 13px; font-weight: 500; color: var(--color-fg-0);">{conn.name}</div>
-                  <div style="font-size: 11px; color: var(--color-fg-3); font-family: var(--font-mono);">{conn.format}</div>
-                </div>
-              </div>
-              <StatusBadge status={conn.is_active ? 'active' : 'inactive'} />
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  </div>
-{/if}
+  {/if}
+</section>
 
 <style>
-  .table-header {
-    padding: 10px 16px;
-    text-align: left;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--color-fg-3);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .table-cell {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--color-border-light);
-  }
-
-  .table-row {
-    transition: var(--transition);
-  }
-
-  .table-row:hover {
-    background: var(--color-bg-body);
-  }
-
-  .table-row:last-child .table-cell {
-    border-bottom: none;
-  }
-
-  .dashboard-grid-bottom {
-    grid-template-columns: 1fr 340px;
-  }
-
-  @media (max-width: 1024px) {
-    .dashboard-grid-bottom {
-      grid-template-columns: 1fr !important;
-    }
-  }
+  .overview-shell { max-width:1440px; margin:0 auto; }
+  .hero { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; margin-bottom:24px; }
+  .eyebrow,.section-kicker,.status-kicker { display:flex; align-items:center; gap:6px; color:var(--color-primary); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+  h2 { margin:7px 0 4px; color:var(--color-fg-0); font-size:clamp(26px,3vw,36px); font-weight:650; letter-spacing:-.04em; line-height:1.1; }
+  .hero p { margin:0; color:var(--color-fg-2); font-size:14px; }
+  .refresh { min-height:40px; display:flex; align-items:center; gap:7px; }
+  .spinning { animation:spin .8s linear infinite; }
+  .hero-status { display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:14px; min-height:98px; margin-bottom:16px; padding:20px; border:1px solid color-mix(in srgb,var(--color-success) 24%,var(--color-border)); border-radius:var(--radius-lg); background:linear-gradient(120deg,var(--color-success-light),var(--color-bg-card) 62%); }
+  .hero-status.attention { border-color:var(--color-border); background:var(--color-bg-card); }
+  .status-icon { width:46px; height:46px; display:grid; place-items:center; border-radius:13px; color:var(--color-success); background:var(--color-bg-card); border:1px solid var(--color-border); }
+  .attention .status-icon { color:var(--color-warning); }
+  .hero-status strong,.hero-status small { display:block; }.hero-status strong { margin-top:2px; font-size:20px; }.hero-status small { color:var(--color-fg-2); font-size:12px; }
+  .hero-status a,.panel header a,.empty a { display:inline-flex; align-items:center; gap:5px; color:var(--color-primary); font-size:12px; font-weight:650; text-decoration:none; }
+  .source-warning { display:flex; gap:10px; margin-bottom:16px; padding:12px 14px; border:1px solid color-mix(in srgb,var(--color-warning) 28%,var(--color-border)); border-radius:10px; color:var(--color-fg-1); background:var(--color-warning-light); font-size:12px; }
+  .metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+  .metric { min-height:146px; padding:17px; border:1px solid var(--color-border); border-radius:var(--radius); background:var(--color-bg-card); box-shadow:var(--shadow-sm); }
+  .metric-icon { width:36px;height:36px;display:grid;place-items:center;margin-bottom:15px;border-radius:10px;color:var(--tone,var(--color-primary));background:color-mix(in srgb,var(--tone,var(--color-primary)) 10%,transparent); }
+  .metric[data-tone="amber"]{--tone:var(--color-warning)}.metric[data-tone="violet"]{--tone:var(--color-purple)}.metric[data-tone="green"]{--tone:var(--color-success)}
+  .metric>span,.metric>small { display:block;color:var(--color-fg-3);font-size:11px; }.metric>strong{display:block;margin:3px 0;font:650 24px var(--font-sans);letter-spacing:-.03em}.metric>small{color:var(--color-fg-2)}
+  .workspace-grid { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(300px,.75fr); gap:16px; }
+  .right-rail { display:grid; gap:16px; align-content:start; }.panel { overflow:hidden; border:1px solid var(--color-border); border-radius:var(--radius); background:var(--color-bg-card); box-shadow:var(--shadow-sm); }.panel>header,.action-panel { padding:18px; }.panel>header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--color-border-light)}
+  h3 { margin:2px 0 0; font-size:14px; font-weight:650; }.request-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:11px; min-height:58px; padding:9px 18px; border-bottom:1px solid var(--color-border-light); }.request-row:last-child{border-bottom:0}.request-row strong,.provider-row strong{display:block;font-size:12px}.request-row small,.provider-row small{display:block;color:var(--color-fg-3);font-size:11px}.request-dot,.provider-dot{width:8px;height:8px;border-radius:50%;background:var(--color-success)}.request-dot.failed,.provider-dot:not(.active){background:var(--color-error)}.request-meta{font:11px var(--font-mono);color:var(--color-fg-2)}.request-time{color:var(--color-fg-3);font-size:11px}
+  .action-panel h3 { margin-bottom:12px; }.quick-action { display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-top:1px solid var(--color-border-light);color:var(--color-fg-1);text-decoration:none}.quick-action>span{display:grid;grid-template-columns:auto 1fr;column-gap:9px}.quick-action svg{grid-row:1/3;color:var(--color-primary)}.quick-action b{font-size:12px}.quick-action small{color:var(--color-fg-3);font-size:11px}.provider-row{display:flex;align-items:center;gap:10px;padding:11px 18px;border-bottom:1px solid var(--color-border-light)}.provider-row>div{flex:1}.provider-row>span:last-child{color:var(--color-fg-3);font-size:11px}
+  .empty{min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:24px;color:var(--color-fg-3);text-align:center}.empty span{max-width:340px;font-size:12px}.empty strong{color:var(--color-fg-1);font-size:13px}.empty.compact{min-height:150px}.skeleton-block{min-height:98px;background:var(--color-border-light);animation:shimmer 1.4s infinite}
+  @media(max-width:1050px){.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.workspace-grid{grid-template-columns:1fr}}
+  @media(max-width:600px){.hero{align-items:flex-start}.hero p{max-width:280px}.refresh{width:42px;padding:0;justify-content:center;font-size:0}.hero-status{grid-template-columns:auto 1fr}.hero-status>a{grid-column:2}.metric-grid{grid-template-columns:1fr 1fr}.metric{min-height:130px}.request-row{grid-template-columns:auto minmax(0,1fr) auto}.request-time{display:none}}
 </style>

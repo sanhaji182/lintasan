@@ -58,6 +58,7 @@ import { page } from '$app/state';
 <style>
   .dashboard-shell {
     min-height: 100vh;
+    min-width: 0;
     transition: margin-left 0.25s ease;
   }
   .dashboard-shell:not(.sidebar-hidden) {
@@ -65,8 +66,9 @@ import { page } from '$app/state';
   }
 
   .dashboard-main {
-    padding: 24px;
-    animation: fadeInUp 0.4s ease-out;
+    min-width: 0;
+    padding: 28px clamp(20px, 3vw, 42px) 48px;
+    animation: fadeInUp 0.4s ease;
   }
 
   .skip-link {

@@ -1409,6 +1409,14 @@
 
 
 <div style="animation: fadeInUp 0.4s ease-out;">
+  <section class="connections-intro" aria-labelledby="connections-title">
+    <div>
+      <span>Provider lifecycle</span>
+      <h2 id="connections-title">Accounts, credentials, and models in one place.</h2>
+      <p>Scan provider readiness first, then expand only the account or model details you need.</p>
+    </div>
+    <a href="/dashboard/quickstart">Connection guide <ChevronRight size={14} /></a>
+  </section>
   <!-- Summary strip -->
   <div class="conn-stats-bar">
     <div class="stat-pill">
@@ -1438,7 +1446,7 @@
   <!-- Toolbar: Title + Search + Actions -->
   <div class="conn-toolbar">
     <div class="conn-toolbar-left">
-      <h2 class="conn-toolbar-title">Connections</h2>
+      <h3 class="conn-toolbar-title">Provider accounts</h3>
       <div class="conn-filter-chips">
         <button 
           class="filter-chip" 
@@ -2878,6 +2886,11 @@
 </div>
 
 <style>
+  .connections-intro { display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin:8px 0 20px;padding:20px 22px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:linear-gradient(120deg,var(--color-primary-light),var(--color-bg-card) 62%); }
+  .connections-intro span { color:var(--color-primary);font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase; }
+  .connections-intro h2 { max-width:680px;margin:5px 0 4px;color:var(--color-fg-0);font-size:clamp(21px,2.5vw,30px);font-weight:650;letter-spacing:-.035em;line-height:1.15; }
+  .connections-intro p { margin:0;color:var(--color-fg-2);font-size:12px; }
+  .connections-intro a { display:inline-flex;align-items:center;gap:5px;flex-shrink:0;color:var(--color-primary);font-size:12px;font-weight:650;text-decoration:none; }
   .oauth-lab-card {
     padding: 16px 20px;
     border-color: rgba(139, 92, 246, 0.28);
@@ -3856,6 +3869,8 @@
 
   /* Responsive */
   @media (max-width: 640px) {
+    .connections-intro { align-items:flex-start; flex-direction:column; padding:17px; }
+    .connections-intro a { min-height:44px; align-items:center; }
     .conn-toolbar {
       flex-direction: column;
       align-items: stretch;

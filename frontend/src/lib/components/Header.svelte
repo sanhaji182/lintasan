@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { Menu, UserCircle2, LogOut, LogIn, Sun, Moon } from 'lucide-svelte';
+  import CommandPalette from '$lib/components/CommandPalette.svelte';
   import { theme } from '$lib/stores/theme';
   import HelpTooltip from '$lib/components/HelpTooltip.svelte';
   import { helpContent } from '$lib/helpContent';
@@ -61,7 +62,8 @@
   </div>
 
   <div class="header-right">
-    <button class="theme-toggle" onclick={() => theme.toggle()} title={$theme === 'light' ? 'Dark mode' : 'Light mode'}>
+    <CommandPalette />
+    <button class="theme-toggle" onclick={() => theme.toggle()} title={$theme === 'light' ? 'Dark mode' : 'Light mode'} aria-label={$theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}>
       {#if $theme === 'light'}<Moon size={16} />{:else}<Sun size={16} />{/if}
     </button>
 
@@ -93,9 +95,9 @@
     justify-content: space-between;
     height: var(--header-h);
     padding: 0 24px;
-    background: rgba(255,255,255,0.85);
+    background: color-mix(in srgb, var(--color-bg-body) 84%, transparent);
     backdrop-filter: blur(12px);
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--color-border);
   }
 
   .header-left {
@@ -122,7 +124,7 @@
   .header-title {
     font-size: 16px;
     font-weight: 600;
-    color: #1e293b;
+    color: var(--color-fg-0);
     margin: 0;
     white-space: nowrap;
     overflow: hidden;

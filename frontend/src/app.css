@@ -22,6 +22,7 @@
 
   --color-bg-body: #f8fafc;
   --color-bg-card: #ffffff;
+  --color-bg-elevated: #ffffff;
   --color-bg-sidebar: #ffffff;
   --color-bg-sidebar-hover: #f8fafc;
 
@@ -33,19 +34,20 @@
   --color-fg-3: #94a3b8;
 
   --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
   --color-border-light: #f1f5f9;
   --color-sidebar-border: #e2e8f0;
 
-  --radius-sm: 10px;
-  --radius: 14px;
-  --radius-lg: 18px;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
 
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
   --shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
   --shadow-md: 0 12px 28px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 20px 42px rgba(15, 23, 42, 0.1);
 
-  --sidebar-w: 264px;
+  --sidebar-w: 252px;
   --header-h: 64px;
 
   --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -56,6 +58,7 @@
 [data-theme="dark"] {
   --color-bg-body: #0b1220;
   --color-bg-card: #111a2d;
+  --color-bg-elevated: #162036;
   --color-bg-sidebar: #0f1729;
   --color-bg-sidebar-hover: #18253d;
 
@@ -65,6 +68,7 @@
   --color-fg-3: #64748b;
 
   --color-border: #22324d;
+  --color-border-strong: #334563;
   --color-border-light: #1a2840;
   --color-sidebar-border: #22324d;
 
@@ -93,6 +97,8 @@
 
   body {
     margin: 0;
+    min-width: 320px;
+    overflow-x: hidden;
     background: var(--color-bg-body);
     color: var(--color-fg-0);
   }
@@ -100,6 +106,8 @@
   * {
     box-sizing: border-box;
   }
+
+  button, a, input, select, textarea { font: inherit; }
 
   ::selection {
     background: var(--color-primary);
@@ -219,6 +227,15 @@
   .data-table th { text-align: left; padding: 12px 14px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-fg-3); border-bottom: 1px solid var(--color-border); background: var(--color-bg-body); }
   .data-table td { padding: 10px 14px; border-bottom: 1px solid var(--color-border-light); }
   .data-table tr:hover td { background: var(--color-bg-sidebar-hover); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @keyframes shimmer {

@@ -7,7 +7,7 @@ import {
   recommendCallableModel,
   buildQuickstartSnippets,
 } from '../src/lib/quickstart.ts';
-import { navigationGroups, dashboardRoutes, groupIsInitiallyOpen } from '../src/lib/navigation.ts';
+import { navigationGroups, dashboardRoutes, groupIsInitiallyOpen, routeIsActive, searchNavigation } from '../src/lib/navigation.ts';
 import { deriveLandingMetrics } from '../src/lib/landing-metrics.ts';
 
 test('Quickstart derives an incomplete but actionable empty state', () => {
@@ -119,7 +119,7 @@ test('snippets use a newly issued gateway key in every copyable example', () => 
   for (const source of Object.values(snippets)) assert.match(source, new RegExp(issued));
 });
 
-test('sidebar intent groups preserve every dashboard route and default disclosure', () => {
+test('sidebar intent groups preserve every dashboard route and progressive disclosure', () => {
   const expected = [
     '/dashboard', '/dashboard/quickstart', '/dashboard/playground', '/dashboard/connections',
     '/dashboard/models', '/dashboard/providers', '/dashboard/routing', '/dashboard/analytics', '/dashboard/keys',
@@ -128,11 +128,23 @@ test('sidebar intent groups preserve every dashboard route and default disclosur
     '/dashboard/migrate', '/dashboard/experimental', '/dashboard/settings', '/dashboard/docs',
   ];
   assert.deepEqual(new Set(dashboardRoutes), new Set(expected));
-  assert.deepEqual(navigationGroups.map(group => group.label), ['Primary', 'Gateway', 'Observability', 'Manage', 'Advanced']);
-  assert.equal(groupIsInitiallyOpen('Manage', '/dashboard'), false);
-  assert.equal(groupIsInitiallyOpen('Advanced', '/dashboard'), false);
-  assert.equal(groupIsInitiallyOpen('Manage', '/dashboard/users'), true);
-  assert.equal(groupIsInitiallyOpen('Advanced', '/dashboard/memory'), true);
+  assert.deepEqual(navigationGroups.map(group => group.label), ['Operate', 'Build', 'Observe', 'Configure']);
+  assert.equal(groupIsInitiallyOpen('Operate', '/dashboard'), true);
+  assert.equal(groupIsInitiallyOpen('Build', '/dashboard'), true);
+  assert.equal(groupIsInitiallyOpen('Observe', '/dashboard'), true);
+  assert.equal(groupIsInitiallyOpen('Configure', '/dashboard'), false);
+  assert.equal(groupIsInitiallyOpen('Configure', '/dashboard/memory'), true);
+  assert.equal(routeIsActive('/dashboard/connections', '/dashboard/discover'), true);
+  assert.equal(routeIsActive('/dashboard/analytics', '/dashboard/logs'), true);
+});
+
+test('command search returns only real destinations and matches intent metadata', () => {
+  assert.deepEqual(searchNavigation('provider').map(item => item.path), [
+    '/dashboard/connections', '/dashboard/providers', '/dashboard/experimental',
+  ]);
+  assert.equal(searchNavigation('observe requests')[0]?.path, '/dashboard/analytics');
+  assert.equal(searchNavigation('not-a-real-command').length, 0);
+  assert.ok(searchNavigation('').every(item => dashboardRoutes.includes(item.path)));
 });
 
 test('landing metrics expose skeleton, verified counts, or nonnumeric proof without 0+', () => {

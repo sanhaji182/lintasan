@@ -40,7 +40,7 @@
 <aside class="sidebar" class:open>
   <div class="sidebar-brand">
     <LogoMark size={36} variant={$theme === 'dark' ? 'dark' : 'light'} decorative />
-    <div><div class="sb-name">Lintasan</div><div class="sb-version">{version}</div></div>
+    <div><div class="sb-name">Lintasan</div><div class="sb-context">Command Center</div><div class="sb-version">{version}</div></div>
   </div>
 
   <nav class="sidebar-nav" aria-label="Dashboard navigation">
@@ -70,7 +70,7 @@
   </nav>
 
   <div class="sidebar-footer">
-    <button class="theme-btn" onclick={() => theme.toggle()}>
+    <button class="theme-btn" onclick={() => theme.toggle()} aria-label={$theme === 'light' ? 'Switch to dark mode' : 'Switch to light mode'}>
       {#if $theme === 'light'}<Moon size={16} /> Dark mode{:else}<Sun size={16} /> Light mode{/if}
     </button>
   </div>
@@ -79,23 +79,24 @@
 <style>
   .overlay { display: none; position: fixed; inset: 0; z-index: 45; background: rgba(15,23,42,.3); backdrop-filter: blur(4px); }
   .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 50; width: var(--sidebar-w); background: var(--color-bg-sidebar); border-right: 1px solid var(--color-sidebar-border); display: flex; flex-direction: column; transition: transform .25s ease; }
-  .sidebar-brand { display: flex; align-items: center; gap: 12px; padding: 18px 20px 15px; border-bottom: 1px solid var(--color-border-light); }
-  .sb-name { font-size: 15px; font-weight: 700; color: var(--color-fg-0); letter-spacing: -.2px; }
-  .sb-version { min-height: 16px; font: 11px var(--font-mono); color: var(--color-fg-3); }
-  .sidebar-nav { flex: 1; overflow-y: auto; padding: 10px; }
-  .nav-group { margin-bottom: 10px; }
+  .sidebar-brand { display: flex; align-items: center; gap: 12px; padding: 20px 18px 17px; border-bottom: 1px solid var(--color-border-light); }
+  .sb-name { font-size: 15px; font-weight: 680; color: var(--color-fg-0); letter-spacing: -.3px; line-height:1.15; }
+  .sb-context { margin-top:2px; font-size:10px; font-weight:650; color:var(--color-primary); letter-spacing:.06em; text-transform:uppercase; }
+  .sb-version { min-height: 13px; margin-top:2px; font: 10px var(--font-mono); color: var(--color-fg-3); }
+  .sidebar-nav { flex: 1; overflow-y: auto; padding: 12px 10px; }
+  .nav-group { margin-bottom: 14px; }
   .nav-group-label, .nav-group-toggle { width: 100%; font-size: 10px; font-weight: 750; letter-spacing: .07em; color: var(--color-fg-3); text-transform: uppercase; padding: 7px 12px; }
   .nav-group-toggle { display: flex; align-items: center; justify-content: space-between; background: none; border: 0; cursor: pointer; border-radius: 7px; }
   .nav-group-toggle:hover { background: var(--color-bg-sidebar-hover); color: var(--color-fg-1); }
   .nav-group-toggle :global(svg) { transition: transform .2s; }
   .nav-group-toggle :global(svg.rotated) { transform: rotate(180deg); }
   .nav-items { animation: reveal .18s ease-out; }
-  .nav-item { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 9px; font-size: 13px; font-weight: 500; color: var(--color-fg-2); text-decoration: none; margin-bottom: 1px; transition: background .15s, color .15s; }
+  .nav-item { min-height: 40px; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 510; color: var(--color-fg-2); text-decoration: none; margin-bottom: 1px; transition: background .15s, color .15s; }
   .nav-item:hover { background: var(--color-bg-sidebar-hover); color: var(--color-fg-0); }
   .nav-item.active { background: var(--color-primary-light); color: var(--color-primary); font-weight: 650; }
   .nav-lab { margin-left: auto; font-size: 8px; font-weight: 800; letter-spacing: .04em; padding: 2px 5px; border-radius: 4px; background: var(--color-purple-light); color: var(--color-purple); }
   .sidebar-footer { padding: 13px 14px; border-top: 1px solid var(--color-border-light); }
-  .theme-btn { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; background: none; border: 1px solid var(--color-border); border-radius: 9px; font-size: 13px; font-weight: 500; color: var(--color-fg-2); cursor: pointer; }
+  .theme-btn { min-height: 42px; display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 12px; background: var(--color-bg-elevated); border: 1px solid var(--color-border); border-radius: 9px; font-size: 13px; font-weight: 500; color: var(--color-fg-2); cursor: pointer; }
   .theme-btn:hover { background: var(--color-bg-sidebar-hover); }
   @keyframes reveal { from { opacity: 0; transform: translateY(-3px); } }
   @media (max-width: 768px) {
