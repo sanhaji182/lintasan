@@ -127,9 +127,12 @@
   });
 
   function discardPolicies() {
-    stagedLbStrategy = loadBalancerStrategy;
-    delete stagedStrategies[''];
-    loadSmart().then(() => { savedPolicy = policyFingerprint; savedQuotas = quotasFingerprint; });
+    if (!savedPolicy) return;
+    const [policy, strategy] = JSON.parse(savedPolicy) as [Omit<SmartConfig, 'quota_limits'>, string];
+    // Restore only the Policies scope. Quotas share the `smart` object in the UI,
+    // but are independently staged and must survive a Policies discard.
+    smart = { ...smart, ...policy };
+    stagedLbStrategy = strategy;
   }
 
   function discardCombos() {
@@ -369,10 +372,11 @@
       });
       const savedAlias = data.alias;
       const existingIndex = aliases.findIndex(alias => alias.id === savedAlias.id);
+      const wasUpdate = existingIndex !== -1;
       aliases = existingIndex === -1
         ? [...aliases, savedAlias]
         : aliases.map((alias, index) => index === existingIndex ? savedAlias : alias);
-      aliasFeedback = `Alias “${savedAlias.alias}” created and applied immediately`;
+      aliasFeedback = `Alias “${savedAlias.alias}” ${wasUpdate ? 'updated' : 'created'} and applied immediately`;
       aliasFeedbackKind = 'success';
       showToast(aliasFeedback, 'success');
       newAlias = '';

@@ -191,6 +191,26 @@ describe('Routing save boundaries', () => {
     expect(refresh.defaultPrevented).toBe(false);
   });
 
+  it('discards only Policies without losing unsaved Quota edits', async () => {
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Quotas/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add limit/i }));
+    await fireEvent.input(screen.getByPlaceholderText(/connection id/i), { target: { value: 'quota-connection' } });
+    await fireEvent.input(screen.getByPlaceholderText(/max tokens \/ day/i), { target: { value: '42000' } });
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 unsaved scope'));
+
+    await fireEvent.click(screen.getByRole('button', { name: /^Policies/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Round Robin/i }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('2 unsaved scopes'));
+    await fireEvent.click(screen.getByRole('button', { name: /^Discard$/i }));
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 unsaved scope'));
+    expect(screen.getByRole('status')).toHaveTextContent('Quotas');
+    await fireEvent.click(screen.getByRole('button', { name: /^Quotas/i }));
+    expect(screen.getByDisplayValue('quota-connection')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('42000')).toBeInTheDocument();
+  });
+
   it('states that alias create and delete apply immediately outside staged Combo saves', async () => {
     await renderPage();
     await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
@@ -237,6 +257,7 @@ describe('Routing save boundaries', () => {
     expect(screen.getAllByText('automatic')).toHaveLength(1);
     expect(screen.getByText('replacement-model')).toBeInTheDocument();
     expect(screen.queryByText('target-model')).not.toBeInTheDocument();
+    expect(mocks.toast).toHaveBeenCalledWith('Alias “automatic” updated and applied immediately', 'success');
     expect(screen.getByRole('button', { name: /Delete alias automatic/i })).toBeInTheDocument();
   });
 
