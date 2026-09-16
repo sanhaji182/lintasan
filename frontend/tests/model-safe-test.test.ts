@@ -46,6 +46,18 @@ describe('model Safe test result formatting', () => {
       .toEqual({ ok: true, code: 'ok', httpStatus: 200, latencyMs: 31, message: 'Available' });
   });
 
+  it.each([999, 99, 600, 200.5, '429'])('omits invalid HTTP status %s', (http_status) => {
+    expect(formatModelTestResponse({ success: false, http_status, message: 'bad status' })).not.toHaveProperty('httpStatus');
+  });
+
+  it.each([-1, Number.NaN, Number.POSITIVE_INFINITY])('omits invalid latency %s', (latency_ms) => {
+    expect(formatModelTestResponse({ success: false, latency_ms, message: 'bad latency' })).not.toHaveProperty('latencyMs');
+  });
+
+  it('rounds finite nonnegative latency to integer milliseconds', () => {
+    expect(formatModelTestResponse({ success: false, latency_ms: 12.6, message: 'slow' })).toMatchObject({ latencyMs: 13 });
+  });
+
   it('reads a non-2xx ApiError envelope', () => {
     const error = Object.assign(new Error('upstream refused'), {
       status: 502,
@@ -56,6 +68,14 @@ describe('model Safe test result formatting', () => {
       ok: false, code: 'upstream_error', httpStatus: 502, latencyMs: 123,
       message: 'upstream refused', detail: 'Bad gateway', hint: 'Check provider status.',
     });
+  });
+
+  it('uses a valid thrown HTTP status when envelope diagnostics are invalid', () => {
+    const error = Object.assign(new Error('bad gateway'), {
+      status: 502,
+      envelope: { success: false, http_status: 600, latency_ms: Number.POSITIVE_INFINITY },
+    });
+    expect(formatModelTestError(error)).toEqual({ ok: false, code: 'test_failed', httpStatus: 502, message: 'bad gateway' });
   });
 
   it('sanitizes credentials, raw HTML, control characters, and truncates unsafe network bodies', () => {
@@ -89,28 +109,41 @@ describe('Models Safe test UI', () => {
   }
 
   it('renders and toasts actionable HTTP-200 success:false diagnostics', async () => {
-    mocks.post.mockResolvedValue({ success: false, status: 'rate_limited', http_status: 429, latency_ms: 87, message: 'Too many requests', body: '<b>Retry later</b>', hint: 'Wait before retrying.' });
+    mocks.post.mockResolvedValue({ success: false, status: 'rate_limited', http_status: 429, latency_ms: 87.6, message: 'Too many requests', body: '<b>Retry later</b>', hint: 'Wait before retrying.' });
     await renderAndTest();
     expect(await screen.findByText('Too many requests')).not.toBeNull();
     expect(screen.getByText('rate_limited')).not.toBeNull();
     expect(screen.getByText('HTTP 429')).not.toBeNull();
-    expect(screen.getByText('87 ms')).not.toBeNull();
+    expect(screen.getByText('88 ms')).not.toBeNull();
     expect(screen.getByText('Retry later')).not.toBeNull();
     expect(screen.getByText('Wait before retrying.')).not.toBeNull();
-    expect(mocks.showToast).toHaveBeenCalledWith('Safe test failed: Too many requests', 'error', 6000, expect.objectContaining({ code: 'rate_limited', httpStatus: 429, latencyMs: 87, hint: 'Wait before retrying.' }));
+    expect(mocks.showToast).toHaveBeenCalledWith('Safe test failed: Too many requests', 'error', 6000, expect.objectContaining({ code: 'rate_limited', httpStatus: 429, latencyMs: 88, hint: 'Wait before retrying.' }));
   });
 
   it('renders a non-2xx ApiError envelope without exposing raw HTML', async () => {
     mocks.post.mockRejectedValue(Object.assign(new Error('upstream refused'), {
       status: 502,
       detail: { code: 'upstream_error', message: 'upstream refused', body: '<script>steal()</script><b>Bad gateway</b>' },
-      envelope: { success: false, latency_ms: 123, error: { code: 'upstream_error', message: 'upstream refused', body: '<script>steal()</script><b>Bad gateway</b>' }, hint: 'Check provider status.' },
+      envelope: { success: false, latency_ms: 123.6, error: { code: 'upstream_error', message: 'upstream refused', body: '<script>steal()</script><b>Bad gateway</b>' }, hint: 'Check provider status.' },
     }));
     await renderAndTest();
     expect(await screen.findByText('upstream refused')).not.toBeNull();
     expect(screen.getByText('Bad gateway')).not.toBeNull();
+    expect(screen.getByText('HTTP 502')).not.toBeNull();
+    expect(screen.getByText('124 ms')).not.toBeNull();
     expect(document.body.textContent).not.toContain('<script>');
-    expect(mocks.showToast).toHaveBeenCalledWith('Safe test failed: upstream refused', 'error', 6000, expect.objectContaining({ code: 'upstream_error', httpStatus: 502, latencyMs: 123 }));
+    expect(mocks.showToast).toHaveBeenCalledWith('Safe test failed: upstream refused', 'error', 6000, expect.objectContaining({ code: 'upstream_error', httpStatus: 502, latencyMs: 124 }));
+  });
+
+  it('omits invalid numeric diagnostics from both card and toast', async () => {
+    mocks.post.mockResolvedValue({ success: false, status: 'test_failed', http_status: 999, latency_ms: -1.6, message: 'Invalid diagnostics' });
+    await renderAndTest();
+    expect(await screen.findByText('Invalid diagnostics')).not.toBeNull();
+    expect(document.body.textContent).not.toContain('HTTP 999');
+    expect(document.body.textContent).not.toContain('-1.6 ms');
+    const detail = mocks.showToast.mock.calls[0][3];
+    expect(detail.httpStatus).toBeUndefined();
+    expect(detail.latencyMs).toBeUndefined();
   });
 
   it('renders success without an error toast', async () => {
@@ -170,5 +203,33 @@ describe('callable catalog row identity', () => {
     });
     expect(rows).toHaveLength(2);
     expect(new Set(rows.map(row => row.rowKey)).size).toBe(2);
+  });
+
+  it('preserves authoritative cloud-account identity without connection_id', () => {
+    const rows = buildCallableCatalog({
+      models: [
+        { id: 'hoplite-agent/shared', provider_kind: 'cloud_agent', hoplite_account_id: 'hoplite-cloud-agent', owned_by: 'Hoplite Agent' },
+        { id: 'hoplite-agent/shared', provider_kind: 'cloud_agent', hoplite_account_id: 'hoplite-cloud-agent', owned_by: 'Hoplite Agent' },
+        { id: 'hoplite-agent/shared', provider_kind: 'cloud_agent', hoplite_account_id: 'hoplite-cloud-agent-secondary', owned_by: 'Hoplite Agent' },
+      ],
+    });
+    expect(rows).toHaveLength(2);
+    expect(rows.map(row => row.connectionId)).toEqual(['hoplite-cloud-agent', 'hoplite-cloud-agent-secondary']);
+    expect(rows.map(row => row.account)).toEqual(['hoplite-cloud-agent', 'hoplite-cloud-agent-secondary']);
+    expect(new Set(rows.map(row => row.rowKey)).size).toBe(2);
+  });
+
+  it('keeps route, cloud-agent, and provider identities separate for the same model ID', () => {
+    const rows = buildCallableCatalog({
+      aliases: { same: 'target' },
+      connections: [{ id: 'cloud-account', name: 'Cloud', provider_kind: 'cloud_agent' }],
+      models: [
+        { id: 'same', provider_kind: 'cloud_agent', hoplite_account_id: 'cloud-account' },
+        { id: 'same', connection_id: 'provider-account', owned_by: 'Provider' },
+      ],
+    });
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map(row => row.rowKey)).size).toBe(3);
+    expect(rows.map(row => row.kind).sort()).toEqual(['cloud_agent', 'provider', 'route']);
   });
 });

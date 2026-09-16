@@ -84,13 +84,15 @@ export function buildCallableCatalog(input: CatalogInput): CallableModel[] {
   for (const model of models) {
     const id = clean(model.id) || clean(model.model_id);
     if (!id) continue;
-    const connId = clean(model.connection_id);
+    // Cloud catalog records may omit connection_id while still carrying the
+    // authoritative account/connection identity used by model-test routing.
+    const connId = clean(model.connection_id) || clean(model.hoplite_account_id);
     const conn = connId ? connections.get(connId) : null;
     const cloud = model.provider_kind === 'cloud_agent' || conn?.provider_kind === 'cloud_agent' || id.startsWith('hoplite-');
     const rawCaps = model.capabilities;
     const capabilities = Array.isArray(rawCaps) ? rawCaps.map(String) : [];
     push({ id, label: clean(model.display_name) || clean(model.model_name) || id, kind: cloud ? 'cloud_agent' : 'provider',
-      route: null, provider: clean(model.owned_by) || clean(conn?.format), account: clean(conn?.name), connectionId: connId,
+      route: null, provider: clean(model.owned_by) || clean(conn?.format), account: clean(conn?.name) || (cloud ? connId : null), connectionId: connId,
       health: clean(model.health_status) || clean(conn?.health_status) || (conn && !conn.is_active ? 'inactive' : 'unknown'),
       supportsStreaming: typeof model.supports_streaming === 'boolean' ? model.supports_streaming :
         (typeof conn?.supports_streaming === 'boolean' ? conn.supports_streaming : null),

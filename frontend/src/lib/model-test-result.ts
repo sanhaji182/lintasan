@@ -33,9 +33,24 @@ export function sanitizeModelTestText(value: unknown, maxLength = MAX_DETAIL): s
   return clean.length > maxLength ? `${clean.slice(0, maxLength - 1).trimEnd()}…` : clean;
 }
 
-function finiteNumber(value: unknown): number | undefined {
-  const number = typeof value === 'number' ? value : Number(value);
-  return Number.isFinite(number) ? number : undefined;
+function normalizeHTTPStatus(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 100 && value <= 599
+    ? value
+    : undefined;
+}
+
+function normalizeLatencyMs(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : undefined;
+}
+
+function firstNormalized<T>(normalize: (value: unknown) => T | undefined, ...values: unknown[]): T | undefined {
+  for (const value of values) {
+    const normalized = normalize(value);
+    if (normalized !== undefined) return normalized;
+  }
+  return undefined;
 }
 
 function unwrap(source: any): any {
@@ -53,8 +68,8 @@ function format(source: any, fallbackStatus?: number): ModelTestResult {
   const message = sanitizeModelTestText(value.message || (success ? 'Available' : 'Test failed'), MAX_MESSAGE);
   const detail = sanitizeModelTestText(value.body ?? value.detail ?? value.data, MAX_DETAIL);
   const hint = sanitizeModelTestText(value.hint, MAX_MESSAGE);
-  const httpStatus = finiteNumber(value.http_status ?? value.httpStatus ?? fallbackStatus);
-  const latencyMs = finiteNumber(value.latency_ms ?? value.latencyMs);
+  const httpStatus = firstNormalized(normalizeHTTPStatus, value.http_status, value.httpStatus, fallbackStatus);
+  const latencyMs = firstNormalized(normalizeLatencyMs, value.latency_ms, value.latencyMs);
   return {
     ok: success,
     code,
