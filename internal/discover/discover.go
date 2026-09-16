@@ -234,8 +234,9 @@ func (d *Discoverer) fetchModelsFromProvider(conn map[string]any) ([]ModelInfo, 
 
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return d.fallbackModels(conn)
+		return nil, fmt.Errorf("build models request: %w", err)
 	}
+	req.Header.Set("User-Agent", "Lintasan/1.0")
 
 	// Extra headers.
 	if eh, ok := conn["extra_headers"].(string); ok && eh != "" {
@@ -263,19 +264,34 @@ func (d *Discoverer) fetchModelsFromProvider(conn map[string]any) ([]ModelInfo, 
 
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
-		return d.fallbackModels(conn)
+		fallback, fallbackErr := d.fallbackModels(conn)
+		if fallbackErr != nil || len(fallback) > 0 {
+			return fallback, fallbackErr
+		}
+		return nil, fmt.Errorf("fetch models: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB max
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB max
+	if err != nil {
+		return nil, fmt.Errorf("read models response: %w", err)
+	}
 
 	if resp.StatusCode >= 400 {
-		return d.fallbackModels(conn)
+		fallback, fallbackErr := d.fallbackModels(conn)
+		if fallbackErr != nil || len(fallback) > 0 {
+			return fallback, fallbackErr
+		}
+		return nil, fmt.Errorf("models endpoint returned HTTP %d", resp.StatusCode)
 	}
 
 	models := parseModelsResponse(body)
 	if len(models) == 0 {
-		return d.fallbackModels(conn)
+		fallback, fallbackErr := d.fallbackModels(conn)
+		if fallbackErr != nil || len(fallback) > 0 {
+			return fallback, fallbackErr
+		}
+		return nil, fmt.Errorf("models endpoint returned no usable models")
 	}
 
 	return models, nil

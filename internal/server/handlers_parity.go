@@ -851,7 +851,13 @@ func (s *Server) handleModelsSyncByID(w http.ResponseWriter, r *http.Request) {
 
     res, err := s.discoverer.SyncConnection(connID)
     if err != nil {
-        writeJSON(w, map[string]any{"error": map[string]string{"message": err.Error()}})
+        writeJSONStatus(w, http.StatusBadGateway, map[string]any{"error": map[string]string{"message": err.Error()}})
+        return
+    }
+    if res.Status != "ok" {
+        message := res.Error
+        if message == "" { message = "model sync failed" }
+        writeJSONStatus(w, http.StatusBadGateway, map[string]any{"error": map[string]string{"message": message}, "data": res})
         return
     }
     writeJSON(w, map[string]any{

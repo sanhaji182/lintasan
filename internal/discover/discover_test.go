@@ -264,7 +264,7 @@ func TestFetchModelsFromProvider_RealHTTPServer(t *testing.T) {
 	}
 }
 
-func TestFetchModelsFromProvider_HTTPErrorFallback(t *testing.T) {
+func TestFetchModelsFromProvider_HTTPErrorIsReported(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -277,17 +277,15 @@ func TestFetchModelsFromProvider_HTTPErrorFallback(t *testing.T) {
 		"format":      "openai",
 	}
 	models, err := d.fetchModelsFromProvider(conn)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected upstream HTTP error to be reported")
 	}
-	// An unidentified host that fails to answer gets nothing, rather than being
-	// credited with OpenAI's catalogue. Empty is the honest answer.
 	if len(models) != 0 {
-		t.Errorf("expected no models when an unknown host errors, got %d (%v)", len(models), models)
+		t.Errorf("expected no models on upstream error, got %d (%v)", len(models), models)
 	}
 }
 
-func TestFetchModelsFromProvider_EmptyResponseFallback(t *testing.T) {
+func TestFetchModelsFromProvider_EmptyResponseIsReported(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{"data": []any{}})
@@ -301,12 +299,32 @@ func TestFetchModelsFromProvider_EmptyResponseFallback(t *testing.T) {
 		"format":      "openai",
 	}
 	models, err := d.fetchModelsFromProvider(conn)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected empty upstream catalogue to be reported")
 	}
-	// The endpoint answered and said it serves nothing. Substituting a vendor
-	// catalogue here would contradict the endpoint's own answer.
 	if len(models) != 0 {
-		t.Errorf("expected an empty catalogue to be reported as empty, got %d (%v)", len(models), models)
+		t.Errorf("expected empty catalogue to remain empty, got %d (%v)", len(models), models)
+	}
+}
+
+func TestFetchModelsFromProvider_SendsExplicitUserAgent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.UserAgent() == "Go-http-client/1.1" || r.UserAgent() == "" {
+			http.Error(w, "blocked automated client", http.StatusForbidden)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "model-1"}}})
+	}))
+	defer server.Close()
+
+	d := NewDiscoverer(nil)
+	models, err := d.fetchModelsFromProvider(map[string]any{
+		"base_url": server.URL, "models_path": "/v1/models", "format": "openai",
+	})
+	if err != nil {
+		t.Fatalf("expected explicit user agent to pass upstream policy: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "model-1" {
+		t.Fatalf("expected model-1, got %#v", models)
 	}
 }

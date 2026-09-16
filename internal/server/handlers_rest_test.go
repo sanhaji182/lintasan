@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/sanhaji182/lintasan-go/internal/config"
@@ -438,6 +439,32 @@ func TestHandlePatchConnection_IsActiveTypes(t *testing.T) {
 	s.db.Conn().QueryRow("SELECT is_active FROM connections WHERE id = ?", connID).Scan(&isActive)
 	if isActive != 0 {
 		t.Fatalf("expected is_active=0 after patching with int 0, got %d", isActive)
+	}
+}
+
+func TestHandleModelsSyncByID_ReportsUpstreamFailure(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "blocked", http.StatusForbidden)
+	}))
+	defer upstream.Close()
+
+	s := newRESTTestServer(t)
+	connID := "test-conn-sync-failure"
+	_, err := s.db.Conn().Exec(`
+		INSERT INTO connections (id, name, base_url, format, models_path, is_active)
+		VALUES (?, 'Blocked Provider', ?, 'openai', '/models', 1)
+	`, connID, upstream.URL)
+	if err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.handleModelsSyncByID(rec, reqWithPath("POST", "/api/models/sync/"+connID, nil, map[string]string{"connection_id": connID}))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("sync failure: got %d, want 502: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"success":true`) {
+		t.Fatalf("sync failure must not report success: %s", rec.Body.String())
 	}
 }
 
