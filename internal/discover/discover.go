@@ -274,6 +274,10 @@ func (d *Discoverer) fetchModelsFromProvider(conn map[string]any) ([]ModelInfo, 
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MB max
 	if err != nil {
+		fallback, fallbackErr := d.fallbackModels(conn)
+		if fallbackErr != nil || len(fallback) > 0 {
+			return fallback, fallbackErr
+		}
 		return nil, fmt.Errorf("read models response: %w", err)
 	}
 
