@@ -1,6 +1,7 @@
 export type CallableKind = 'route' | 'cloud_agent' | 'provider';
 
 export type CallableModel = {
+  rowKey: string;
   id: string;
   label: string;
   kind: CallableKind;
@@ -14,6 +15,11 @@ export type CallableModel = {
   price: unknown | null;
   capabilities: string[];
 };
+
+export function callableRowKey(row: Pick<CallableModel, 'kind' | 'id' | 'connectionId' | 'account' | 'provider'>): string {
+  const identity = row.kind === 'route' ? '' : row.connectionId || row.account || row.provider || '';
+  return JSON.stringify([row.kind, identity, row.id]);
+}
 
 type CatalogInput = {
   aliases?: Record<string, string | { model?: string; target?: string }>;
@@ -48,10 +54,11 @@ export function buildCallableCatalog(input: CatalogInput): CallableModel[] {
   const connections = new Map((input.connections || []).map(c => [String(c.id), c]));
   const out: CallableModel[] = [];
   const seen = new Set<string>();
-  const push = (row: CallableModel) => {
-    if (!row.id || seen.has(row.id)) return;
-    seen.add(row.id);
-    out.push(row);
+  const push = (row: Omit<CallableModel, 'rowKey'>) => {
+    const rowKey = callableRowKey(row);
+    if (!row.id || seen.has(rowKey)) return;
+    seen.add(rowKey);
+    out.push({ ...row, rowKey });
   };
 
   for (const [id, cfg] of Object.entries(input.aliases || {})) {

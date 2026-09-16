@@ -56,6 +56,12 @@
               {#if toast.detail.param}
                 <span class="toast-badge param">param: {toast.detail.param}</span>
               {/if}
+              {#if Number.isInteger(toast.detail.httpStatus) && toast.detail.httpStatus! >= 100 && toast.detail.httpStatus! <= 599}
+                <span class="toast-badge status">HTTP {toast.detail.httpStatus}</span>
+              {/if}
+              {#if Number.isFinite(toast.detail.latencyMs) && toast.detail.latencyMs! >= 0}
+                <span class="toast-badge latency">{Math.round(toast.detail.latencyMs!)} ms</span>
+              {/if}
             </div>
             {#if toast.detail.message}
               <div class="toast-upstream">{toast.detail.message}</div>

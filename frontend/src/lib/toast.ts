@@ -5,6 +5,8 @@ export interface ToastDetail {
   type?: string;
   param?: string;
   message: string;
+  httpStatus?: number;
+  latencyMs?: number;
   hint?: string;
 }
 

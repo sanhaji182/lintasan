@@ -13,7 +13,7 @@
   let error = $state('');
   let query = $state('');
   let kind = $state<'all' | 'route' | 'cloud_agent' | 'provider'>('all');
-  let testing = $state<string | null>(null);
+  let testing = $state<Record<string, boolean>>({});
   let testResults = $state<Record<string, ModelTestResult>>({});
 
   const visible = $derived(filterCallableModels(rows, query).filter(row => kind === 'all' || row.kind === kind));
@@ -48,18 +48,18 @@
 
   async function testModel(row: CallableModel) {
     if (!row.connectionId || row.kind === 'route') return;
-    testing = row.id;
+    testing[row.rowKey] = true;
     try {
       const result = await api.post<any>('/api/models/test', { model_id: row.id, connection_id: row.connectionId });
       const formatted = formatModelTestResponse(result);
-      testResults[row.id] = formatted;
+      testResults[row.rowKey] = formatted;
       if (!formatted.ok) notifyTestFailure(formatted);
     } catch (e: any) {
       const formatted = formatModelTestError(e);
-      testResults[row.id] = formatted;
+      testResults[row.rowKey] = formatted;
       notifyTestFailure(formatted);
     } finally {
-      testing = null;
+      delete testing[row.rowKey];
     }
   }
 
@@ -68,6 +68,8 @@
       code: result.code,
       type: 'model_test_error',
       message: result.detail || result.message,
+      httpStatus: result.httpStatus,
+      latencyMs: result.latencyMs,
       hint: result.hint,
     });
   }
@@ -101,12 +103,12 @@
   {:else if visible.length === 0}<div class="card"><EmptyState icon={Search} title="No callable IDs match" description="Change the search or type filter." /></div>
   {:else}
     <div class="model-grid">
-      {#each visible as row (row.id)}
+      {#each visible as row (row.rowKey)}
         <article class="model-card">
           <div class="model-top">
             <div class="kind-icon" class:cloud={row.kind === 'cloud_agent'}>{#if row.kind === 'route'}<Route size={18} />{:else if row.kind === 'cloud_agent'}<Cloud size={18} />{:else}<Server size={18} />{/if}</div>
             <div class="identity"><code>{row.id}</code><span>{row.kind === 'route' ? 'Alias / combo' : row.kind === 'cloud_agent' ? 'Cloud Agent' : 'Provider model'}</span></div>
-            <span class="health" data-health={testResults[row.id]?.ok ? 'healthy' : row.health}>{testResults[row.id] ? (testResults[row.id].ok ? 'verified' : 'failed') : row.health}</span>
+            <span class="health" data-health={testResults[row.rowKey]?.ok ? 'healthy' : row.health}>{testResults[row.rowKey] ? (testResults[row.rowKey].ok ? 'verified' : 'failed') : row.health}</span>
           </div>
           <dl>
             <div><dt>Route / provider</dt><dd>{row.route || row.provider || 'Not reported'}</dd></div>
@@ -115,8 +117,8 @@
             <div><dt>Price</dt><dd>{fmtPrice(row.price)}</dd></div>
             <div><dt>Capabilities</dt><dd>{row.capabilities.length ? row.capabilities.join(', ') : (row.supportsStreaming === false ? 'Non-streaming' : 'Not reported')}</dd></div>
           </dl>
-          {#if testResults[row.id]}
-            {@const result = testResults[row.id]}
+          {#if testResults[row.rowKey]}
+            {@const result = testResults[row.rowKey]}
             <div class="test-result" class:failed={!result.ok} role="status" aria-live="polite">
               <div class="test-result-head">
                 <strong>{result.message}</strong>
@@ -132,7 +134,7 @@
           {/if}
           <div class="actions">
             <button class="btn-secondary" onclick={() => copyID(row.id)}><Copy size={13} /> Copy ID</button>
-            {#if row.connectionId && row.kind !== 'route'}<button class="btn-secondary" onclick={() => testModel(row)} disabled={testing === row.id}><TestTube2 size={13} /> {testing === row.id ? 'Testing…' : 'Safe test'}</button>{/if}
+            {#if row.connectionId && row.kind !== 'route'}<button class="btn-secondary" onclick={() => testModel(row)} disabled={!!testing[row.rowKey]}><TestTube2 size={13} /> {testing[row.rowKey] ? 'Testing…' : 'Safe test'}</button>{/if}
             <a class="btn-primary" href={`/dashboard/playground?model=${encodeURIComponent(row.id)}`}><Play size={13} /> Playground</a>
           </div>
         </article>

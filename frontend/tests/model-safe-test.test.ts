@@ -2,11 +2,14 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/sv
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ModelsPage from '../src/routes/dashboard/models/+page.svelte';
 import { formatModelTestError, formatModelTestResponse } from '../src/lib/model-test-result';
+import { buildCallableCatalog } from '../src/lib/workflow-consolidation';
 
 const mocks = vi.hoisted(() => ({
+  models: [{ id: 'demo-model', connection_id: 'conn-1', owned_by: 'Demo' }],
+  connections: [{ id: 'conn-1', name: 'Demo Account', format: 'openai', is_active: 1 }],
   get: vi.fn(async (path: string) => {
-    if (path === '/v1/models') return { data: [{ id: 'demo-model', connection_id: 'conn-1', owned_by: 'Demo' }] };
-    if (path === '/api/connections') return { data: [{ id: 'conn-1', name: 'Demo Account', format: 'openai', is_active: 1 }] };
+    if (path === '/v1/models') return { data: mocks.models };
+    if (path === '/api/connections') return { data: mocks.connections };
     if (path === '/api/aliases') return { data: {} };
     return { data: [] };
   }),
@@ -72,7 +75,11 @@ describe('model Safe test result formatting', () => {
 });
 
 describe('Models Safe test UI', () => {
-  beforeEach(() => { mocks.get.mockClear(); mocks.post.mockReset(); mocks.showToast.mockClear(); });
+  beforeEach(() => {
+    mocks.models = [{ id: 'demo-model', connection_id: 'conn-1', owned_by: 'Demo' }];
+    mocks.connections = [{ id: 'conn-1', name: 'Demo Account', format: 'openai', is_active: 1 }];
+    mocks.get.mockClear(); mocks.post.mockReset(); mocks.showToast.mockClear();
+  });
   afterEach(() => cleanup());
 
   async function renderAndTest() {
@@ -90,7 +97,7 @@ describe('Models Safe test UI', () => {
     expect(screen.getByText('87 ms')).not.toBeNull();
     expect(screen.getByText('Retry later')).not.toBeNull();
     expect(screen.getByText('Wait before retrying.')).not.toBeNull();
-    expect(mocks.showToast).toHaveBeenCalledWith('Safe test failed: Too many requests', 'error', 6000, expect.objectContaining({ code: 'rate_limited', hint: 'Wait before retrying.' }));
+    expect(mocks.showToast).toHaveBeenCalledWith('Safe test failed: Too many requests', 'error', 6000, expect.objectContaining({ code: 'rate_limited', httpStatus: 429, latencyMs: 87, hint: 'Wait before retrying.' }));
   });
 
   it('renders a non-2xx ApiError envelope without exposing raw HTML', async () => {
@@ -103,7 +110,7 @@ describe('Models Safe test UI', () => {
     expect(await screen.findByText('upstream refused')).not.toBeNull();
     expect(screen.getByText('Bad gateway')).not.toBeNull();
     expect(document.body.textContent).not.toContain('<script>');
-    expect(mocks.showToast).toHaveBeenCalledWith('Safe test failed: upstream refused', 'error', 6000, expect.objectContaining({ code: 'upstream_error' }));
+    expect(mocks.showToast).toHaveBeenCalledWith('Safe test failed: upstream refused', 'error', 6000, expect.objectContaining({ code: 'upstream_error', httpStatus: 502, latencyMs: 123 }));
   });
 
   it('renders success without an error toast', async () => {
@@ -113,5 +120,55 @@ describe('Models Safe test UI', () => {
     expect(screen.getByText('HTTP 200')).not.toBeNull();
     expect(screen.getByText('31 ms')).not.toBeNull();
     expect(mocks.showToast).not.toHaveBeenCalled();
+  });
+
+  it('keeps duplicate model IDs isolated per account while deduping true connection duplicates', async () => {
+    mocks.models = [
+      { id: 'shared-model', connection_id: 'conn-1', owned_by: 'Demo' },
+      { id: 'shared-model', connection_id: 'conn-1', owned_by: 'Demo' },
+      { id: 'shared-model', connection_id: 'conn-2', owned_by: 'Demo' },
+    ];
+    mocks.connections = [
+      { id: 'conn-1', name: 'Account One', format: 'openai', is_active: 1 },
+      { id: 'conn-2', name: 'Account Two', format: 'openai', is_active: 1 },
+    ];
+    const pending: Array<(value: any) => void> = [];
+    mocks.post.mockImplementation(() => new Promise(resolve => pending.push(resolve)));
+
+    render(ModelsPage);
+    expect(await screen.findByText('Account One')).not.toBeNull();
+    expect(screen.getByText('Account Two')).not.toBeNull();
+    expect(screen.getAllByText('shared-model')).toHaveLength(2);
+
+    const buttons = screen.getAllByRole('button', { name: 'Safe test' });
+    await fireEvent.click(buttons[0]);
+    await fireEvent.click(buttons[1]);
+    expect(mocks.post).toHaveBeenNthCalledWith(1, '/api/models/test', { model_id: 'shared-model', connection_id: 'conn-1' });
+    expect(mocks.post).toHaveBeenNthCalledWith(2, '/api/models/test', { model_id: 'shared-model', connection_id: 'conn-2' });
+    expect(screen.getAllByRole('button', { name: 'Testing…' })).toHaveLength(2);
+
+    pending[0]({ success: true, status: 'ok', latency_ms: 11, message: 'Account one works' });
+    await waitFor(() => expect(screen.getByText('Account one works')).not.toBeNull());
+    expect(screen.getByRole('button', { name: 'Safe test' })).not.toBeNull();
+    expect(screen.getByRole('button', { name: 'Testing…' })).not.toBeNull();
+
+    pending[1]({ success: false, status: 'rate_limited', http_status: 429, latency_ms: 22, message: 'Account two limited' });
+    await waitFor(() => expect(screen.getByText('Account two limited')).not.toBeNull());
+    expect(screen.getByText('Account one works')).not.toBeNull();
+  });
+});
+
+describe('callable catalog row identity', () => {
+  it('keys by kind, account identity, and model while retaining cross-account rows', () => {
+    const rows = buildCallableCatalog({
+      connections: [{ id: 'a', name: 'One' }, { id: 'b', name: 'Two' }],
+      models: [
+        { id: 'same', connection_id: 'a' },
+        { id: 'same', connection_id: 'a' },
+        { id: 'same', connection_id: 'b' },
+      ],
+    });
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map(row => row.rowKey)).size).toBe(2);
   });
 });

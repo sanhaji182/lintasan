@@ -4,6 +4,7 @@ import ModelCombobox from '../src/lib/components/ModelCombobox.svelte';
 
 const models = [
   {
+    rowKey: '["provider","openai-1","gpt-mini"]',
     id: 'gpt-mini',
     label: 'gpt-mini',
     kind: 'provider' as const,
