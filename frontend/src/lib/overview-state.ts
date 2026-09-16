@@ -1,9 +1,24 @@
 type Source<T> = PromiseSettledResult<T>;
 
-type Health = { status?: string; version?: string };
-type Stats = { total_requests?: number; cache_hit_rate?: number; avg_latency?: number; uptime?: string };
+type Health = { status?: unknown; version?: unknown };
+type Stats = { total_requests?: unknown; cache_hit_rate?: unknown; avg_latency?: unknown; uptime?: unknown };
 export type OverviewLog = { model?: string; provider?: string; status?: number; input_tokens?: number; output_tokens?: number; latency_ms?: number; created_at?: string };
 type Connection = { id: string; name: string; is_active: number | boolean; format?: string };
+
+const validNonNegativeNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+const validHealth = (value: Health | null): value is Health & { status: string } =>
+  !!value && typeof value.status === 'string' && value.status.trim().length > 0;
+
+const validLogs = (value: unknown): value is OverviewLog[] => Array.isArray(value) && value.every(log =>
+  !!log && typeof log === 'object' && validNonNegativeNumber(log.input_tokens) && validNonNegativeNumber(log.output_tokens)
+);
+
+const validConnections = (value: unknown): value is Connection[] => Array.isArray(value) && value.every(connection =>
+  !!connection && typeof connection.id === 'string' && typeof connection.name === 'string'
+  && (typeof connection.is_active === 'boolean' || connection.is_active === 0 || connection.is_active === 1)
+);
 
 function readableNumber(value: number) {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -19,38 +34,43 @@ export function deriveOverview(input: {
   logs: Source<OverviewLog[]>;
   connections: Source<Connection[]>;
 }) {
+  const healthValue = input.health.status === 'fulfilled' ? input.health.value : null;
+  const stats = input.stats.status === 'fulfilled' && input.stats.value && typeof input.stats.value === 'object' ? input.stats.value : null;
+  const logsValue = input.logs.status === 'fulfilled' ? input.logs.value : null;
+  const connectionsValue = input.connections.status === 'fulfilled' ? input.connections.value : null;
+  const health = validHealth(healthValue) ? healthValue : null;
+  const logs = validLogs(logsValue) ? logsValue : null;
+  const connections = validConnections(connectionsValue) ? connectionsValue : null;
+  const hasRequests = validNonNegativeNumber(stats?.total_requests);
+  const hasLatency = validNonNegativeNumber(stats?.avg_latency);
+  const statsPartial = input.stats.status === 'fulfilled' && (!hasRequests || !hasLatency);
   const failedSources = [
-    input.health.status === 'rejected' ? 'Gateway health' : '',
-    input.stats.status === 'rejected' ? 'Traffic stats' : '',
-    input.logs.status === 'rejected' ? 'Recent requests' : '',
-    input.connections.status === 'rejected' ? 'Connections' : '',
+    input.health.status === 'rejected' ? 'Gateway health' : !health ? 'Gateway health (partial)' : '',
+    input.stats.status === 'rejected' ? 'Traffic stats' : statsPartial ? 'Traffic stats (partial)' : '',
+    input.logs.status === 'rejected' ? 'Recent requests' : !logs ? 'Recent requests (partial)' : '',
+    input.connections.status === 'rejected' ? 'Connections' : !connections ? 'Connections (partial)' : '',
   ].filter(Boolean);
-
-  const health = input.health.status === 'fulfilled' ? input.health.value : null;
-  const stats = input.stats.status === 'fulfilled' ? input.stats.value : null;
-  const logs = input.logs.status === 'fulfilled' ? input.logs.value : null;
-  const connections = input.connections.status === 'fulfilled' ? input.connections.value : null;
   const healthy = health?.status === 'ok' || health?.status === 'healthy';
-  const tokenCount = logs?.reduce((sum, log) => sum + (log.input_tokens || 0) + (log.output_tokens || 0), 0);
+  const tokenCount = logs?.reduce((sum, log) => sum + log.input_tokens! + log.output_tokens!, 0);
   const active = connections?.filter(connection => Boolean(connection.is_active)).length;
 
   return {
     gateway: {
       label: health ? (healthy ? 'Operational' : 'Attention needed') : 'Status unavailable',
-      detail: health ? [health.version, stats?.uptime ? `Up ${stats.uptime}` : ''].filter(Boolean).join(' · ') : 'Health endpoint could not be reached',
+      detail: health ? [typeof health.version === 'string' ? health.version : '', typeof stats?.uptime === 'string' && stats.uptime ? `Up ${stats.uptime}` : ''].filter(Boolean).join(' · ') : 'Health data is unavailable or incomplete',
       tone: health ? (healthy ? 'success' : 'warning') : 'neutral',
     },
     requests: {
-      value: stats ? readableNumber(stats.total_requests || 0) : 'Unavailable',
+      value: hasRequests ? readableNumber(stats!.total_requests as number) : 'Unavailable',
       detail: 'Recorded gateway requests',
     },
     latency: {
-      value: stats ? `${Math.round(stats.avg_latency || 0)}ms` : 'Unavailable',
+      value: hasLatency ? `${Math.round(stats!.avg_latency as number)}ms` : 'Unavailable',
       detail: 'Average successful response',
     },
     tokens: {
-      value: logs ? readableNumber(tokenCount || 0) : 'Unavailable',
-      detail: `Across ${logs?.length || 0} recent request${logs?.length === 1 ? '' : 's'}`,
+      value: logs ? readableNumber(tokenCount!) : 'Unavailable',
+      detail: logs ? `Across ${logs.length} recent request${logs.length === 1 ? '' : 's'}` : 'Recent token data is incomplete',
     },
     providers: {
       value: connections ? `${active} / ${connections.length}` : 'Unavailable',

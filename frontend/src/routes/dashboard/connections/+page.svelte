@@ -3885,6 +3885,16 @@
     }
     .conn-toolbar-right {
       justify-content: flex-end;
+      max-width: 100%;
+      flex-wrap: wrap;
+    }
+    .filter-chip, .conn-toolbar-btn, .conn-action-btn, .bulk-selection-bar :global(button) {
+      min-width: 44px;
+      min-height: 44px;
+    }
+    .conn-action-btn {
+      min-width: 44px;
+      justify-content: center;
     }
     .conn-toolbar-btn-label {
       display: none;

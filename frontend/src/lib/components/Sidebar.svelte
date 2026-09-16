@@ -103,5 +103,6 @@
     .sidebar { transform: translateX(-100%); }
     .sidebar.open { transform: translateX(0); }
     .overlay { display: block; }
+    .nav-group-toggle, .nav-item, .theme-btn { min-height: 44px; }
   }
 </style>

@@ -115,11 +115,11 @@
     background: none;
     border: none;
     border-radius: 10px;
-    color: #64748b;
+    color: var(--color-fg-2);
     cursor: pointer;
     flex-shrink: 0;
   }
-  .menu-btn:hover { background: #f1f5f9; color: #1e293b; }
+  .menu-btn:hover { background: var(--color-bg-hover); color: var(--color-fg-0); }
 
   .header-title {
     font-size: 16px;
@@ -144,24 +144,24 @@
     justify-content: center;
     width: 36px; height: 36px;
     background: none;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--color-border);
     border-radius: 10px;
-    color: #64748b;
+    color: var(--color-fg-2);
     cursor: pointer;
     flex-shrink: 0;
   }
-  .theme-toggle:hover { background: #f8fafc; color: #1e293b; }
+  .theme-toggle:hover { background: var(--color-bg-hover); color: var(--color-fg-0); }
 
   .user-pill {
     display: inline-flex;
     align-items: center;
     gap: 6px;
     padding: 7px 14px;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--color-border);
     border-radius: 10px;
     font-size: 13px;
     font-weight: 500;
-    color: #334155;
+    color: var(--color-fg-1);
     text-decoration: none;
     max-width: 140px;
     overflow: hidden;
@@ -169,7 +169,7 @@
     white-space: nowrap;
     transition: background 0.15s;
   }
-  .user-pill:hover { background: #f8fafc; }
+  .user-pill:hover { background: var(--color-bg-hover); color: var(--color-fg-0); }
 
   .logout-btn {
     display: inline-flex;
@@ -177,15 +177,15 @@
     gap: 5px;
     padding: 7px 12px;
     background: none;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--color-border);
     border-radius: 10px;
     font-size: 13px;
     font-weight: 500;
-    color: #dc2626;
+    color: var(--color-error);
     cursor: pointer;
     transition: background 0.15s;
   }
-  .logout-btn:hover { background: #fef2f2; }
+  .logout-btn:hover { background: var(--color-error-light); }
 
   .login-link {
     display: inline-flex;
@@ -202,7 +202,8 @@
   .login-link:hover { background: #4338ca; }
 
   @media (max-width: 768px) {
-    .menu-btn { display: flex; }
+    .menu-btn { display: flex; min-width: 44px; min-height: 44px; }
+    .theme-toggle, .user-pill, .logout-btn, .login-link { min-width: 44px; min-height: 44px; justify-content: center; }
     .header { padding: 0 12px; }
     .header-title { font-size: 14px; }
     .user-pill-label { display: none; }
