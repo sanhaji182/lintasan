@@ -4,6 +4,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
+  import { formatModelTestError, formatModelTestResponse, type ModelTestResult } from '$lib/model-test-result';
   import { buildCallableCatalog, filterCallableModels, type CallableModel } from '$lib/workflow-consolidation';
   import { Search, Copy, Play, TestTube2, Boxes, RefreshCw, Cloud, Route, Server } from 'lucide-svelte';
 
@@ -13,7 +14,7 @@
   let query = $state('');
   let kind = $state<'all' | 'route' | 'cloud_agent' | 'provider'>('all');
   let testing = $state<string | null>(null);
-  let testResults = $state<Record<string, { ok: boolean; message: string }>>({});
+  let testResults = $state<Record<string, ModelTestResult>>({});
 
   const visible = $derived(filterCallableModels(rows, query).filter(row => kind === 'all' || row.kind === kind));
   const counts = $derived({
@@ -50,9 +51,25 @@
     testing = row.id;
     try {
       const result = await api.post<any>('/api/models/test', { model_id: row.id, connection_id: row.connectionId });
-      testResults[row.id] = { ok: !!result.success, message: result.message || result.status || (result.success ? 'Available' : 'Unavailable') };
-    } catch (e: any) { testResults[row.id] = { ok: false, message: e.message || 'Test failed' }; }
-    testing = null;
+      const formatted = formatModelTestResponse(result);
+      testResults[row.id] = formatted;
+      if (!formatted.ok) notifyTestFailure(formatted);
+    } catch (e: any) {
+      const formatted = formatModelTestError(e);
+      testResults[row.id] = formatted;
+      notifyTestFailure(formatted);
+    } finally {
+      testing = null;
+    }
+  }
+
+  function notifyTestFailure(result: ModelTestResult) {
+    showToast(`Safe test failed: ${result.message}`, 'error', 6000, {
+      code: result.code,
+      type: 'model_test_error',
+      message: result.detail || result.message,
+      hint: result.hint,
+    });
   }
 
   function fmtPrice(price: unknown): string {
@@ -98,7 +115,21 @@
             <div><dt>Price</dt><dd>{fmtPrice(row.price)}</dd></div>
             <div><dt>Capabilities</dt><dd>{row.capabilities.length ? row.capabilities.join(', ') : (row.supportsStreaming === false ? 'Non-streaming' : 'Not reported')}</dd></div>
           </dl>
-          {#if testResults[row.id]}<div class="test-result" class:failed={!testResults[row.id].ok}>{testResults[row.id].message}</div>{/if}
+          {#if testResults[row.id]}
+            {@const result = testResults[row.id]}
+            <div class="test-result" class:failed={!result.ok} role="status" aria-live="polite">
+              <div class="test-result-head">
+                <strong>{result.message}</strong>
+                <div class="test-result-meta">
+                  <code>{result.code}</code>
+                  {#if result.httpStatus !== undefined}<span>HTTP {result.httpStatus}</span>{/if}
+                  {#if result.latencyMs !== undefined}<span>{result.latencyMs} ms</span>{/if}
+                </div>
+              </div>
+              {#if result.detail}<p>{result.detail}</p>{/if}
+              {#if result.hint}<p class="test-result-hint">{result.hint}</p>{/if}
+            </div>
+          {/if}
           <div class="actions">
             <button class="btn-secondary" onclick={() => copyID(row.id)}><Copy size={13} /> Copy ID</button>
             {#if row.connectionId && row.kind !== 'route'}<button class="btn-secondary" onclick={() => testModel(row)} disabled={testing === row.id}><TestTube2 size={13} /> {testing === row.id ? 'Testing…' : 'Safe test'}</button>{/if}
@@ -112,4 +143,5 @@
 
 <style>
   .catalog-page{display:flex;flex-direction:column;gap:18px}.catalog-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.catalog-header h2{font-size:24px;font-weight:750;color:var(--color-fg-0);margin:2px 0}.catalog-header p{font-size:13px;color:var(--color-fg-2);max-width:720px}.eyebrow{font-size:10px;font-weight:800;letter-spacing:.12em;color:var(--color-primary)}.catalog-tools{position:sticky;top:calc(var(--header-h) + 8px);z-index:15;background:color-mix(in srgb,var(--color-bg-body) 92%,transparent);backdrop-filter:blur(12px);padding:10px;border:1px solid var(--color-border);border-radius:12px;display:flex;gap:12px;flex-wrap:wrap}.search{display:flex;align-items:center;gap:8px;flex:1;min-width:240px;background:var(--color-bg-card);border:1px solid var(--color-border);border-radius:9px;padding:0 11px;color:var(--color-fg-3)}.search input{border:0;outline:0;background:transparent;color:var(--color-fg-0);padding:9px 0;width:100%;font-size:13px}.filters{display:flex;gap:5px;flex-wrap:wrap}.filters button{border:1px solid var(--color-border);background:var(--color-bg-card);color:var(--color-fg-2);padding:7px 10px;border-radius:8px;font-size:11px;cursor:pointer}.filters button.active{background:var(--color-primary-light);border-color:var(--color-primary);color:var(--color-primary)}.filters span{font-family:var(--font-mono);opacity:.75}.model-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}.model-card{background:var(--color-bg-card);border:1px solid var(--color-border);border-radius:12px;padding:15px;display:flex;flex-direction:column;gap:13px}.model-top{display:flex;align-items:center;gap:10px}.kind-icon{width:34px;height:34px;border-radius:9px;background:var(--color-primary-light);color:var(--color-primary);display:grid;place-items:center}.kind-icon.cloud{background:var(--color-purple-light);color:var(--color-purple)}.identity{min-width:0;flex:1}.identity code{display:block;overflow:hidden;text-overflow:ellipsis;font-size:12px;font-weight:650;color:var(--color-fg-0)}.identity span{font-size:10px;color:var(--color-fg-3)}.health{font-size:10px;padding:3px 7px;border-radius:999px;background:var(--color-border-light);color:var(--color-fg-2)}.health[data-health=healthy],.health[data-health=verified]{background:var(--color-success-light);color:var(--color-success)}dl{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:0}dl div{min-width:0}dt{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:var(--color-fg-3)}dd{margin:2px 0 0;font-size:11px;color:var(--color-fg-1);overflow-wrap:anywhere}.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:auto}.actions a{text-decoration:none}.test-result{font-size:11px;padding:7px 9px;border-radius:7px;background:var(--color-success-light);color:var(--color-success)}.test-result.failed{background:var(--color-error-light);color:var(--color-error)}.loading{padding:60px;display:grid;place-items:center}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}@media(max-width:640px){.catalog-header{flex-direction:column}.catalog-tools{top:8px}.model-grid{grid-template-columns:1fr}dl{grid-template-columns:1fr}}
+  .test-result{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--color-success) 35%,var(--color-border));border-radius:9px;background:color-mix(in srgb,var(--color-success-light) 62%,var(--color-bg-card));color:var(--color-fg-1);overflow-wrap:anywhere}.test-result.failed{border-color:color-mix(in srgb,var(--color-error) 38%,var(--color-border));background:color-mix(in srgb,var(--color-error-light) 62%,var(--color-bg-card))}.test-result-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.test-result-head strong{font-size:12px;color:var(--color-fg-0)}.test-result-meta{display:flex;align-items:center;justify-content:flex-end;gap:5px;flex-wrap:wrap}.test-result-meta code,.test-result-meta span{font-size:10px;line-height:1;padding:4px 6px;border:1px solid var(--color-border);border-radius:999px;background:color-mix(in srgb,var(--color-bg-card) 72%,transparent);color:var(--color-fg-2)}.test-result p{margin:0;font-size:11px;line-height:1.45}.test-result-hint{color:var(--color-fg-2)}.test-result-hint::before{content:'Hint: ';font-weight:700;color:var(--color-fg-1)}
 </style>
