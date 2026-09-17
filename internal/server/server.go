@@ -407,15 +407,11 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		// Health, root, metrics, and setup-status are always open (no secrets,
-		// no mutation). /metrics serves read-only numeric counters (bounded
-		// labels, no master_key / API keys / prompt content) so it's safe to
-		// expose unauthenticated for a localhost Prometheus scraper, matching
-		// /health. Exposure can still be turned off entirely via
-		// LINTASAN_METRICS_ENABLED (handled in HandleMetrics). setup-status must
-		// be readable in BOTH states so the login UI can render first-run vs
-		// normal login.
-		if path == "/health" || path == "/" || path == "/api/setup/status" || path == "/metrics" {
+		// Health and root are always open (no secrets, no mutation). setup-status must
+		// be readable in BOTH states so the login UI can render first-run vs normal login.
+		// /metrics is intentionally not public: operational telemetry is protected by
+		// the same fail-closed JWT/master-key/API-key boundary as other management APIs.
+		if path == "/health" || path == "/" || path == "/api/setup/status" {
 			next.ServeHTTP(w, r)
 			return
 		}
