@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sanhaji182/lintasan-go/internal/auth"
 	"github.com/sanhaji182/lintasan-go/internal/hoplite"
 )
 
@@ -28,6 +29,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		Model    string               `json:"model"`
 		Stream   bool                 `json:"stream"`
 		Messages []hopliteChatMessage `json:"messages"`
+		ThreadID string               `json:"thread_id"`
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
@@ -45,6 +47,9 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if !isCloudAgentModel(envelope.Model) {
 		s.proxy.HandleChatCompletions(w, r)
 		return
+	}
+	if envelope.ThreadID != "" && strings.TrimSpace(r.Header.Get("X-Lintasan-Thread-Id")) == "" {
+		r.Header.Set("X-Lintasan-Thread-Id", strings.TrimSpace(envelope.ThreadID))
 	}
 	s.handleHopliteCompletion(w, r, envelope.Model, envelope.Stream, envelope.Messages)
 }
@@ -105,81 +110,149 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	client := s.newHopliteClient(key, timeout)
-	opID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-	if opID == "" {
-		opID = newHopliteOperationID()
-	}
-	if len(opID) > 64 {
-		digest := sha256.Sum256([]byte(opID))
-		opID = "lintasan-" + hex.EncodeToString(digest[:24])
-	}
-	created, meta, err := client.CreateThread(ctx, hoplite.CreateThreadRequest{
-		ProjectID: projectID, Prompt: prompt, Model: selectedModel, AutoFix: false, AutoMerge: false, ClientOperationID: opID,
-	})
-	// Idempotency alone cannot prove whether a network timeout happened before
-	// or after upstream acceptance; the combo dispatcher handles that ambiguity
-	// fail-closed and will not start another autonomous target.
-	if err != nil {
-		// A transport failure has ambiguous acceptance: the upstream may have
-		// created the thread before the response was lost. Never fan out a second
-		// agent in that case. Typed HTTP errors are definitive pre-create rejects.
-		var upstream *hoplite.UpstreamError
-		if !errors.As(err, &upstream) {
-			w.Header().Set("X-Lintasan-Agent-Acceptance-Uncertain", "true")
+
+	identity := hopliteContinuityIdentity(r)
+	threadID := strings.TrimSpace(r.Header.Get("X-Lintasan-Thread-Id"))
+	if threadID == "" && identity != "" && s.hopliteSessionStore != nil {
+		if session := s.hopliteSessionStore.Load(identity, accountID+"\x00"+projectID); session != nil {
+			threadID = session.threadID
 		}
-		writeHopliteOpenAIError(w, err)
-		return
 	}
-	thread := created.Thread
-	if thread.ID == "" {
-		writeOpenAIError(w, http.StatusBadGateway, "invalid_upstream_response", "Hoplite did not return a thread ID")
-		return
+
+	var thread hoplite.Thread
+	var meta hoplite.ResponseMeta
+	var err error
+	previousAssistantID := ""
+	continuing := threadID != ""
+
+	if continuing {
+		// Never trust a caller-supplied or cached thread ID without checking that
+		// it belongs to the selected project.
+		thread, meta, err = client.GetThread(ctx, threadID)
+		if err != nil {
+			writeHopliteOpenAIError(w, err)
+			return
+		}
+		if thread.ProjectID != projectID {
+			writeOpenAIError(w, http.StatusConflict, "thread_project_mismatch", "Hoplite thread does not belong to the selected project")
+			return
+		}
+		if !hopliteTerminal(thread.Status) || (thread.Status != "ready" && thread.Status != "succeeded") {
+			writeOpenAIError(w, http.StatusConflict, "thread_not_ready", "Hoplite thread is not ready for a follow-up message")
+			return
+		}
+		before, _, listErr := client.ListMessages(ctx, threadID)
+		if listErr != nil {
+			writeHopliteOpenAIError(w, listErr)
+			return
+		}
+		for _, message := range before {
+			if message.Role == "assistant" && (message.Kind == "" || message.Kind == "chat") && strings.TrimSpace(message.Content) != "" {
+				previousAssistantID = message.ID
+			}
+		}
+		_, meta, err = client.AppendMessage(ctx, threadID, hoplite.AppendMessageRequest{
+			Content:  prompt,
+			Metadata: hoplite.MessageMetadata{Model: selectedModel},
+		})
+		if err != nil {
+			writeHopliteOpenAIError(w, err)
+			return
+		}
+		w.Header().Set("X-Lintasan-Agent-Accepted", "true")
+	} else {
+		opID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if opID == "" {
+			opID = newHopliteOperationID()
+		}
+		if len(opID) > 64 {
+			digest := sha256.Sum256([]byte(opID))
+			opID = "lintasan-" + hex.EncodeToString(digest[:24])
+		}
+		created, createMeta, createErr := client.CreateThread(ctx, hoplite.CreateThreadRequest{
+			ProjectID: projectID, Prompt: prompt, Model: selectedModel, AutoFix: false, AutoMerge: false, ClientOperationID: opID,
+		})
+		meta, err = createMeta, createErr
+		if err != nil {
+			var upstream *hoplite.UpstreamError
+			if !errors.As(err, &upstream) {
+				w.Header().Set("X-Lintasan-Agent-Acceptance-Uncertain", "true")
+			}
+			writeHopliteOpenAIError(w, err)
+			return
+		}
+		thread = created.Thread
+		threadID = thread.ID
+		if threadID == "" {
+			writeOpenAIError(w, http.StatusBadGateway, "invalid_upstream_response", "Hoplite did not return a thread ID")
+			return
+		}
+		w.Header().Set("X-Lintasan-Agent-Accepted", "true")
 	}
-	// This header is internal dispatch state until copied to the client. From
-	// this point onward fallback is forbidden: a real agent job now exists.
-	w.Header().Set("X-Lintasan-Agent-Accepted", "true")
+
+	answer := ""
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
-	for !hopliteTerminal(thread.Status) {
-		select {
-		case <-ctx.Done():
-			writeOpenAIError(w, http.StatusGatewayTimeout, "agent_timeout", "Hoplite agent did not reach a terminal state before the adapter timeout")
-			return
-		case <-ticker.C:
-			thread, meta, err = client.GetThread(ctx, thread.ID)
+	firstPoll := continuing || !hopliteTerminal(thread.Status)
+	for {
+		if firstPoll || !hopliteTerminal(thread.Status) {
+			thread, meta, err = client.GetThread(ctx, threadID)
 			if err != nil {
 				writeHopliteOpenAIError(w, err)
 				return
 			}
 		}
-	}
-	if thread.Status != "ready" && thread.Status != "succeeded" {
-		writeOpenAIError(w, http.StatusBadGateway, "agent_failed", "Hoplite agent ended with status "+thread.Status)
-		return
-	}
-	history, _, err := client.ListMessages(ctx, thread.ID)
-	if err != nil {
-		writeHopliteOpenAIError(w, err)
-		return
-	}
-	answer := ""
-	for _, message := range history {
-		if message.Role == "assistant" && (message.Kind == "" || message.Kind == "chat") && strings.TrimSpace(message.Content) != "" {
-			answer = message.Content
+		firstPoll = false
+		if hopliteTerminal(thread.Status) {
+			if thread.Status != "ready" && thread.Status != "succeeded" {
+				writeOpenAIError(w, http.StatusBadGateway, "agent_failed", "Hoplite agent ended with status "+thread.Status)
+				return
+			}
+			history, _, historyErr := client.ListMessages(ctx, threadID)
+			if historyErr != nil {
+				writeHopliteOpenAIError(w, historyErr)
+				return
+			}
+			latestAssistantID := ""
+			for _, message := range history {
+				if message.Role == "assistant" && (message.Kind == "" || message.Kind == "chat") && strings.TrimSpace(message.Content) != "" {
+					latestAssistantID, answer = message.ID, message.Content
+				}
+			}
+			if answer != "" && (previousAssistantID == "" || latestAssistantID != previousAssistantID) {
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			writeOpenAIError(w, http.StatusGatewayTimeout, "agent_timeout", "Hoplite agent did not produce a new assistant result before the adapter timeout")
+			return
+		case <-ticker.C:
 		}
 	}
-	if answer == "" {
-		writeOpenAIError(w, http.StatusBadGateway, "empty_agent_result", "Hoplite agent completed without an assistant chat result")
-		return
+
+	if identity != "" && s.hopliteSessionStore != nil {
+		s.hopliteSessionStore.Store(identity, accountID+"\x00"+projectID, threadID)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Lintasan-Provider", "hoplite-agent")
+	w.Header().Set("X-Lintasan-Thread-Id", threadID)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"id": "hoplite-" + thread.ID, "object": "chat.completion", "created": time.Now().Unix(), "model": model,
+		"id": "hoplite-" + threadID, "object": "chat.completion", "created": time.Now().Unix(), "model": model,
 		"choices":    []map[string]any{{"index": 0, "message": map[string]any{"role": "assistant", "content": answer}, "finish_reason": "stop"}},
 		"usage":      map[string]int{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-		"x_lintasan": map[string]any{"provider": "hoplite-agent", "agent_semantics": true, "thread_id": thread.ID, "status": thread.Status, "pull_requests": thread.PullRequests, "request_id": meta.RequestID},
+		"x_lintasan": map[string]any{"provider": "hoplite-agent", "agent_semantics": true, "thread_id": threadID, "status": thread.Status, "pull_requests": thread.PullRequests, "request_id": meta.RequestID},
 	})
+}
+
+func hopliteContinuityIdentity(r *http.Request) string {
+	if user := auth.GetUser(r); user != nil && strings.TrimSpace(user.ID) != "" {
+		return "user:" + user.ID
+	}
+	// Shared master/dashboard API keys do not identify a conversation owner.
+	// Require an explicit X-Lintasan-Thread-Id for those clients rather than
+	// accidentally merging independent conversations that use the same key.
+	return ""
 }
 
 func hopliteSelectedModelID(projectID, modelID string) string {

@@ -52,6 +52,7 @@ type Server struct {
 	metrics             *metrics.Registry      // Prometheus metrics registry (/metrics)
 	startTime           time.Time              // server boot timestamp, used by /health
 	accessLogStore      *logging.LogStore      // in-memory access log ring buffer
+	hopliteSessionStore *SessionStore          // session-based thread continuity tracker
 	hopliteBaseURL      string                 // injectable in tests; defaults to Hoplite public API
 	hopliteHTTPClient   *http.Client           // injectable in tests; bounded by hoplite.Client
 	hoplitePollInterval time.Duration          // injectable in tests; defaults to 2 seconds
@@ -60,11 +61,12 @@ type Server struct {
 
 func New(cfg *config.Config, database *db.DB) *Server {
 	s := &Server{
-		cfg:            cfg,
-		db:             database,
-		mux:            http.NewServeMux(),
-		metrics:        metrics.NewRegistry(),
-		accessLogStore: logging.NewLogStore(),
+		cfg:                 cfg,
+		db:                  database,
+		mux:                 http.NewServeMux(),
+		metrics:             metrics.NewRegistry(),
+		accessLogStore:      logging.NewLogStore(),
+		hopliteSessionStore: NewSessionStore(30 * time.Minute), // Session TTL = 30m
 	}
 	// Register pull-based metric collectors. These run on every /metrics scrape
 	// and emit only numeric counters/gauges + bounded labels — no secrets.
@@ -367,7 +369,8 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Lintasan-MITM")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Lintasan-MITM, X-Lintasan-Thread-Id")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Lintasan-Thread-Id")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
