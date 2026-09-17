@@ -3834,7 +3834,7 @@
     border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.15);
     min-width: 160px;
-    z-index: 100;
+    z-index: 1150;
     padding: 4px;
     animation: fadeInScale 0.15s ease-out;
   }
