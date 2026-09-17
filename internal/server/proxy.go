@@ -620,18 +620,20 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Use load balancer to pick best connection from candidates
-	if lbConn, lbErr := p.lb.Pick(); lbErr == nil && lbConn != nil {
-		for i, c := range candidates {
-			if c.ID == lbConn.ID {
-				if i > 0 {
-					candidates[0], candidates[i] = candidates[i], candidates[0]
+	// Use load balancer to pick best connection from candidates (only for single model routes, not combos)
+	if comboName == "" {
+		if lbConn, lbErr := p.lb.Pick(); lbErr == nil && lbConn != nil {
+			for i, c := range candidates {
+				if c.ID == lbConn.ID {
+					if i > 0 {
+						candidates[0], candidates[i] = candidates[i], candidates[0]
+					}
+					break
 				}
-				break
 			}
 		}
+		candidates = p.reorderCandidatesForTask(candidates, taskClass, routeProfile)
 	}
-	candidates = p.reorderCandidatesForTask(candidates, taskClass, routeProfile)
 
 	// F2.3 capability shadow routing (observe-only, flag-gated, default OFF).
 	// When enabled, evaluate whether each candidate would satisfy the request's
@@ -655,6 +657,9 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	if len(candidates) > 0 && candidates[0].TargetModel != "" {
+		resolvedModel = candidates[0].TargetModel
+	}
 	req["model"] = resolvedModel
 	body, _ = json.Marshal(req)
 
@@ -879,16 +884,16 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		defer resp.Body.Close()
 		lastStatusCode = resp.StatusCode
 
-		// On 5xx with more candidates: fallback
-		if resp.StatusCode >= 500 && i < len(candidates)-1 {
+		// On 4xx/5xx errors (e.g. 400 insufficient credits, 402, 404, 5xx) with more candidates: fallback
+		if resp.StatusCode >= 400 && resp.StatusCode != 429 && resp.StatusCode != 401 && resp.StatusCode != 403 && i < len(candidates)-1 {
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
 			breaker.Failure()
 			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
-			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			p.logRequest(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				if should, reason := fallback.ShouldTriggerFallback(resp.StatusCode, false, false); should {
-					p.fb.RecordEvent(resolvedModel, "", reason, resp.StatusCode)
+					p.fb.RecordEvent(candidateModel, "", reason, resp.StatusCode)
 				}
 			}
 			continue
@@ -900,9 +905,9 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			lastErr = string(b)
 			breaker.Failure()
 			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, true)
-			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			p.logRequest(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
-				p.fb.RecordEvent(resolvedModel, "", fallback.Reason429, resp.StatusCode)
+				p.fb.RecordEvent(candidateModel, "", fallback.Reason429, resp.StatusCode)
 			}
 			continue
 		}
