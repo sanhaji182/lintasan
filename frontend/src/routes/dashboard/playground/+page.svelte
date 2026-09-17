@@ -21,7 +21,6 @@
   let userInput = $state('');
   let streaming = $state(false);
   let streamAbort: AbortController | null = null;
-  let activeThreadId = $state<string | null>(null);
 
   // Settings
   let settingsOpen = $state(false);
@@ -66,7 +65,6 @@
   }
 
   function selectModel(id: string) {
-    if (selectedModel !== id) activeThreadId = null;
     selectedModel = id;
     recentModels = rememberRecentModel(recentModels, id);
     localStorage.setItem('lintasan.lastModel', id);
@@ -155,13 +153,9 @@
       }
 
       const streamResponse = shouldUseStreaming(selectedCapability);
-      const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (isCloudAgentSelection && activeThreadId) {
-        requestHeaders['X-Lintasan-Thread-Id'] = activeThreadId;
-      }
       const res = await api.raw('/v1/chat/completions', {
         method: 'POST',
-        headers: requestHeaders,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: selectedModel,
           messages: apiMessages,
@@ -174,10 +168,6 @@
       if (!res.ok) {
         const errBody = await res.text();
         throw new Error(errBody || `HTTP ${res.status}`);
-      }
-
-      if (isCloudAgentSelection) {
-        activeThreadId = res.headers.get('X-Lintasan-Thread-Id') || activeThreadId;
       }
 
       if (!streamResponse) {
@@ -277,7 +267,6 @@
 
   function clearChat() {
     messages = [];
-    activeThreadId = null;
   }
 
   function copyMessage(content: string) {
