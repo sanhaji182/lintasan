@@ -815,17 +815,67 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 // Logs
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	limit := r.URL.Query().Get("limit")
-	if limit == "" {
-		limit = "20"
+	limitStr := r.URL.Query().Get("limit")
+	if limitStr == "" {
+		limitStr = "100"
+	}
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 500 {
+		limit = 100
 	}
 
+	offsetStr := r.URL.Query().Get("offset")
+	offset := 0
+	if offsetStr != "" {
+		offset, _ = strconv.Atoi(offsetStr)
+		if offset < 0 {
+			offset = 0
+		}
+	}
+
+	sinceStr := r.URL.Query().Get("since")
+	statusStr := r.URL.Query().Get("status")
+	providerStr := r.URL.Query().Get("provider")
+
+	var whereClauses []string
+	var filterArgs []interface{}
+
+	if sinceStr != "" {
+		// Normalize ISO 8601 'T' separator to SQLite's stored datetime format.
+		sinceStr = strings.Replace(sinceStr, "T", " ", 1)
+		whereClauses = append(whereClauses, "created_at >= ?")
+		filterArgs = append(filterArgs, sinceStr)
+	}
+
+	if statusStr != "" {
+		switch statusStr {
+		case "success":
+			whereClauses = append(whereClauses, "status >= 200 AND status < 300")
+		case "error":
+			whereClauses = append(whereClauses, "status >= 400")
+		case "cached":
+			whereClauses = append(whereClauses, "cached = 1")
+		}
+	}
+
+	if providerStr != "" {
+		whereClauses = append(whereClauses, "provider LIKE ?")
+		filterArgs = append(filterArgs, "%"+providerStr+"%")
+	}
+
+	var whereSQL string
+	if len(whereClauses) > 0 {
+		whereSQL = "WHERE " + strings.Join(whereClauses, " AND ")
+	}
+	queryArgs := append(filterArgs, limit, offset)
+
 	rows, err := s.db.Conn().Query(`
-		SELECT id, connection_id, provider, model, status, input_tokens, output_tokens, latency_ms, cached, error, created_at
+		SELECT id, COALESCE(connection_id,''), COALESCE(provider,''), COALESCE(model,''), COALESCE(status,0), COALESCE(input_tokens,0), COALESCE(output_tokens,0), COALESCE(latency_ms,0), COALESCE(cached,0), error, COALESCE(created_at,'')
 		FROM request_logs
+		`+whereSQL+`
 		ORDER BY created_at DESC
-		LIMIT ?
-	`, limit)
+		LIMIT ? OFFSET ?
+	`, queryArgs...)
 	if err != nil {
 		http.Error(w, `{"error":"failed to query logs"}`, http.StatusInternalServerError)
 		return

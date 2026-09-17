@@ -83,7 +83,8 @@ func tokenize(text string) []string {
 	tokens := make([]string, 0, len(words))
 	for _, w := range words {
 		w = stem(w)
-		if (len(w) > 2 || isNumber(w)) && !stopwords[w] {
+		// Include numbers of ANY length to prevent arithmetic prompt collisions
+		if (len(w) >= 2 || isNumber(w)) && !stopwords[w] {
 			tokens = append(tokens, w)
 		}
 	}
