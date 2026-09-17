@@ -23,10 +23,13 @@ type Entry struct {
 
 // Combo is a named combination of model entries with a strategy.
 type Combo struct {
+	ID          string   `json:"id,omitempty"`
 	Name        string   `json:"name"`
 	Strategy    Strategy `json:"strategy"`
 	StickyLimit int      `json:"sticky_limit,omitempty"`
 	Entries     []Entry  `json:"entries"`
+	Models      []string `json:"models,omitempty"`
+	Description string   `json:"description,omitempty"`
 }
 
 // StickyState tracks success/failure counts for the priority strategy.
@@ -93,6 +96,12 @@ func (e *Engine) LoadFromSettings(jsonStr string) error {
 		if c.Name == "" {
 			continue
 		}
+		// If Entries is empty but Models has items, synthesize Entries for backward compatibility
+		if len(c.Entries) == 0 && len(c.Models) > 0 {
+			for _, m := range c.Models {
+				c.Entries = append(c.Entries, Entry{Model: m})
+			}
+		}
 		e.combos[c.Name] = &c
 		if c.Strategy == StrategyPriority {
 			e.sticky[c.Name] = &StickyState{}
@@ -134,12 +143,22 @@ func (e *Engine) Resolve(name string) ([]ResolvedEntry, error) {
 	// Flatten entries → ResolvedEntry with key rotation.
 	var result []ResolvedEntry
 	for entryIdx, entry := range ordered {
-		key := e.rotateKey(name, entryIdx, entry)
+		k := e.rotateKey(name, entryIdx, entry)
 		for _, cid := range entry.ConnectionIDs {
+			if cid != "" {
+				result = append(result, ResolvedEntry{
+					Model:        entry.Model,
+					ConnectionID: cid,
+					APIKey:       k,
+				})
+			}
+		}
+		// If entry has no specific connection IDs, emit candidate with empty ConnectionID
+		// so resolver can match any active connection serving this model.
+		if len(entry.ConnectionIDs) == 0 {
 			result = append(result, ResolvedEntry{
-				Model:        entry.Model,
-				ConnectionID: cid,
-				APIKey:       key,
+				Model:  entry.Model,
+				APIKey: k,
 			})
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sanhaji182/lintasan-go/internal/combo"
 	"github.com/sanhaji182/lintasan-go/internal/hoplite"
 	"github.com/sanhaji182/lintasan-go/internal/models"
 )
@@ -125,6 +126,26 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 						HopliteModelID: model.ID, Provider: model.Provider, ContextWindowTokens: model.ContextTokens,
 						CatalogEligibility: model.Plan, CatalogRevision: hoplite.ModelCatalogRevision,
 						ProviderKind: "cloud_agent", SupportsStreaming: &noStreaming, LongRunning: true, ProjectScoped: true,
+					})
+				}
+			}
+		}
+	}
+
+	// Expose configured combos as callable models in /v1/models
+	if cbJSON, err := s.db.GetSetting("combos"); err == nil && cbJSON != "" {
+		var combosList []combo.Combo
+		if json.Unmarshal([]byte(cbJSON), &combosList) == nil {
+			for _, c := range combosList {
+				if c.Name != "" {
+					modelsList = append(modelsList, Model{
+						ID:           c.Name,
+						Object:       "model",
+						Created:      time.Now().Unix(),
+						OwnedBy:      "lintasan-combo",
+						DisplayName:  c.Name + " (Combo)",
+						Source:       "combo",
+						ProviderKind: "combo",
 					})
 				}
 			}
@@ -670,6 +691,9 @@ func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteCombo(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if id == "" {
+		id = r.PathValue("id")
+	}
+	if id == "" {
 		http.Error(w, `{"error":"id is required"}`, http.StatusBadRequest)
 		return
 	}
@@ -681,11 +705,11 @@ func (s *Server) handleDeleteCombo(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal([]byte(combosJSON), &combos)
 	}
 
-	// Filter out the combo with matching id
+	// Filter out the combo with matching id or name
 	newCombos := make([]map[string]any, 0, len(combos))
 	found := false
 	for _, combo := range combos {
-		if combo["id"] == id {
+		if combo["id"] == id || combo["name"] == id {
 			found = true
 		} else {
 			newCombos = append(newCombos, combo)
@@ -699,6 +723,7 @@ func (s *Server) handleDeleteCombo(w http.ResponseWriter, r *http.Request) {
 
 	newJSON, _ := json.Marshal(newCombos)
 	s.db.SetSetting("combos", string(newJSON))
+	_ = s.proxy.cmb.LoadFromSettings(string(newJSON))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"id": id, "status": "deleted"})

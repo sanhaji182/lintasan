@@ -58,6 +58,14 @@
   let aliasFeedback = $state('');
   let aliasFeedbackKind = $state<'success' | 'error'>('success');
 
+  // New combo form
+  let showComboForm = $state(false);
+  let newComboName = $state('');
+  let newComboStrategy = $state('priority');
+  let newComboDescription = $state('');
+  let newComboModelsText = $state('');
+  let comboCreating = $state(false);
+
   // Smart Routing Intelligence config (ML routing, cost, quota)
   interface SmartConfig {
     ml_router_enabled: boolean;
@@ -204,11 +212,11 @@
       const res = await api.get<any>('/api/combos');
       const raw = res?.data || res?.combos || [];
       combos = Array.isArray(raw) ? raw.map((c: any, i: number) => ({
-        id: c.id || `combo-${i}`,
+        id: c.id || c.name || `combo-${i}`,
         provider: c.name || c.provider || 'Unknown',
         strategy: c.strategy || 'priority',
         keys: Array.isArray(c.keys) ? c.keys : [],
-        models: Array.isArray(c.models) ? c.models : [],
+        models: Array.isArray(c.models) && c.models.length > 0 ? c.models : (Array.isArray(c.entries) ? c.entries.map((e: any) => e.model) : []),
         description: c.description || '',
         order: c.order ?? i,
         entries: Array.isArray(c.entries) ? c.entries : [],
@@ -218,6 +226,56 @@
       stagedStrategies = {};
     } catch {
       combos = [];
+    }
+  }
+
+  async function createCombo() {
+    const name = newComboName.trim();
+    if (!name) {
+      showToast('Combo name is required', 'error');
+      return;
+    }
+    const rawModels = newComboModelsText
+      .split(/[\n,]+/)
+      .map(m => m.trim())
+      .filter(Boolean);
+
+    if (rawModels.length === 0) {
+      showToast('At least one model is required in the combo', 'error');
+      return;
+    }
+
+    comboCreating = true;
+    try {
+      const payload = {
+        name,
+        strategy: newComboStrategy,
+        description: newComboDescription.trim(),
+        models: rawModels,
+        entries: rawModels.map(m => ({ model: m }))
+      };
+      await api.post('/api/combos', payload);
+      showToast(`Combo "${name}" created successfully`, 'success');
+      showComboForm = false;
+      newComboName = '';
+      newComboDescription = '';
+      newComboModelsText = '';
+      await loadCombos();
+    } catch (e: any) {
+      showToast(e.message || 'Failed to create combo', 'error');
+    } finally {
+      comboCreating = false;
+    }
+  }
+
+  async function deleteCombo(id: string, name: string) {
+    if (!confirm(`Delete combo "${name}"?`)) return;
+    try {
+      await api.delete(`/api/combos?id=${encodeURIComponent(id)}`);
+      showToast(`Combo "${name}" deleted`, 'success');
+      await loadCombos();
+    } catch (e: any) {
+      showToast(e.message || 'Failed to delete combo', 'error');
     }
   }
 
@@ -590,6 +648,13 @@
         </div>
       </div>
       <div class="flex items-center gap-2">
+        <button
+          class="btn-secondary flex items-center gap-1.5"
+          onclick={() => showComboForm = !showComboForm}
+        >
+          <Plus size={14} stroke-width={2} />
+          Add Combo
+        </button>
         {#if combosDirtyCount > 0 || orderDirty}<button class="btn-secondary" onclick={discardCombos}>Discard strategy edits</button>{/if}
         <button class="btn-primary flex items-center gap-1.5" onclick={saveCombos} disabled={saving}>
           <Save size={14} stroke-width={2} />
@@ -597,6 +662,59 @@
         </button>
       </div>
     </div>
+
+    {#if showComboForm}
+      <div class="alias-form" style="margin-bottom: 20px;">
+        <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 10px;">
+          Create New Combo
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          <div class="flex items-center gap-3 flex-wrap">
+            <input
+              class="input-field"
+              style="width: 180px;"
+              placeholder="Combo name (e.g. fast-code)"
+              bind:value={newComboName}
+            />
+            <select
+              class="input-field"
+              style="width: 170px;"
+              bind:value={newComboStrategy}
+            >
+              {#each strategies as s}
+                <option value={s.value}>{s.label}</option>
+              {/each}
+            </select>
+            <input
+              class="input-field"
+              style="flex: 1; min-width: 220px;"
+              placeholder="Description (optional)"
+              bind:value={newComboDescription}
+            />
+          </div>
+          <div>
+            <label for="new-combo-models" style="display: block; font-size: 11px; font-weight: 500; color: var(--color-fg-3); margin-bottom: 4px;">
+              Models in failover order (comma or newline separated, e.g. Qwen/Qwen3.8-Flash, deepseek/deepseek-v4-flash):
+            </label>
+            <textarea
+              id="new-combo-models"
+              class="input-field"
+              style="width: 100%; min-height: 60px; font-family: var(--font-mono); font-size: 12px; resize: vertical;"
+              placeholder="~deepseek/deepseek-flash-latest, deepseek/deepseek-v4-flash, Qwen/Qwen3.8-Flash"
+              bind:value={newComboModelsText}
+            ></textarea>
+          </div>
+          <div class="flex items-center gap-2">
+            <button class="btn-primary" onclick={createCombo} disabled={comboCreating}>
+              {comboCreating ? 'Creating...' : 'Create Combo'}
+            </button>
+            <button class="btn-secondary" onclick={() => { showComboForm = false; }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     {#if advertisedModels.some(model => model.provider_kind === 'cloud_agent')}
       <div style="margin-bottom: 16px; padding: 12px 14px; background: rgba(124,58,237,.08); border: 1px solid rgba(124,58,237,.2); border-radius: 10px;">
@@ -685,7 +803,7 @@
               </div>
             </div>
 
-            <!-- Strategy Selector -->
+            <!-- Strategy Selector & Delete -->
             <div class="flex items-center gap-2" style="flex-shrink: 0;">
               <select
                 class="input-field"
@@ -697,6 +815,16 @@
                   <option value={s.value} disabled={combo.containsCloudAgent && s.value !== 'priority'}>{s.label}</option>
                 {/each}
               </select>
+
+              <button
+                class="btn-icon"
+                style="color: var(--color-error);"
+                onclick={() => deleteCombo(combo.id, combo.provider)}
+                title="Delete combo"
+                aria-label={`Delete combo ${combo.provider}`}
+              >
+                <Trash2 size={14} />
+              </button>
             </div>
           </div>
         {/each}

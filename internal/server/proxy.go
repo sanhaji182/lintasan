@@ -244,6 +244,7 @@ type Connection struct {
 	IsActive      int    `json:"is_active"`
 	Priority      int    `json:"priority"`
 	ProviderKind  string `json:"provider_kind"`
+	TargetModel   string `json:"target_model,omitempty"`
 }
 
 func (p *ProxyHandler) getSetting(key, def string) string {
@@ -822,6 +823,21 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 
+		// Target model override for combos and heterogeneous model fallbacks
+		candidateBody := body
+		candidateModel := resolvedModel
+		if conn.TargetModel != "" && conn.TargetModel != resolvedModel {
+			candidateModel = conn.TargetModel
+			reqCopy := make(map[string]any, len(req))
+			for k, v := range req {
+				reqCopy[k] = v
+			}
+			reqCopy["model"] = candidateModel
+			if mb, err := json.Marshal(reqCopy); err == nil {
+				candidateBody = mb
+			}
+		}
+
 		// Retry wrapper around upstream call
 		var resp *http.Response
 		var poolAccountID string
@@ -836,7 +852,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 				cpy.APIKey = pickedKey
 				retryConn = &cpy
 			}
-			resp, err = p.doUpstream(r, retryConn, body)
+			resp, err = p.doUpstream(r, retryConn, candidateBody)
 			if err != nil {
 				return true, err // retry on connection errors
 			}
@@ -1104,6 +1120,15 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			tokensIn = len(body) / 4
 		}
 
+		// Synthetic quote / fake completion validation guard (P0-1 prevention)
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && isSyntheticOrMotivationalResponse(b) {
+			lastErr = "upstream returned synthetic motivational text"
+			lastStatusCode = http.StatusBadGateway
+			breaker.Failure()
+			p.logRequest(candidateModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			continue
+		}
+
 		// Quota recording with actual tokens
 		if resp.StatusCode == 200 {
 			quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
@@ -1111,7 +1136,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		w.WriteHeader(resp.StatusCode)
 		w.Write(b)
-		p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
+		p.logRequest(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
 
 		if comboName != "" && resp.StatusCode == 200 {
 			p.cmb.RecordSuccess(comboName)
@@ -1903,7 +1928,7 @@ func (p *ProxyHandler) resolveAlias(model string) string {
 
 func (p *ProxyHandler) resolveCombo(name string) ([]*Connection, string, bool) {
 	resolved, err := p.cmb.Resolve(name)
-	if err != nil {
+	if err != nil || len(resolved) == 0 {
 		return nil, name, false
 	}
 
@@ -1912,14 +1937,21 @@ func (p *ProxyHandler) resolveCombo(name string) ([]*Connection, string, bool) {
 
 	var out []*Connection
 	for _, entry := range resolved {
-		conns := p.connectionsForModelAndIDs(entry.Model, []string{entry.ConnectionID})
-		// If the combo entry specifies an API key, override the connection's key
-		if entry.APIKey != "" {
-			for _, c := range conns {
-				c.APIKey = entry.APIKey
-			}
+		var conns []*Connection
+		if entry.ConnectionID != "" {
+			conns = p.connectionsForModelAndIDs(entry.Model, []string{entry.ConnectionID})
+		} else {
+			conns = p.connectionsForModelAndIDs(entry.Model, nil)
 		}
-		out = append(out, conns...)
+		for _, c := range conns {
+			cCopy := *c
+			cCopy.TargetModel = entry.Model
+			// If the combo entry specifies an API key, override the connection's key
+			if entry.APIKey != "" {
+				cCopy.APIKey = entry.APIKey
+			}
+			out = append(out, &cCopy)
+		}
 	}
 	if len(out) == 0 {
 		return nil, name, false
@@ -1941,9 +1973,15 @@ func stringSlice(v any) []string {
 func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*Connection {
 	query := `SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority FROM discovered_models m JOIN connections c ON m.connection_id=c.id WHERE m.model_id=? AND m.is_active=1 AND c.is_active=1`
 	args := []any{model}
-	if len(ids) > 0 {
-		ph := make([]string, len(ids))
-		for i, id := range ids {
+	var validIDs []string
+	for _, id := range ids {
+		if strings.TrimSpace(id) != "" {
+			validIDs = append(validIDs, id)
+		}
+	}
+	if len(validIDs) > 0 {
+		ph := make([]string, len(validIDs))
+		for i, id := range validIDs {
 			ph[i] = "?"
 			args = append(args, id)
 		}
@@ -1960,10 +1998,45 @@ func (p *ProxyHandler) connectionsForModelAndIDs(model string, ids []string) []*
 		var c Connection
 		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.ChatPath, &c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority) == nil {
 			p.applyConnectionAuth(&c)
+			c.TargetModel = model
 			out = append(out, &c)
 		}
 	}
 	return out
+}
+
+// isSyntheticOrMotivationalResponse detects dummy motivational quotes returned
+// by broken/unsupported mock upstreams (such as bandelbanget).
+func isSyntheticOrMotivationalResponse(body []byte) bool {
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil || len(resp.Choices) == 0 {
+		return false
+	}
+	content := strings.ToLower(strings.TrimSpace(resp.Choices[0].Message.Content))
+	if content == "" {
+		return false
+	}
+	dummyPhrases := []string{
+		"actions speak louder than words",
+		"keep your eyes on the stars",
+		"turn your setbacks into comebacks",
+		"nothing worth having comes easy",
+		"success is not final, failure is not fatal",
+		"small steps every day lead to big results",
+		"keep pushing forward, one step at a time",
+	}
+	for _, phrase := range dummyPhrases {
+		if strings.Contains(content, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error) {

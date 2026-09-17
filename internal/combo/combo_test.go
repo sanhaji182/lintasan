@@ -330,6 +330,56 @@ func TestRecordFailureNoSticky(t *testing.T) {
 	e.RecordFailure("rr")
 }
 
+func TestLoadCombos_ModelsArrayCompatibility(t *testing.T) {
+	e := New()
+	legacyJSON := `[{"name":"legacy-combo","strategy":"priority","models":["m1","m2"]}]`
+	if err := e.LoadFromSettings(legacyJSON); err != nil {
+		t.Fatalf("LoadFromSettings failed: %v", err)
+	}
+
+	combos := e.List()
+	if len(combos) != 1 {
+		t.Fatalf("expected 1 combo, got %d", len(combos))
+	}
+	if len(combos[0].Entries) != 2 {
+		t.Fatalf("expected 2 synthesized entries, got %d", len(combos[0].Entries))
+	}
+	if combos[0].Entries[0].Model != "m1" || combos[0].Entries[1].Model != "m2" {
+		t.Errorf("unexpected models: %v", combos[0].Entries)
+	}
+
+	// Should also be resolvable
+	res, err := e.Resolve("legacy-combo")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if len(res) != 2 {
+		t.Fatalf("expected 2 resolved entries, got %d", len(res))
+	}
+	if res[0].Model != "m1" || res[1].Model != "m2" {
+		t.Errorf("unexpected resolved entries: %v", res)
+	}
+}
+
+func TestResolve_EmptyConnectionIDs(t *testing.T) {
+	e := New()
+	cfg := `[{"name":"any-conn","strategy":"priority","entries":[{"model":"qwen-3"},{"model":"deepseek-v4"}]}]`
+	if err := e.LoadFromSettings(cfg); err != nil {
+		t.Fatalf("LoadFromSettings: %v", err)
+	}
+
+	res, err := e.Resolve("any-conn")
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if len(res) != 2 {
+		t.Fatalf("expected 2 resolved candidates, got %d", len(res))
+	}
+	if res[0].Model != "qwen-3" || res[0].ConnectionID != "" {
+		t.Errorf("expected qwen-3 with empty ConnectionID, got %+v", res[0])
+	}
+}
+
 func TestJSONRoundTrip(t *testing.T) {
 	original := `[{"name":"test","strategy":"priority","sticky_limit":5,"entries":[{"model":"gpt-4","connection_ids":["c1","c2"],"api_keys":["sk-1"]}]}]`
 	e := New()
