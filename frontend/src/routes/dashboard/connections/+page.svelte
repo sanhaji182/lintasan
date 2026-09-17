@@ -3288,7 +3288,7 @@
   .conn-group {
     border: 1px solid var(--color-border);
     border-radius: 12px;
-    overflow: hidden;
+    overflow: visible;
     background: var(--color-bg-card);
   }
   .conn-group-header {
@@ -3302,12 +3302,17 @@
     cursor: pointer;
     background: var(--color-bg-body);
     border-bottom: 1px solid var(--color-border);
+    border-radius: 11px 11px 0 0;
     transition: background 0.1s;
     gap: 12px;
     flex-wrap: wrap;
   }
   .conn-group-header:hover {
     background: var(--color-bg-sidebar-hover);
+  }
+  .conn-group.collapsed .conn-group-header {
+    border-radius: 11px;
+    border-bottom: 0;
   }
   .conn-group-header-left {
     display: flex;

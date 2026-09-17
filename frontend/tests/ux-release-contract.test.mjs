@@ -18,6 +18,12 @@ test('mobile command-center controls declare 44px touch targets', async () => {
   assert.match(overview, /@media\(max-width:600px\)[\s\S]*\.refresh\{[^}]*width:44px[^}]*min-height:44px[^}]*flex-shrink:0/);
 });
 
+test('connections action menus are not clipped by provider-card overflow and stay above surrounding surfaces', async () => {
+  const connections = await read('../src/routes/dashboard/connections/+page.svelte');
+  assert.match(connections, /\.conn-group\s*\{[^}]*overflow:\s*visible;/s);
+  assert.match(connections, /\.conn-dropdown\s*\{[^}]*z-index:\s*(?:1[1-9]\d{2}|[2-9]\d{3,});/s);
+});
+
 test('header interactions use semantic theme tokens instead of light-only literals', async () => {
   const header = await read('../src/lib/components/Header.svelte');
   const style = header.slice(header.indexOf('<style>'));
