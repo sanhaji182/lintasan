@@ -1075,7 +1075,14 @@ func (s *Server) handleCache(w http.ResponseWriter, r *http.Request) {
 		"semantic_entries": semanticEntries,
 	})
 }
-func (s *Server) handleCacheAction(w http.ResponseWriter,r *http.Request){ s.db.Conn().Exec("DELETE FROM embedding_cache"); s.db.Conn().Exec("DELETE FROM semantic_cache"); writeJSON(w,map[string]any{"success":true,"status":"cleared"}) }
+func (s *Server) handleCacheAction(w http.ResponseWriter, r *http.Request) {
+	_, err := s.db.Conn().Exec("DELETE FROM embedding_cache; DELETE FROM semantic_cache; DELETE FROM response_cache; DELETE FROM stream_response_cache")
+	if err != nil {
+		http.Error(w, `{"error":"failed to clear response caches"}`, http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{"success": true, "status": "cleared"})
+}
 // handleCosts implements GET /api/costs. It computes real aggregated costs
 // from request_logs (written by the proxy on every chat completion) using
 // the cost package's Calculator and the built-in pricing table. Replaces

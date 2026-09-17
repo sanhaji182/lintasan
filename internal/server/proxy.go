@@ -524,9 +524,14 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// Exact Hash Cache (fastest — check before semantic)
-	exactCacheEnabled := !directMode && p.getSetting("exact_cache_enabled", "true") == "true"
-	if exactCacheEnabled {
+	// Master cache setting: check directMode, client Cache-Control/Pragma, and master cache_enabled setting.
+	clientNoCache := strings.Contains(strings.ToLower(r.Header.Get("Cache-Control")), "no-cache") ||
+		strings.Contains(strings.ToLower(r.Header.Get("Pragma")), "no-cache")
+	globalCacheEnabled := !directMode && !clientNoCache && p.getSetting("cache_enabled", "true") == "true"
+
+	// Exact Hash Cache (fastest — check before semantic; non-stream only)
+	exactCacheEnabled := globalCacheEnabled && p.getSetting("exact_cache_enabled", "true") == "true"
+	if exactCacheEnabled && !stream {
 		params := map[string]any{
 			"temperature": req["temperature"],
 			"max_tokens":  req["max_tokens"],
@@ -535,39 +540,30 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		if respBody, ok := cache.GetExactMatch(p.db.Conn(), model, messages, params); ok {
 			metrics.CacheHit()
 			p.logRequest(model, "exact-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, "", taskClass, modeLabel)
-			if stream {
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("X-Cache", "EXACT-HIT")
-				w.WriteHeader(200)
-				w.Write([]byte("data: " + respBody + "\n\n"))
-				w.Write([]byte("data: [DONE]\n\n"))
-				if flusher, ok := w.(http.Flusher); ok {
-					flusher.Flush()
-				}
-			} else {
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("X-Cache", "EXACT-HIT")
-				w.Write([]byte(respBody))
-			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			w.Header().Set("X-Lintasan-Cache", "EXACT-HIT")
+			w.Write([]byte(respBody))
 			return
 		}
 	}
 
-	// Stream Cache (check before semantic for streaming requests)
-	streamCacheEnabled := !directMode && p.getSetting("stream_cache_enabled", "true") == "true"
+	// Stream Cache (check for streaming requests)
+	streamCacheEnabled := globalCacheEnabled && p.getSetting("stream_cache_enabled", "false") == "true"
 	if stream && streamCacheEnabled {
 		if chunks, totalTokens, ok := cache.GetStreamMatch(p.db.Conn(), model, messages); ok {
 			p.logRequest(model, "stream-cache", "cache", 200, time.Since(start).Milliseconds(), 0, totalTokens, true, "", taskClass, modeLabel)
+			w.Header().Set("X-Cache", "HIT")
+			w.Header().Set("X-Lintasan-Cache", "STREAM-HIT")
 			cache.ReplayStream(w, chunks)
 			return
 		}
 	}
 
-	// Semantic Cache
-	semanticEnabled := !directMode && p.getSetting("semantic_cache_enabled", "true") == "true"
+	// Semantic Cache (OFF by default — only when explicitly enabled with strict threshold)
+	semanticEnabled := globalCacheEnabled && p.getSetting("semantic_cache_enabled", "false") == "true"
 	if semanticEnabled {
-		if respBody, score, ok := cache.GetSemanticMatch(p.db.Conn(), model, messages, 0.75); ok {
+		if respBody, score, ok := cache.GetSemanticMatch(p.db.Conn(), model, messages, 0.92); ok {
 			metrics.CacheHit()
 			p.logRequest(model, "semantic-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, fmt.Sprintf("score=%.3f", score), taskClass, modeLabel)
 
@@ -575,11 +571,9 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Cache-Control", "no-cache")
 				w.Header().Set("Connection", "keep-alive")
+				w.Header().Set("X-Cache", "HIT")
+				w.Header().Set("X-Lintasan-Cache", "SEMANTIC-HIT")
 				w.WriteHeader(200)
-
-				// SSE cache replay format
-				// In Node.js version we replay full SSE events, here we send as one big event
-				// For real UI parsing we need to structure this similar to OpenAI chunks
 
 				w.Write([]byte("data: " + respBody + "\n\n"))
 				w.Write([]byte("data: [DONE]\n\n"))
@@ -589,6 +583,8 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 				}
 			} else {
 				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("X-Cache", "HIT")
+				w.Header().Set("X-Lintasan-Cache", "SEMANTIC-HIT")
 				w.Write([]byte(respBody))
 			}
 			return
@@ -600,8 +596,11 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	// Recorded exactly once here, the single point all cache-eligible misses
 	// funnel through. A request that bypassed caching entirely (direct mode or
 	// both caches disabled) is NOT a miss and must not inflate the denominator.
-	if exactCacheEnabled || semanticEnabled {
+	if exactCacheEnabled || semanticEnabled || streamCacheEnabled {
 		metrics.CacheMiss()
+		w.Header().Set("X-Cache", "MISS")
+	} else if clientNoCache {
+		w.Header().Set("X-Cache", "BYPASS")
 	}
 
 	// --- Experimental Provider interception (R2) ------------------------------
@@ -753,6 +752,14 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			w.WriteHeader(hedgeResp.StatusCode)
 			w.Write(b)
 			p.logRequest(resolvedModel, hedgeConn.ID, hedgeConn.Name, hedgeResp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
+			if exactCacheEnabled && !stream && hedgeResp.StatusCode == 200 {
+				params := map[string]any{
+					"temperature": req["temperature"],
+					"max_tokens":  req["max_tokens"],
+					"top_p":       req["top_p"],
+				}
+				_ = cache.SaveExactMatch(p.db.Conn(), model, messages, params, string(b), tokensIn, tokensOut, 3600)
+			}
 			if semanticEnabled && hedgeResp.StatusCode == 200 {
 				cache.SaveSemanticMatch(p.db.Conn(), model, messages, string(b), 3600)
 			}
@@ -1058,10 +1065,6 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 				}
 			}
 
-			if semanticEnabled && resp.StatusCode == 200 {
-				cache.SaveSemanticMatch(p.db.Conn(), model, messages, string(streamBuffer), 3600)
-			}
-
 			// Auto-Indexing: embed and store completion if header set
 			p.autoIndex(r, model, messages, string(streamBuffer), tokensIn, tokensOut)
 
@@ -1122,6 +1125,15 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 				"model":  resolvedModel,
 				"status": resp.StatusCode,
 			})
+		}
+
+		if exactCacheEnabled && !stream && resp.StatusCode == 200 {
+			params := map[string]any{
+				"temperature": req["temperature"],
+				"max_tokens":  req["max_tokens"],
+				"top_p":       req["top_p"],
+			}
+			_ = cache.SaveExactMatch(p.db.Conn(), model, messages, params, string(b), tokensIn, tokensOut, 3600)
 		}
 
 		if semanticEnabled && resp.StatusCode == 200 {

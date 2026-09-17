@@ -51,7 +51,7 @@ func TestSemantic_SaveAndExactHit(t *testing.T) {
 	}
 }
 
-func TestSemantic_SimilarMatch(t *testing.T) {
+func TestSemantic_SimilarPromptsDoNotCrossWhenStrictThreshold(t *testing.T) {
 	db, _ := sql.Open("sqlite3", ":memory:")
 	defer db.Close()
 	db.SetMaxOpenConns(1)
@@ -60,27 +60,20 @@ func TestSemantic_SimilarMatch(t *testing.T) {
 	msgs1 := []any{
 		map[string]any{"role": "user", "content": "build me a REST API with user authentication middleware"},
 	}
-	resp1 := `{"choices":[{"message":{"content":"Here's a FastAPI auth middleware example..."}}]}`
+	SaveSemanticMatch(db, "gpt-4", msgs1, `{"choices":[{"message":{"content":"cached"}}]}`, 3600)
 
-	SaveSemanticMatch(db, "gpt-4", msgs1, resp1, 3600)
-
-	// Similar query — slightly different wording
+	// Reworded prompts are not safe to substitute automatically. Semantic cache
+	// requires explicit operator opt-in and a strict threshold of 0.92.
 	msgs2 := []any{
 		map[string]any{"role": "user", "content": "build a REST API with auth middleware for users"},
 	}
 
-	resp, score, found := GetSemanticMatch(db, "gpt-4", msgs2, 0.75)
-	if !found {
-		t.Fatalf("expected semantic match, score=%.3f", score)
+	_, score, found := GetSemanticMatch(db, "gpt-4", msgs2, 0.92)
+	if found {
+		t.Fatalf("reworded prompt must not reuse cached response at strict threshold, score=%.3f", score)
 	}
-	if score >= 1.0 {
-		t.Error("should not be exact match for reworded query")
-	}
-	if score < 0.75 {
-		t.Errorf("score too low: %.3f", score)
-	}
-	if resp != resp1 {
-		t.Errorf("wrong response returned")
+	if score >= 0.92 {
+		t.Fatalf("unexpectedly high similarity score %.3f", score)
 	}
 }
 
@@ -282,6 +275,18 @@ func TestBuildTF_Stopwords(t *testing.T) {
 	}
 	if v := tf["quick"]; v != 1 {
 		t.Errorf("'quick' should be present: got %d", v)
+	}
+}
+
+func TestBuildTF_PreservesNumbersForCacheSafety(t *testing.T) {
+	tf := buildTF("Berapa 89 kali 4? Jawab hanya angkanya saja.")
+	if tf["89"] != 1 || tf["4"] != 1 {
+		t.Fatalf("numeric tokens must be preserved, got: %#v", tf)
+	}
+
+	other := buildTF("Berapa 94 kali 9? Jawab hanya angkanya saja.")
+	if cosineSimilarity(tf, other) >= 0.92 {
+		t.Fatalf("different arithmetic prompts must not meet strict semantic-cache threshold")
 	}
 }
 

@@ -232,7 +232,7 @@
               <Zap size={14} style="color: var(--color-warning);" />
               <span style="font-size: 13px; font-weight: 500; color: var(--color-fg-0);">Response Caching</span>
             </div>
-            <span style="font-size: 12px; color: var(--color-fg-3);">Cache API responses to reduce latency and costs</span>
+            <span style="font-size: 12px; color: var(--color-fg-3);">Reuse responses only for byte-identical requests (exact prompt + model + sampling params). Fuzzy/semantic reuse stays off.</span>
           </div>
           <button
             class="toggle-btn"

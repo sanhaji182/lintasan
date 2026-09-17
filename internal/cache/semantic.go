@@ -68,13 +68,22 @@ func stem(w string) string {
 	return w
 }
 
+func isNumber(s string) bool {
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
 func tokenize(text string) []string {
 	clean := regexp.MustCompile(`[^\w\s]`).ReplaceAllString(strings.ToLower(text), " ")
 	words := strings.Fields(clean)
 	tokens := make([]string, 0, len(words))
 	for _, w := range words {
 		w = stem(w)
-		if len(w) > 2 && !stopwords[w] {
+		if (len(w) > 2 || isNumber(w)) && !stopwords[w] {
 			tokens = append(tokens, w)
 		}
 	}
