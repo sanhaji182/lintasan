@@ -303,9 +303,10 @@ func (c *Client) do(ctx context.Context, method, path string, body any, target a
 		return ResponseMeta{}, fmt.Errorf("build hoplite request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
-	// Hoplite organization API keys use standard Bearer authentication. Older
-	// deployments accepted X-Api-Key intermittently, which caused flapping 401s.
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	// Organization API keys are accepted by Hoplite's agent API under X-Api-Key.
+	// The public web bridge uses Bearer for its browser-facing surface, but the
+	// org-key REST contract is X-Api-Key; keep this explicit for the agent API.
+	req.Header.Set("X-Api-Key", c.apiKey)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

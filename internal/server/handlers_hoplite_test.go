@@ -105,8 +105,8 @@ func TestHopliteStatusAndTestAreReadOnlyAndCredentialBacked(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/api/projects" {
 			t.Fatalf("unexpected upstream request %s %s", r.Method, r.URL.Path)
 		}
-		if got := r.Header.Get("Authorization"); got != "Bearer "+hopliteKey {
-			t.Fatalf("upstream authorization = %q", got)
+		if got := r.Header.Get("X-Api-Key"); got != hopliteKey {
+			t.Fatalf("upstream key = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("RateLimit", `"ingress";r=599;t=60`)
