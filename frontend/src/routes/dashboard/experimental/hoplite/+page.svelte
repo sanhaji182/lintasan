@@ -152,7 +152,8 @@
       const res = await api.get<{ data: Status }>(`/api/experimental/cloud-agents/hoplite/status${accountQuery()}`);
       status = res.data;
       loading = false;
-      if (status.configured) await testConnection();
+      // Discovery is best-effort and must never block credential recovery.
+      if (status.configured) void testConnection();
     } catch (e: any) { error = messageOf(e); }
     finally { loading = false; }
   }
@@ -369,8 +370,8 @@
         <div class="credential-state"><Lock size={15} /><code>{status.masked_value}</code><span>{status.source}</span></div>
         <div class="actions">
           <button class="secondary" disabled={!!action} onclick={testConnection}><Play size={14} /> {action === 'test' ? 'Testing...' : 'Test connection'}</button>
-          <button class="secondary" disabled={!!action} onclick={() => { editingCredential = !editingCredential; credential = ''; }}><Key size={14} /> Update key</button>
-          {#if !accountID && status.source === 'dashboard'}<button class="danger" disabled={!!action} onclick={deleteCredential}><Trash2 size={14} /> Remove</button>{/if}
+          <button class="secondary" disabled={action === 'credential'} onclick={() => { editingCredential = !editingCredential; credential = ''; }}><Key size={14} /> Update key</button>
+          {#if !accountID && status.source === 'dashboard'}<button class="danger" disabled={action === 'credential'} onclick={deleteCredential}><Trash2 size={14} /> Remove</button>{/if}
         </div>
         {#if editingCredential}
           <form class="credential-form update-form" onsubmit={(e) => { e.preventDefault(); saveCredential(); }}>
