@@ -12,7 +12,7 @@ Saat ini, setiap chat ke `hoplite-model/...` di Lintasan membuat **thread baru**
 - Tidak ada context continuity antar pesan dalam satu sesi percakapan
 - User tidak bisa melanjutkan pertanyaan dari sebelumnya
 
-Solusi saat ini di Hoplite API adalah endpoint `POST /api/threads/{id}/messages`, yang mengirim pesan lanjutan ke thread yang sudah ada tanpa provisioning ulang.
+Organization API keys cannot call Hoplite's browser-session-only append-message endpoint. Lintasan therefore uses a truthful **context rollover**: it validates the prior thread, reads a bounded user/assistant transcript, and creates a fresh Hoplite thread containing that context plus the latest request.
 
 ---
 
@@ -24,8 +24,9 @@ Menerapkan **dua mode** secara bersamaan:
 
 #### Mode A: Explicit Thread ID (Client-Driven)
 - Client menyertakan `X-Lintasan-Thread-Id: thr_...` header atau body JSON `{"thread_id": "thr_..."}`.
-- Jika header ada → langsung panggil `appendMessage` dengan thread tersebut.
+- Jika header ada → validasi thread sumber, ambil bounded transcript, buat thread baru dengan konteks tersebut (context rollover).
 - Jika belum ada → buat thread baru dan kembalikan `x_lintasan.thread_id` di header respons.
+- Header respons menyertakan `"continuation":{"mode":"context-rollover","source_thread_id":"thr_old"}` untuk multi-turn berikutnya.
 
 #### Mode B: Server-Driven Session Continuity (Auto-Continuity)
 - Lintasan melacak sesi aktif di SQLite: `user_id + project_id → thread_id` dengan TTL 30 menit.
@@ -341,11 +342,10 @@ If issues arise:
 - Third chat: ~4 minutes (repeat cycle)
 - **Total avg per turn:** ~4 minutes
 
-**After (Expected):**
-- First chat: ~4 minutes (CreateThread + Agent Run)
-- Second chat: ~30 seconds (AppendMessage to warm thread)
-- Third chat: ~30 seconds
-- **Total avg per turn:** ~2 minutes (**50% faster**)
+**After (context rollover):**
+- First chat: creates a normal Hoplite thread and workspace.
+- Each follow-up: creates a fresh Hoplite thread carrying a bounded transcript plus the latest request.
+- Context remains continuous, but latency and quota usage remain comparable to a new Hoplite thread.
 
 ---
 

@@ -13,33 +13,33 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/config"
 )
 
-func TestHopliteExplicitThreadContinuesWithoutCreatingThread(t *testing.T) {
-	var creates, appends atomic.Int32
+func TestHopliteExplicitThreadRollsContextIntoNewThread(t *testing.T) {
+	var creates atomic.Int32
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/threads":
-			creates.Add(1)
-			t.Fatal("continuation must not create a new thread")
 		case r.Method == http.MethodGet && r.URL.Path == "/api/threads/thr_existing":
 			_, _ = w.Write([]byte(`{"ok":true,"thread":{"id":"thr_existing","projectId":"proj_1","status":"ready"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/threads/thr_existing/messages":
-			if appends.Load() == 0 {
-				_, _ = w.Write([]byte(`{"ok":true,"messages":[{"id":"old","role":"assistant","kind":"chat","content":"old answer"}]}`))
-				return
-			}
-			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"id":"old","role":"assistant","kind":"chat","content":"old answer"},{"id":"new","role":"assistant","kind":"chat","content":"continued answer"}]}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/threads/thr_existing/messages":
-			appends.Add(1)
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"id":"user_old","role":"user","kind":"chat","content":"Initial request"},{"id":"assistant_old","role":"assistant","kind":"chat","content":"Initial answer"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/threads":
+			creates.Add(1)
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
-			if payload["content"] != "Continue" {
-				t.Fatalf("append payload=%#v", payload)
+			prompt, _ := payload["prompt"].(string)
+			for _, want := range []string{"Previous Hoplite conversation", "Initial request", "Initial answer", "Continue"} {
+				if !strings.Contains(prompt, want) {
+					t.Fatalf("rollover prompt missing %q: %s", want, prompt)
+				}
 			}
 			w.WriteHeader(http.StatusCreated)
-			_, _ = w.Write([]byte(`{"ok":true,"message":{"id":"user_new"},"queued":true}`))
+			_, _ = w.Write([]byte(`{"ok":true,"thread":{"id":"thr_rollover","projectId":"proj_1","status":"queued"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/threads/thr_rollover":
+			_, _ = w.Write([]byte(`{"ok":true,"thread":{"id":"thr_rollover","projectId":"proj_1","status":"ready"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/threads/thr_rollover/messages":
+			_, _ = w.Write([]byte(`{"ok":true,"messages":[{"id":"new","role":"assistant","kind":"chat","content":"continued answer"}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -57,14 +57,17 @@ func TestHopliteExplicitThreadContinuesWithoutCreatingThread(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d body=%#v", resp.StatusCode, decodeEnvelope(t, resp))
 	}
-	if got := resp.Header.Get("X-Lintasan-Thread-Id"); got != "thr_existing" {
+	if got := resp.Header.Get("X-Lintasan-Thread-Id"); got != "thr_rollover" {
 		t.Fatalf("thread header=%q", got)
 	}
+	if got := resp.Header.Get("X-Lintasan-Continuation-Mode"); got != "context-rollover" {
+		t.Fatalf("continuation mode=%q", got)
+	}
 	body := mustJSON(t, decodeEnvelope(t, resp))
-	if !strings.Contains(body, "continued answer") || !strings.Contains(body, "thr_existing") {
+	if !strings.Contains(body, "continued answer") || !strings.Contains(body, "thr_rollover") || !strings.Contains(body, "thr_existing") {
 		t.Fatalf("unexpected completion: %s", body)
 	}
-	if creates.Load() != 0 || appends.Load() != 1 {
-		t.Fatalf("creates=%d appends=%d", creates.Load(), appends.Load())
+	if creates.Load() != 1 {
+		t.Fatalf("creates=%d", creates.Load())
 	}
 }

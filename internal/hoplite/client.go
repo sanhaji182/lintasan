@@ -213,8 +213,26 @@ func (c *Client) ListThreads(ctx context.Context, projectID string) ([]Thread, R
 }
 
 func (c *Client) CreateThread(ctx context.Context, request CreateThreadRequest) (CreateThreadResult, ResponseMeta, error) {
+	const maxAttempts = 5
 	var result CreateThreadResult
-	meta, err := c.do(ctx, http.MethodPost, "/api/threads", request, &result)
+	var meta ResponseMeta
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		result = CreateThreadResult{}
+		meta, err = c.do(ctx, http.MethodPost, "/api/threads", request, &result)
+		if err == nil {
+			return result, meta, nil
+		}
+		var upstream *UpstreamError
+		if !errors.As(err, &upstream) || upstream.StatusCode != http.StatusUnauthorized || upstream.Code != "invalid_api_key" || attempt == maxAttempts-1 {
+			return result, meta, err
+		}
+		select {
+		case <-ctx.Done():
+			return result, meta, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+		}
+	}
 	return result, meta, err
 }
 
