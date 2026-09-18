@@ -237,19 +237,56 @@ func (c *Client) CreateThread(ctx context.Context, request CreateThreadRequest) 
 }
 
 func (c *Client) GetThread(ctx context.Context, threadID string) (Thread, ResponseMeta, error) {
-	var envelope struct {
-		Thread Thread `json:"thread"`
+	const maxAttempts = 8
+	var thread Thread
+	var meta ResponseMeta
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		thread = Thread{}
+		var envelope struct {
+			Thread Thread `json:"thread"`
+		}
+		meta, err = c.do(ctx, http.MethodGet, "/api/threads/"+url.PathEscape(threadID), nil, &envelope)
+		if err == nil {
+			return envelope.Thread, meta, nil
+		}
+		var upstream *UpstreamError
+		if !errors.As(err, &upstream) || upstream.StatusCode != http.StatusUnauthorized || upstream.Code != "invalid_api_key" || attempt == maxAttempts-1 {
+			return Thread{}, meta, err
+		}
+		select {
+		case <-ctx.Done():
+			return Thread{}, meta, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+		}
 	}
-	meta, err := c.do(ctx, http.MethodGet, "/api/threads/"+url.PathEscape(threadID), nil, &envelope)
-	return envelope.Thread, meta, err
+	return thread, meta, err
 }
 
 func (c *Client) ListMessages(ctx context.Context, threadID string) ([]Message, ResponseMeta, error) {
-	var envelope struct {
-		Messages []Message `json:"messages"`
+	const maxAttempts = 8
+	var messages []Message
+	var meta ResponseMeta
+	var err error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		var envelope struct {
+			Messages []Message `json:"messages"`
+		}
+		meta, err = c.do(ctx, http.MethodGet, "/api/threads/"+url.PathEscape(threadID)+"/messages", nil, &envelope)
+		if err == nil {
+			return envelope.Messages, meta, nil
+		}
+		var upstream *UpstreamError
+		if !errors.As(err, &upstream) || upstream.StatusCode != http.StatusUnauthorized || upstream.Code != "invalid_api_key" || attempt == maxAttempts-1 {
+			return nil, meta, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, meta, ctx.Err()
+		case <-time.After(time.Duration(attempt+1) * 500 * time.Millisecond):
+		}
 	}
-	meta, err := c.do(ctx, http.MethodGet, "/api/threads/"+url.PathEscape(threadID)+"/messages", nil, &envelope)
-	return envelope.Messages, meta, err
+	return messages, meta, err
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, target any) (ResponseMeta, error) {
