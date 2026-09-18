@@ -213,7 +213,7 @@ func (c *Client) ListThreads(ctx context.Context, projectID string) ([]Thread, R
 }
 
 func (c *Client) CreateThread(ctx context.Context, request CreateThreadRequest) (CreateThreadResult, ResponseMeta, error) {
-	const maxAttempts = 5
+	const maxAttempts = 8
 	var result CreateThreadResult
 	var meta ResponseMeta
 	var err error

@@ -13,7 +13,7 @@ func TestClientRetriesTransientInvalidAPIKey(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := attempts.Add(1)
 		w.Header().Set("Content-Type", "application/json")
-		if n < 3 {
+		if n < 8 {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte(`{"ok":false,"error":"invalid_api_key"}`))
 			return
@@ -28,7 +28,7 @@ func TestClientRetriesTransientInvalidAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateThread: %v", err)
 	}
-	if result.Thread.ID != "thr_retry" || attempts.Load() != 3 {
+	if result.Thread.ID != "thr_retry" || attempts.Load() != 8 {
 		t.Fatalf("thread=%q attempts=%d", result.Thread.ID, attempts.Load())
 	}
 }
