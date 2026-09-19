@@ -26,10 +26,15 @@ type hopliteChatMessage struct {
 // explicit hoplite-agent/<project-id> namespace for long-running coding agents.
 func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	var envelope struct {
-		Model    string               `json:"model"`
-		Stream   bool                 `json:"stream"`
-		Messages []hopliteChatMessage `json:"messages"`
-		ThreadID string               `json:"thread_id"`
+		Model        string               `json:"model"`
+		Stream       bool                 `json:"stream"`
+		Messages     []hopliteChatMessage `json:"messages"`
+		ThreadID     string               `json:"thread_id"`
+		User         string               `json:"user"`
+		AgentID      string               `json:"agent_id"`
+		SessionID    string               `json:"session_id"`
+		ResetThread  bool                 `json:"reset_thread"`
+		ResetSession bool                 `json:"reset_session"`
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
 	if err != nil {
@@ -50,6 +55,19 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	if envelope.ThreadID != "" && strings.TrimSpace(r.Header.Get("X-Lintasan-Thread-Id")) == "" {
 		r.Header.Set("X-Lintasan-Thread-Id", strings.TrimSpace(envelope.ThreadID))
+	}
+	agentID := strings.TrimSpace(envelope.AgentID)
+	if agentID == "" {
+		agentID = strings.TrimSpace(envelope.User)
+	}
+	if agentID == "" {
+		agentID = strings.TrimSpace(envelope.SessionID)
+	}
+	if agentID != "" && strings.TrimSpace(r.Header.Get("X-Lintasan-Agent-Id")) == "" {
+		r.Header.Set("X-Lintasan-Agent-Id", agentID)
+	}
+	if (envelope.ResetThread || envelope.ResetSession) && strings.TrimSpace(r.Header.Get("X-Lintasan-Reset-Session")) == "" {
+		r.Header.Set("X-Lintasan-Reset-Session", "true")
 	}
 	s.handleHopliteCompletion(w, r, envelope.Model, envelope.Stream, envelope.Messages)
 }
@@ -112,10 +130,21 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 	client := s.newHopliteClient(key, timeout)
 
 	identity := hopliteContinuityIdentity(r)
+	reset := strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Lintasan-Reset-Session")), "true")
 	threadID := strings.TrimSpace(r.Header.Get("X-Lintasan-Thread-Id"))
-	if threadID == "" && identity != "" && s.hopliteSessionStore != nil {
+	if strings.EqualFold(threadID, "new") {
+		threadID = ""
+		reset = true
+	}
+	if reset && identity != "" && s.hopliteSessionStore != nil {
+		s.hopliteSessionStore.Expire(identity, accountID+"\x00"+projectID)
+		threadID = ""
+	}
+	autoResolvedThread := false
+	if threadID == "" && !reset && identity != "" && s.hopliteSessionStore != nil {
 		if session := s.hopliteSessionStore.Load(identity, accountID+"\x00"+projectID); session != nil {
 			threadID = session.threadID
+			autoResolvedThread = true
 		}
 	}
 
@@ -133,23 +162,44 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 		sourceThreadID = threadID
 		sourceThread, _, getErr := client.GetThread(ctx, sourceThreadID)
 		if getErr != nil {
-			writeHopliteOpenAIError(w, getErr)
-			return
-		}
-		if sourceThread.ProjectID != projectID {
-			writeOpenAIError(w, http.StatusConflict, "thread_project_mismatch", "Hoplite thread does not belong to the selected project")
-			return
-		}
-		if !hopliteTerminal(sourceThread.Status) || (sourceThread.Status != "ready" && sourceThread.Status != "succeeded") {
+			if autoResolvedThread && s.hopliteSessionStore != nil {
+				s.hopliteSessionStore.Expire(identity, accountID+"\x00"+projectID)
+				continuing = false
+				threadID = ""
+				sourceThreadID = ""
+			} else {
+				writeHopliteOpenAIError(w, getErr)
+				return
+			}
+		} else if sourceThread.ProjectID != projectID {
+			if autoResolvedThread && s.hopliteSessionStore != nil {
+				s.hopliteSessionStore.Expire(identity, accountID+"\x00"+projectID)
+				continuing = false
+				threadID = ""
+				sourceThreadID = ""
+			} else {
+				writeOpenAIError(w, http.StatusConflict, "thread_project_mismatch", "Hoplite thread does not belong to the selected project")
+				return
+			}
+		} else if !hopliteTerminal(sourceThread.Status) || (sourceThread.Status != "ready" && sourceThread.Status != "succeeded") {
 			writeOpenAIError(w, http.StatusConflict, "thread_not_ready", "Hoplite thread is not ready for a follow-up message")
 			return
+		} else {
+			history, _, listErr := client.ListMessages(ctx, sourceThreadID)
+			if listErr != nil {
+				if autoResolvedThread && s.hopliteSessionStore != nil {
+					s.hopliteSessionStore.Expire(identity, accountID+"\x00"+projectID)
+					continuing = false
+					threadID = ""
+					sourceThreadID = ""
+				} else {
+					writeHopliteOpenAIError(w, listErr)
+					return
+				}
+			} else {
+				prompt = hopliteRolloverPrompt(history, prompt)
+			}
 		}
-		history, _, listErr := client.ListMessages(ctx, sourceThreadID)
-		if listErr != nil {
-			writeHopliteOpenAIError(w, listErr)
-			return
-		}
-		prompt = hopliteRolloverPrompt(history, prompt)
 	}
 
 	opID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -243,20 +293,27 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-Lintasan-Provider", "hoplite-agent")
+	if identity != "" {
+		w.Header().Set("X-Lintasan-Agent-Id", identity)
+	}
 	w.Header().Set("X-Lintasan-Thread-Id", threadID)
 	continuation := map[string]any{"mode": "new-thread"}
 	if continuing {
 		continuation = map[string]any{"mode": "context-rollover", "source_thread_id": sourceThreadID}
 	}
+	lintasanMeta := map[string]any{
+		"provider": "hoplite-agent", "agent_semantics": true, "thread_id": threadID,
+		"status": thread.Status, "pull_requests": thread.PullRequests, "request_id": meta.RequestID,
+		"continuation": continuation,
+	}
+	if identity != "" {
+		lintasanMeta["agent_id"] = identity
+	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"id": "hoplite-" + threadID, "object": "chat.completion", "created": time.Now().Unix(), "model": model,
-		"choices": []map[string]any{{"index": 0, "message": map[string]any{"role": "assistant", "content": answer}, "finish_reason": "stop"}},
-		"usage":   map[string]int{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-		"x_lintasan": map[string]any{
-			"provider": "hoplite-agent", "agent_semantics": true, "thread_id": threadID,
-			"status": thread.Status, "pull_requests": thread.PullRequests, "request_id": meta.RequestID,
-			"continuation": continuation,
-		},
+		"choices":    []map[string]any{{"index": 0, "message": map[string]any{"role": "assistant", "content": answer}, "finish_reason": "stop"}},
+		"usage":      map[string]int{"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+		"x_lintasan": lintasanMeta,
 	})
 }
 
@@ -288,11 +345,23 @@ func hopliteRolloverPrompt(history []hoplite.Message, current string) string {
 }
 
 func hopliteContinuityIdentity(r *http.Request) string {
+	if agentID := strings.TrimSpace(r.Header.Get("X-Lintasan-Agent-Id")); agentID != "" {
+		return "agent:" + agentID
+	}
+	if agentID := strings.TrimSpace(r.Header.Get("X-Agent-Id")); agentID != "" {
+		return "agent:" + agentID
+	}
+	if sessionID := strings.TrimSpace(r.Header.Get("X-Lintasan-Session-Id")); sessionID != "" {
+		return "session:" + sessionID
+	}
+	if sessionID := strings.TrimSpace(r.Header.Get("X-Session-Id")); sessionID != "" {
+		return "session:" + sessionID
+	}
 	if user := auth.GetUser(r); user != nil && strings.TrimSpace(user.ID) != "" {
 		return "user:" + user.ID
 	}
-	// Shared master/dashboard API keys do not identify a conversation owner.
-	// Require an explicit X-Lintasan-Thread-Id for those clients rather than
+	// Shared master/dashboard API keys without an agent ID do not identify a conversation owner.
+	// Require an explicit X-Lintasan-Thread-Id or X-Lintasan-Agent-Id for those clients rather than
 	// accidentally merging independent conversations that use the same key.
 	return ""
 }

@@ -369,8 +369,8 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Lintasan-MITM, X-Lintasan-Thread-Id")
-		w.Header().Set("Access-Control-Expose-Headers", "X-Lintasan-Thread-Id")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Lintasan-MITM, X-Lintasan-Thread-Id, X-Lintasan-Agent-Id, X-Agent-Id, X-Lintasan-Session-Id, X-Session-Id, X-Lintasan-Reset-Session")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Lintasan-Thread-Id, X-Lintasan-Agent-Id, X-Lintasan-Continuation-Mode")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusNoContent)
 			return
