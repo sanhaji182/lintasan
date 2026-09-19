@@ -211,7 +211,7 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 		opID = "lintasan-" + hex.EncodeToString(digest[:24])
 	}
 	created, createMeta, createErr := client.CreateThread(ctx, hoplite.CreateThreadRequest{
-		ProjectID: projectID, Prompt: prompt, Model: selectedModel, AutoFix: false, AutoMerge: false, ClientOperationID: opID,
+		ProjectID: projectID, Prompt: prompt, Model: selectedModel, Speed: "fast", AutoFix: false, AutoMerge: false, ClientOperationID: opID,
 	})
 	meta, err = createMeta, createErr
 	if err != nil {
@@ -238,7 +238,7 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 	defer ticker.Stop()
 	firstPoll := continuing || !hopliteTerminal(thread.Status)
 	consecutivePollErrors := 0
-	const maxConsecutivePollErrors = 15 // tolerate up to ~30s of transient upstream auth/network lag during long agent runs
+	const maxConsecutivePollErrors = 45 // tolerate up to ~90s of transient upstream auth/network lag during long agent sandbox runs
 	for {
 		if firstPoll || !hopliteTerminal(thread.Status) {
 			var pollErr error
