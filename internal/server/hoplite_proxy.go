@@ -119,7 +119,7 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 	}
 	timeout := s.hopliteProxyTimeout
 	if timeout <= 0 {
-		timeout = 4 * time.Minute
+		timeout = 6 * time.Minute
 	}
 	poll := s.hoplitePollInterval
 	if poll <= 0 {
