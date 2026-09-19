@@ -16,6 +16,9 @@ func TestClientBillingUsageUsesAPIKeyAndParsesCreditsAndExpiry(t *testing.T) {
 		if got := r.Header.Get("X-Api-Key"); got != key {
 			t.Fatalf("X-Api-Key = %q, want test key", got)
 		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want no bearer header", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/billing/summary":
@@ -51,6 +54,9 @@ func TestClientListProjectsUsesAPIKeyAndParsesResponse(t *testing.T) {
 		}
 		if got := r.Header.Get("X-Api-Key"); got != key {
 			t.Fatalf("X-Api-Key = %q, want test key", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("Authorization = %q, want no bearer header", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"ok":true,"projects":[{"id":"proj_1","name":"acme/app","defaultBranch":"main","defaultModel":"claude-sonnet-4-5","agentSpeed":"fast","repos":[{"repoFullName":"acme/app","repositoryId":"repo_1"}]}]}`))

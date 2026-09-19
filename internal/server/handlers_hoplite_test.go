@@ -108,6 +108,9 @@ func TestHopliteStatusAndTestAreReadOnlyAndCredentialBacked(t *testing.T) {
 		if got := r.Header.Get("X-Api-Key"); got != hopliteKey {
 			t.Fatalf("upstream key = %q", got)
 		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Fatalf("legacy bearer header leaked: %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("RateLimit", `"ingress";r=599;t=60`)
 		w.Header().Set("RateLimit-Policy", `"ingress";q=600;qu="requests";w=60`)

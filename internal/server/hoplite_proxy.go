@@ -187,13 +187,21 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
 	firstPoll := continuing || !hopliteTerminal(thread.Status)
+	consecutivePollErrors := 0
+	const maxConsecutivePollErrors = 15 // tolerate up to ~30s of transient upstream auth/network lag during long agent runs
 	for {
 		if firstPoll || !hopliteTerminal(thread.Status) {
-			thread, meta, err = client.GetThread(ctx, threadID)
-			if err != nil {
-				writeHopliteOpenAIError(w, err)
-				return
+			var pollErr error
+			thread, meta, pollErr = client.GetThread(ctx, threadID)
+			if pollErr != nil {
+				consecutivePollErrors++
+				if consecutivePollErrors > maxConsecutivePollErrors {
+					writeHopliteOpenAIError(w, pollErr)
+					return
+				}
+				goto waitTick
 			}
+			consecutivePollErrors = 0
 		}
 		firstPoll = false
 		if hopliteTerminal(thread.Status) {
@@ -203,11 +211,17 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 			}
 			history, _, historyErr := client.ListMessages(ctx, threadID)
 			if historyErr != nil {
-				writeHopliteOpenAIError(w, historyErr)
-				return
+				consecutivePollErrors++
+				if consecutivePollErrors > maxConsecutivePollErrors {
+					writeHopliteOpenAIError(w, historyErr)
+					return
+				}
+				goto waitTick
 			}
+			consecutivePollErrors = 0
 			for _, message := range history {
-				if message.Role == "assistant" && (message.Kind == "" || message.Kind == "chat") && strings.TrimSpace(message.Content) != "" {
+				kind := strings.ToLower(strings.TrimSpace(message.Kind))
+				if message.Role == "assistant" && (kind == "" || kind == "chat" || kind == "message") && strings.TrimSpace(message.Content) != "" {
 					answer = message.Content
 				}
 			}
@@ -215,6 +229,7 @@ func (s *Server) handleHopliteCompletion(w http.ResponseWriter, r *http.Request,
 				break
 			}
 		}
+	waitTick:
 		select {
 		case <-ctx.Done():
 			writeOpenAIError(w, http.StatusGatewayTimeout, "agent_timeout", "Hoplite agent did not produce a new assistant result before the adapter timeout")
