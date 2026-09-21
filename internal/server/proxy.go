@@ -35,6 +35,7 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/optimizer"
 	"github.com/sanhaji182/lintasan-go/internal/plugin"
 	"github.com/sanhaji182/lintasan-go/internal/provider"
+	"github.com/sanhaji182/lintasan-go/internal/qoder"
 	"github.com/sanhaji182/lintasan-go/internal/quality"
 	"github.com/sanhaji182/lintasan-go/internal/quota"
 	"github.com/sanhaji182/lintasan-go/internal/ratelimit"
@@ -77,6 +78,14 @@ type ProxyHandler struct {
 	providerReg     *provider.Registry
 	defaultProvider provider.Provider
 	providerSDK     bool
+
+	// qoderProvider is the Experimental Qoder provider, non-nil only when
+	// qoder_enabled is true AND a request template has been provisioned. It is
+	// deliberately NOT registered in providerReg: that registry resolves by
+	// Format with a fallback to defaultProvider, and putting Qoder there would
+	// widen its reach. It is reached only through the explicit format branch in
+	// doUpstream. See qoder_wiring.go.
+	qoderProvider *qoder.Provider
 
 	// capabilityShadow is the F2.3 kill-switch (default false): when true, the
 	// chat router evaluates candidate capability eligibility in OBSERVE-ONLY
@@ -189,6 +198,7 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 	ph.costCalc = cost.NewCalculator()
 	ph.loadQuotaLimits(database)
 	ph.initProviderSDK(database)
+	ph.initQoder()
 	ph.hydrateExperimentalProviders()
 	ph.initMultiAccountPools()
 	go ph.prewarmConnectionPool()
@@ -1043,7 +1053,20 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			flusher, ok := w.(http.Flusher)
 
 			var streamBuffer []byte
-			if conn.Format == "commandcode" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if p.isQoder(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				// Qoder reports refusal, throttle and moderation INSIDE a 200
+				// stream, so the error path has to live here rather than in the
+				// status check above.
+				var qErr error
+				streamBuffer, tokensOut, qErr = p.streamQoderToOpenAI(r.Context(), resp.Body, w, flusher, resolvedModel)
+				if qErr != nil {
+					// Headers are already flushed with the first chunk, so the
+					// status cannot be revised. The failure is recorded and the
+					// stream ends; the client received a typed SSE error frame.
+					p.logRequest(candidateModel, conn.ID, conn.Name, 200, time.Since(start).Milliseconds(), 0, tokensOut, true, qErr.Error(), taskClass, modeLabel)
+					return
+				}
+			} else if conn.Format == "commandcode" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				streamBuffer, tokensOut = p.pipeCCAlphaStreamToOpenAI(resp.Body, w, flusher, resolvedModel)
 			} else if !ok {
 				b, _ := io.ReadAll(resp.Body)
@@ -1111,6 +1134,21 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		// Translate CC Alpha SSE → OpenAI JSON (only for successful responses)
 		if conn.Format == "commandcode" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 			b = translateCCAlphaToOpenAI(b)
+		}
+
+		// Qoder: the upstream body is an enveloped frame stream, not an OpenAI
+		// response. It is re-read through the frame parser rather than passed
+		// through, because a passthrough would hand envelope JSON to the client.
+		if p.isQoder(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			assembled, qErr := p.qoderNonStreamResponse(r.Context(), io.NopCloser(bytes.NewReader(b)), resolvedModel)
+			if qErr != nil {
+				lastErr = qErr.Error()
+				lastStatusCode = http.StatusBadGateway
+				breaker.Failure()
+				p.logRequest(candidateModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+				continue
+			}
+			b = assembled
 		}
 
 		// Reasoning extraction: DeepSeek V4 Pro puts answer in reasoning_content not content
@@ -1228,6 +1266,25 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 		// by providerSDKEligible, so it is intentionally not replayed here.
 		upReq.Header.Set("Accept-Encoding", "identity") // prevent upstream gzip issues
 		return p.client.Do(upReq)
+	}
+
+	// --- Qoder (Experimental, explicit format branch) -------------------------
+	// Mirrors the commandcode precedent rather than the Provider SDK: Qoder needs
+	// a credential exchange and an envelope-encoded body, neither of which the
+	// SDK's Prepare-only request path performs. Kept as an explicit branch so the
+	// shared SDK path every Official provider travels is untouched.
+	//
+	// Guarded on qoderProvider being non-nil, which itself requires both the
+	// qoder_enabled kill-switch and a provisioned request template. A Qoder
+	// connection on a deployment that has not enabled it therefore falls through
+	// to the legacy path and fails there visibly, rather than silently doing
+	// something half-configured.
+	if p.isQoder(conn) && p.qoderEnabled() {
+		qReq, qErr := p.qoderUpstream(r.Context(), conn, body)
+		if qErr != nil {
+			return nil, qErr
+		}
+		return p.client.Do(qReq)
 	}
 
 	// --- Legacy path (unchanged) ---------------------------------------------

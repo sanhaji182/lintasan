@@ -26,6 +26,10 @@ func TestLiveSweepAllCredentials(t *testing.T) {
 	if os.Getenv("LINTASAN_QODER_LIVE") != "1" {
 		t.Skip("LINTASAN_QODER_LIVE not set — skipping live sweep")
 	}
+	// The sweep builds requests, so it needs a provisioned template just like any
+	// other request path.
+	liveTestTemplate(t)
+
 	dir := strings.TrimSpace(os.Getenv("LINTASAN_QODER_PAT_DIR"))
 	if dir == "" {
 		t.Skip("LINTASAN_QODER_PAT_DIR not set — skipping live sweep")

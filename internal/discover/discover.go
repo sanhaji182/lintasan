@@ -220,6 +220,23 @@ func (d *Discoverer) syncOne(conn map[string]any) (*SyncResult, error) {
 // fetchModelsFromProvider calls GET {base_url}{models_path}, parses the
 // response, and falls back to known models when the API returns nothing.
 func (d *Discoverer) fetchModelsFromProvider(conn map[string]any) ([]ModelInfo, error) {
+	// Qoder does not expose an OpenAI-compatible /v1/models. Its catalogue is a
+	// signed, envelope-encoded call, and the result is per-credential: accounts on
+	// the same upstream carry different entitlements (observed: 2 models versus
+	// 15). A generic GET here would return nothing usable, so the specialised
+	// path is required rather than an optimisation.
+	//
+	// When Qoder is not enabled this falls through to the generic path, which
+	// reports no models — the correct outcome for a deployment that has not opted
+	// in, and it keeps discovery from claiming capabilities that are not wired.
+	if format, _ := conn["format"].(string); strings.EqualFold(format, "qoder") {
+		models, err := d.fetchQoderModels(conn)
+		if err != nil {
+			return nil, err
+		}
+		return models, nil
+	}
+
 	baseURL, _ := conn["base_url"].(string)
 	if baseURL == "" {
 		return d.fallbackModels(conn)

@@ -149,9 +149,17 @@ Lintasan is an **LLM gateway** — one OpenAI-compatible endpoint for all AI pro
 
 > **⚠️ Kebijakan Legal & Etika / Legal & Ethics Policy**
 >
-> **🇮🇩** Lintasan didesain untuk menggunakan **API resmi yang sah** (Legal API). Kami secara tegas **tidak melakukan/mendukung Reverse Engineering** terhadap endpoint internal IDE komersial. Lintasan berfokus pada integrasi provider API resmi dan Experimental Provider (ACP).
+> **🇮🇩** Lintasan memprioritaskan **API resmi yang sah**. Semua provider bawaan bersifat official. Satu provider bersifat **Experimental** dan ditandai terbuka: **Qoder**, yang berbicara ke endpoint internal IDE-nya melalui protokol yang direkonstruksi, bukan API resmi yang dipublikasikan.
 >
-> **🇬🇧** Lintasan is designed to use **legitimate, official APIs**. We strictly do **not support reverse engineering** of commercial IDE internal endpoints. Lintasan focuses on official API provider integrations and Experimental Provider pipelines (ACP).
+> Qoder **mati secara default** dan tidak pernah dipilih oleh routing normal. Ia harus dinyalakan sengaja (kill-switch `qoder_enabled`), hanya dapat dijangkau lewat koneksi berformat `qoder`, dan template request-nya harus disediakan sendiri oleh operator — isinya milik vendor dan tidak ikut di repositori ini.
+>
+> Bila endpoint resmi Qoder (atau kebijakan vendor) tersedia, port native akan digantikan oleh integrasi official. Sampai saat itu, statusnya tercatat apa adanya di bawah, bukan disembunyikan di balik klaim menyeluruh.
+>
+> **🇬🇧** Lintasan prioritises **legitimate, official APIs**. Every built-in provider is official. One provider is **Experimental** and openly labelled: **Qoder**, which speaks to that IDE's internal endpoints over a reconstructed protocol rather than a published official API.
+>
+> Qoder is **off by default** and is never selected by ordinary routing. It requires a deliberate opt-in (the `qoder_enabled` kill-switch), is reachable only through a connection whose format is `qoder`, and needs its request template to be provisioned by the operator — that content belongs to the vendor and is not carried in this repository.
+>
+> If an official Qoder endpoint (or a vendor-sanctioned policy) becomes available, the native port is intended to be replaced by an official integration. Until then its status is stated plainly below rather than hidden behind a blanket claim.
 
 <details open>
 <summary>🇮🇩 Fitur</summary>
