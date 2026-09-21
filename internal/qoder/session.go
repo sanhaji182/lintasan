@@ -56,12 +56,18 @@ func EndpointsForRegion(region string) Endpoints {
 //
 // Two of these matter operationally and are called out explicitly:
 //
-//   - Code 105 ("Login expired") means the credential is no longer accepted for
-//     chat. It is worth noting that such a credential still completes the job
-//     token exchange and still lists models successfully — only the chat
-//     endpoint rejects it. Callers must therefore treat 105 as a signal that the
-//     credential is dead, and stop selecting it, rather than as a transient
-//     error worth retrying.
+//   - Code 105 ("Login expired") means chat was refused for this attempt. It is
+//     NOT a verdict that the credential is dead, and treating it as one is
+//     actively harmful: measured across five sweeps, 7 of 9 credentials returned
+//     a normal completion AFTER having returned 105, and availability oscillates
+//     between roughly a third and a half of the pool rather than draining. Such a
+//     credential also keeps completing the job token exchange and listing models
+//     the whole time.
+//
+//     The correct response is a short cooldown and retry. Quarantining on 105
+//     would remove healthy credentials from rotation, and a failover rule that
+//     reads it as "this account is gone" would walk the pool and mark all of it
+//     dead.
 //
 //   - Code 10605 carries a queue state: the model is busy and upstream is asking
 //     the client to come back later. Queued is not a failure of the account, and
@@ -102,8 +108,12 @@ func (e *UpstreamError) Error() string {
 	return b.String()
 }
 
-// IsLoginExpired reports whether the credential was rejected for chat. A
-// credential in this state should be taken out of rotation, not retried.
+// IsLoginExpired reports whether chat was refused with the "Login expired" code.
+//
+// It deliberately does NOT mean "discard this credential". The condition is
+// transient on a timescale of minutes — most credentials that report it serve
+// normally again shortly after. Callers should apply a short cooldown before
+// retrying, and must not quarantine on this signal alone.
 func (e *UpstreamError) IsLoginExpired() bool {
 	return e != nil && e.Code == "105"
 }

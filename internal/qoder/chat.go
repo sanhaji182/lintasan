@@ -427,12 +427,13 @@ func ConsumeStream(ctx context.Context, r io.Reader, model string, h StreamHandl
 
 // HTTPStatusFor maps an upstream error to the status a client should see.
 //
-// A dead credential becomes 401 rather than a passthrough 403, because from the
-// gateway's perspective the configured credential is the thing that is wrong —
-// and a 401 is what makes an operator look at the connection instead of the
-// caller's request. A busy model becomes 503 with the requested delay, which is
-// what makes an upstream that is merely throttling distinguishable from one
-// that is failing.
+// A refused credential becomes 401 rather than a passthrough 403, so an operator
+// looks at the connection rather than the caller's request. Note that 401 here
+// means "this attempt was refused", not "this credential is dead" — the condition
+// typically clears within minutes, so a caller should retry rather than discard
+// the credential. A busy model becomes 503 with the requested delay, which is what
+// makes an upstream that is merely throttling distinguishable from one that is
+// failing.
 func HTTPStatusFor(e *UpstreamError) int {
 	if e == nil {
 		return http.StatusOK
