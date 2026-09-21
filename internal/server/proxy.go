@@ -1251,24 +1251,17 @@ func (p *ProxyHandler) findConnectionByID(id string) (*Connection, error) {
 
 func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte) (*http.Response, error) {
 	conn = p.connForUpstream(conn)
-	// --- Provider SDK seam (F1) ----------------------------------------------
-	// When the kill-switch flag is on AND this is not a commandcode connection,
-	// build the upstream request via the Provider SDK (Prepare-only). The HTTP
-	// call itself stays here (p.client.Do), so reliability wrapping and the
-	// streaming response path in the caller are untouched. Flag off => legacy
-	// path below runs verbatim (bit-for-bit identical to pre-F1).
-	if p.providerSDKEligible(conn) {
-		upReq, err := p.buildUpstreamViaSDK(r.Context(), conn, body, r.Header)
-		if err != nil {
-			return nil, err
-		}
-		// X-Command-Code-Version passthrough is commandcode-only and is excluded
-		// by providerSDKEligible, so it is intentionally not replayed here.
-		upReq.Header.Set("Accept-Encoding", "identity") // prevent upstream gzip issues
-		return p.client.Do(upReq)
-	}
 
 	// --- Qoder (Experimental, explicit format branch) -------------------------
+	// This MUST precede the Provider SDK seam below. That seam builds a generic
+	// OpenAI-compatible request through the SDK provider resolved by Format, and
+	// it accepts any format except commandcode. Left to reach it, a Qoder
+	// connection would be sent as a plain POST to {base_url}/chat/completions with
+	// the raw credential — which the upstream cloud rejects with
+	// "TOKEN_INVALID: invalid apikey", an error that looks like a bad credential
+	// and hides the real problem: the request never went through this provider at
+	// all. Ordering is therefore load-bearing, and it is why providerSDKEligible
+	// also excludes qoder as a second line of defence.
 	// Mirrors the commandcode precedent rather than the Provider SDK: Qoder needs
 	// a credential exchange and an envelope-encoded body, neither of which the
 	// SDK's Prepare-only request path performs. Kept as an explicit branch so the
@@ -1285,6 +1278,23 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 			return nil, qErr
 		}
 		return p.client.Do(qReq)
+	}
+
+	// --- Provider SDK seam (F1) ----------------------------------------------
+	// When the kill-switch flag is on AND this is not a commandcode connection,
+	// build the upstream request via the Provider SDK (Prepare-only). The HTTP
+	// call itself stays here (p.client.Do), so reliability wrapping and the
+	// streaming response path in the caller are untouched. Flag off => legacy
+	// path below runs verbatim (bit-for-bit identical to pre-F1).
+	if p.providerSDKEligible(conn) {
+		upReq, err := p.buildUpstreamViaSDK(r.Context(), conn, body, r.Header)
+		if err != nil {
+			return nil, err
+		}
+		// X-Command-Code-Version passthrough is commandcode-only and is excluded
+		// by providerSDKEligible, so it is intentionally not replayed here.
+		upReq.Header.Set("Accept-Encoding", "identity") // prevent upstream gzip issues
+		return p.client.Do(upReq)
 	}
 
 	// --- Legacy path (unchanged) ---------------------------------------------

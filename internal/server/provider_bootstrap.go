@@ -110,7 +110,13 @@ func (p *ProxyHandler) providerSDKEligible(conn *Connection) bool {
 	if !p.providerSDK || p.providerReg == nil {
 		return false
 	}
-	if conn == nil || conn.Format == "commandcode" {
+	// commandcode is RE-derived and stays on its own legacy path. qoder is also
+	// excluded: it needs a credential exchange and an envelope-encoded body that
+	// this seam does not perform, so routing it here would send a plain
+	// OpenAI-shaped POST to {base_url}/chat/completions with the raw credential.
+	// doUpstream already diverts qoder before this seam; this check makes the
+	// exclusion explicit so a future reordering cannot silently reintroduce it.
+	if conn == nil || conn.Format == "commandcode" || conn.Format == "qoder" {
 		return false
 	}
 	return true
