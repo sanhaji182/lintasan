@@ -51,7 +51,9 @@
     off_peak_active: boolean;
     /** Units of this model the connection's balance still buys at `factor`. */
     effective_credits?: number;
+    /** Context limits. Absent means upstream did not state one — not zero. */
     max_input_tokens?: number;
+    max_output_tokens?: number;
     promo_note?: string;
     promo_until?: string;
     /** True only for a live 0.0x promotion. */
@@ -103,6 +105,17 @@
   /** Sum of bonus remaining across the pool. */
   function totalBonusRemaining(): number {
     return connections.reduce((sum, c) => sum + (c.quota?.addon_quota?.remaining ?? 0), 0);
+  }
+
+  /** Largest input context across the priced models, for the explainer note. Models
+   *  that did not state a limit are skipped rather than counted as zero. */
+  function widestContext(models: ModelCostRow[]): ModelCostRow | null {
+    let best: ModelCostRow | null = null;
+    for (const m of models) {
+      if (!m.max_input_tokens) continue;
+      if (!best || m.max_input_tokens > (best.max_input_tokens || 0)) best = m;
+    }
+    return best;
   }
 
   /**
@@ -779,7 +792,16 @@
                       <span class="qd-muted">{formatFactor(m.off_peak_factor)}</span>
                     {/if}
                   </td>
-                  <td>{m.max_input_tokens ? formatCredit(m.max_input_tokens) + ' tok' : '–'}</td>
+                  <td>
+                    {#if m.max_input_tokens}
+                      <span class="qd-strong" title="Maximum input context">{formatCredit(m.max_input_tokens)}</span>
+                      {#if m.max_output_tokens}
+                        <span class="qd-muted qd-xs">/ {formatCredit(m.max_output_tokens)} out</span>
+                      {/if}
+                    {:else}
+                      <span class="qd-muted" title="Upstream did not state a limit for this model">not reported</span>
+                    {/if}
+                  </td>
                   <td class="qd-muted">{m.factor_source}</td>
                 </tr>
                 {#if m.promo_note}
@@ -814,6 +836,14 @@
               </li>
             {/each}
           </ul>
+          {#if widestContext(models)}
+            {@const wc = widestContext(models)}
+            <div>
+              Widest input context:
+              <span class="qd-strong">{formatCredit(wc?.max_input_tokens || 0)}</span> tokens
+              on <span class="qd-strong">{wc?.display_name}</span>.
+            </div>
+          {/if}
         </div>
       {/if}
       </div>

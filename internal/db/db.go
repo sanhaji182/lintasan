@@ -270,6 +270,12 @@ func (d *DB) migrate() error {
 		// NULL, not 0: upstream has been observed sending no factor at all (or 0) for
 		// some models, and 0 would read as "free". NULL means "not reported".
 		`ALTER TABLE discovered_models ADD COLUMN price_factor REAL DEFAULT NULL`,
+		// Context limits. Qoder reports max_input_tokens (180000 for Qwen3.8-Max) and
+		// frequently reports max_output_tokens as 0, meaning "not stated" rather than
+		// "accepts no output" — so it is stored NULL in that case and the UI renders
+		// "not reported" instead of a literal zero.
+		`ALTER TABLE discovered_models ADD COLUMN max_input_tokens INTEGER DEFAULT NULL`,
+		`ALTER TABLE discovered_models ADD COLUMN max_output_tokens INTEGER DEFAULT NULL`,
 	}
 
 	for _, m := range migrations {

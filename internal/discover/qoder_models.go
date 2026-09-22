@@ -65,6 +65,10 @@ func (d *Discoverer) fetchQoderModels(conn map[string]any) ([]ModelInfo, error) 
 			// Reference Factor Adjustment Notice). Carried through so the dashboard can
 			// show how fast each model burns the account's credits.
 			PriceFactor: m.PriceFactor,
+			// Context limits, where the account's entitlement reports them. 180000 input
+			// for Qwen3.8-Max; output is often reported as 0, meaning "not stated".
+			MaxInputTokens:  m.MaxInputTokens,
+			MaxOutputTokens: m.MaxOutputTokens,
 		})
 	}
 	return out, nil

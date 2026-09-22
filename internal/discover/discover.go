@@ -22,6 +22,12 @@ type ModelInfo struct {
 	// one (Qoder does: "Qwen3.8-Max 0.5x"). Zero means "not reported", and is stored
 	// as NULL rather than 0 so a UI cannot render it as free.
 	PriceFactor float64 `json:"price_factor,omitempty"`
+	// MaxInputTokens / MaxOutputTokens are the context limits where the provider states
+	// them (Qoder: 180000 input for Qwen3.8-Max). Zero means "not stated" — Qoder sends
+	// max_output_tokens as 0 for models that plainly do produce output — and is stored
+	// NULL so a UI shows "not reported" rather than a literal zero.
+	MaxInputTokens  int `json:"max_input_tokens,omitempty"`
+	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
 }
 
 // priceFactorOrNil maps "not reported" to SQL NULL.
@@ -34,6 +40,18 @@ func priceFactorOrNil(f float64) any {
 		return nil
 	}
 	return f
+}
+
+// positiveOrNil maps "not stated" to SQL NULL for the context limits.
+//
+// Same reasoning as priceFactorOrNil: Qoder reports max_output_tokens as 0 for models
+// that produce output, so a stored 0 would be a claim the model cannot answer, not a
+// missing measurement.
+func positiveOrNil(n int) any {
+	if n <= 0 {
+		return nil
+	}
+	return n
 }
 
 // SyncResult reports the outcome of syncing models for a single connection.
@@ -207,9 +225,13 @@ func (d *Discoverer) syncOne(conn map[string]any) (*SyncResult, error) {
 		}
 		_, err := d.db.Conn().Exec(
 			`INSERT OR REPLACE INTO discovered_models
-			 (id, connection_id, model_id, model_name, owned_by, is_active, price_factor)
-			 VALUES (?, ?, ?, ?, ?, 1, ?)`,
-			uuid.New().String(), cid, m.ID, displayName, m.OwnedBy, priceFactorOrNil(m.PriceFactor),
+			 (id, connection_id, model_id, model_name, owned_by, is_active,
+			  price_factor, max_input_tokens, max_output_tokens)
+			 VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+			uuid.New().String(), cid, m.ID, displayName, m.OwnedBy,
+			priceFactorOrNil(m.PriceFactor),
+			positiveOrNil(m.MaxInputTokens),
+			positiveOrNil(m.MaxOutputTokens),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert discovered model %q: %w", m.ID, err)

@@ -115,7 +115,8 @@ func (s *Server) handleQoderModels(w http.ResponseWriter, r *http.Request) {
 		// Per-account model catalogue. Entitlements differ per account, so this is not
 		// a fixed list.
 		rows, qerr := s.db.Conn().Query(
-			`SELECT model_id, COALESCE(model_name, model_id), price_factor
+			`SELECT model_id, COALESCE(model_name, model_id),
+			        price_factor, max_input_tokens, max_output_tokens
 			 FROM discovered_models
 			 WHERE connection_id = ? AND is_active = 1
 			 ORDER BY model_id`, it.id)
@@ -127,11 +128,20 @@ func (s *Server) handleQoderModels(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var id, name string
 			var pf *float64
-			if err := rows.Scan(&id, &name, &pf); err != nil {
+			var maxIn, maxOut *int
+			if err := rows.Scan(&id, &name, &pf, &maxIn, &maxOut); err != nil {
 				continue
 			}
 
 			row := qoderModelCost{ModelID: id, DisplayName: name, FactorSource: "unknown"}
+			// NULL means upstream did not state a limit; 0 from the database would be
+			// rendered as "0 tokens", so leave the field unset instead.
+			if maxIn != nil {
+				row.MaxInputTokens = *maxIn
+			}
+			if maxOut != nil {
+				row.MaxOutputTokens = *maxOut
+			}
 
 			disc, published := qoder.FactorForModel(id)
 			switch {
