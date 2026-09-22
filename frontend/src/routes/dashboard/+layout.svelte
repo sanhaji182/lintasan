@@ -37,6 +37,7 @@ import { page } from '$app/state';
     '/dashboard/savings': 'Cost Savings',
     '/dashboard/translator': 'Format Translator',
     '/dashboard/oauth-ide': 'OAuth IDE',
+    '/dashboard/qoder-connections': 'Qoder Connections',
   };
 
   const title = $derived(pageTitles[page.url.pathname] || 'Dashboard');

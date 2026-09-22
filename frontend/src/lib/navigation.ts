@@ -21,6 +21,7 @@ export const navigationGroups: NavigationGroup[] = [
   { label: 'Build', collapsible: false, items: [
     { label: 'Quickstart', path: '/dashboard/quickstart', icon: 'quickstart', description: 'Connect an app to the gateway', keywords: ['setup', 'guide'] },
     { label: 'Playground', path: '/dashboard/playground', icon: 'playground', description: 'Try a callable model', keywords: ['chat', 'test'] },
+    { label: 'Qoder Connections', path: '/dashboard/qoder-connections', icon: 'cloud', description: 'Monitor Qoder credits and test models', keywords: ['qoder', 'credits', 'quota'] },
     { label: 'Models', path: '/dashboard/models', icon: 'models', description: 'Inspect callable model routes', keywords: ['catalog', 'test'] },
     { label: 'Provider Catalog', path: '/dashboard/providers', icon: 'providers', description: 'Browse supported provider presets', keywords: ['provider', 'preset'] },
   ]},
