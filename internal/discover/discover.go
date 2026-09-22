@@ -18,6 +18,22 @@ type ModelInfo struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	OwnedBy string `json:"owned_by"`
+	// PriceFactor is the upstream relative cost multiplier where the provider reports
+	// one (Qoder does: "Qwen3.8-Max 0.5x"). Zero means "not reported", and is stored
+	// as NULL rather than 0 so a UI cannot render it as free.
+	PriceFactor float64 `json:"price_factor,omitempty"`
+}
+
+// priceFactorOrNil maps "not reported" to SQL NULL.
+//
+// A zero factor must not be stored as 0: upstream has been observed sending no factor
+// (or an explicit 0) for models that are plainly not free (Qwen3.8-Flash is 0.1x per
+// the vendor table), and a stored 0 would render as "free" in any cost comparison.
+func priceFactorOrNil(f float64) any {
+	if f <= 0 {
+		return nil
+	}
+	return f
 }
 
 // SyncResult reports the outcome of syncing models for a single connection.
@@ -191,9 +207,9 @@ func (d *Discoverer) syncOne(conn map[string]any) (*SyncResult, error) {
 		}
 		_, err := d.db.Conn().Exec(
 			`INSERT OR REPLACE INTO discovered_models
-			 (id, connection_id, model_id, model_name, owned_by, is_active)
-			 VALUES (?, ?, ?, ?, ?, 1)`,
-			uuid.New().String(), cid, m.ID, displayName, m.OwnedBy,
+			 (id, connection_id, model_id, model_name, owned_by, is_active, price_factor)
+			 VALUES (?, ?, ?, ?, ?, 1, ?)`,
+			uuid.New().String(), cid, m.ID, displayName, m.OwnedBy, priceFactorOrNil(m.PriceFactor),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("insert discovered model %q: %w", m.ID, err)

@@ -60,6 +60,11 @@ func (d *Discoverer) fetchQoderModels(conn map[string]any) ([]ModelInfo, error) 
 			ID:      m.Key,
 			Name:    m.Name(),
 			OwnedBy: "qoder",
+			// Qoder publishes a relative Credits-consumption factor per model
+			// ("Qwen3.8-Max 0.5x", "Ultimate 2x" — see the vendor's Model Usage
+			// Reference Factor Adjustment Notice). Carried through so the dashboard can
+			// show how fast each model burns the account's credits.
+			PriceFactor: m.PriceFactor,
 		})
 	}
 	return out, nil

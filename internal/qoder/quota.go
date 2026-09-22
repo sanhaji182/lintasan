@@ -23,11 +23,28 @@ import (
 	"time"
 )
 
-// QuotaEndpoint is the upstream credit-usage endpoint (international region).
-const QuotaEndpoint = "https://openapi.qoder.sh/api/v2/quota/usage"
-
-// QuotaPlanEndpoint reports the account's plan.
-const QuotaPlanEndpoint = "https://openapi.qoder.sh/api/v2/user/plan"
+// QuotaEndpoints are the accounts endpoints.
+const (
+	// QuotaEndpoint is the upstream credit-usage endpoint (international region).
+	QuotaEndpoint = "https://openapi.qoder.sh/api/v2/quota/usage"
+	// QuotaPlanEndpoint reports the account's plan.
+	QuotaPlanEndpoint = "https://openapi.qoder.sh/api/v2/user/plan"
+	// UserStatusEndpoint reports plan + quota + the reset time in one payload.
+	//
+	// Found via OmniRoute (github.com/diegosouzapw/OmniRoute,
+	// open-sse/services/usage/qoder.ts), which documents it as the endpoint the
+	// official qodercli reads for its usage badge. It answers 200 with
+	// { plan, userTag, userType, quota, isQuotaExceeded, nextResetAt,
+	//   whitelistStatus, featureSwitches, ... }.
+	//
+	// It is worth reading ALONGSIDE /api/v2/quota/usage rather than instead of it:
+	// this endpoint carries `nextResetAt` (the reset time that no other endpoint
+	// exposes — which is why ResetTime was always blank) and `userTag`, while
+	// /api/v2/quota/usage carries the per-bucket breakdown. "quota: 0" here must NOT
+	// be read as exhausted on a Teams/Enterprise seat — those draw from a pooled org
+	// budget. Use IsQuotaExceeded for the verdict, never quota == 0.
+	UserStatusEndpoint = "https://openapi.qoder.sh/api/v3/user/status"
+)
 
 // QuotaBucket is one allocation of credits. Upstream reports a base allocation and
 // an optional add-on pack; they are kept distinct because the totals differ and a
@@ -71,6 +88,25 @@ type Quota struct {
 	// is unverified — parsing it into a struct would drop whatever fields the shape
 	// turns out to have, which is the failure this field is meant to prevent.
 	OuterProviders json.RawMessage `json:"outer_providers,omitempty"`
+
+	// NextResetAt is when the current quota window resets, as epoch MILLISECONDS.
+	// Populated from /api/v3/user/status, the only endpoint that reports it — which
+	// is why ResetTime on every bucket came back blank. Exposed both as epoch ms and
+	// as a formatted local string so a dashboard needs no arithmetic.
+	NextResetAt int64  `json:"next_reset_at,omitempty"`
+	NextReset   string `json:"next_reset,omitempty"`
+	// PlanTier is upstream's plan enum (e.g. "PLAN_TIER_PRO_TRIAL"), distinct from
+	// Plan which is the human label.
+	PlanTier string `json:"plan_tier,omitempty"`
+	// UserTag is upstream's short label for the seat (observed: "Pro Trial").
+	UserTag string `json:"user_tag,omitempty"`
+	// RawQuota is /api/v3/user/status's plain `quota` scalar. On a Teams/Enterprise
+	// seat a 0 here means POOLED, not exhausted — never treat it as the verdict.
+	// IsQuotaExceeded is the verdict.
+	RawQuota float64 `json:"raw_quota,omitempty"`
+	// Pooled marks a Teams/Enterprise seat, which draws from an organisation budget
+	// instead of a per-user counter. A UI must not render such a seat as "0 left".
+	Pooled bool `json:"pooled,omitempty"`
 
 	// FetchedAt records when this snapshot was taken, so a dashboard can show its
 	// age rather than implying it is live.
@@ -206,8 +242,83 @@ func (m *SessionManager) FetchQuota(ctx context.Context, credential string) (*Qu
 		return nil, err
 	}
 	quota.Plan = m.fetchPlan(ctx, sess.Identity.SecurityOauthToken)
+	// The plan label is friendlier from /user/status ("Pro Trial") than from the plan
+	// endpoint's enum, and that endpoint is also the only source of the reset time.
+	m.enrichFromUserStatus(ctx, quota, sess.Identity.SecurityOauthToken)
 	quota.FetchedAt = time.Now()
 	return quota, nil
+}
+
+// enrichFromUserStatus folds /api/v3/user/status into an existing quota snapshot.
+//
+// Best-effort by design: this endpoint adds the reset time, the plan enum and the
+// seat label, none of which are worth failing a quota read over. A failure leaves the
+// fields empty, and the dashboard renders them as unavailable rather than as zero.
+func (m *SessionManager) enrichFromUserStatus(ctx context.Context, q *Quota, token string) {
+	m.enrichFromUserStatusAt(ctx, q, token, UserStatusEndpoint)
+}
+
+// enrichFromUserStatusAt is enrichFromUserStatus with an explicit URL, so tests can
+// drive it against a stub host.
+func (m *SessionManager) enrichFromUserStatusAt(ctx context.Context, q *Quota, token, endpoint string) {
+	if strings.TrimSpace(token) == "" {
+		return
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("encode-version", "2")
+	req.Header.Set("Accept-Encoding", "identity")
+
+	resp, err := m.client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	raw, err := readAllLimited(resp.Body, 1<<19)
+	if err != nil {
+		return
+	}
+	var st map[string]any
+	if json.Unmarshal(raw, &st) != nil {
+		return
+	}
+	if d, ok := st["data"].(map[string]any); ok {
+		st = d
+	}
+
+	if ms := int64(numField(st, "nextResetAt")); ms > 0 {
+		q.NextResetAt = ms
+		// Upstream sends milliseconds. Guard the unit so a seconds value would not be
+		// rendered as a date in 1970.
+		t := time.UnixMilli(ms)
+		if ms < 1e11 {
+			t = time.Unix(ms, 0)
+		}
+		q.NextReset = t.Format(time.RFC3339)
+	}
+	if v := strField(st, "plan"); v != "" {
+		q.PlanTier = v
+	}
+	if v := strField(st, "userTag"); v != "" {
+		q.UserTag = v
+	}
+	// Deliberately NOT overwriting Plan with the enum; the enum is kept in PlanTier.
+	if q.UserTag != "" {
+		q.Plan = q.UserTag
+	}
+	q.RawQuota = numField(st, "quota")
+	// A Teams/Enterprise seat reports quota 0 because it draws from a pooled org
+	// budget. Report that rather than implying an exhausted account.
+	if ut := strings.ToLower(strField(st, "userType")); ut == "teams" || ut == "enterprise" {
+		q.Pooled = true
+	}
 }
 
 // parseQuota decodes the quota response.

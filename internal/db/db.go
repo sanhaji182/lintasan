@@ -260,6 +260,16 @@ func (d *DB) migrate() error {
 		)`,
 		`ALTER TABLE hoplite_accounts ADD COLUMN credits_remaining REAL DEFAULT NULL`,
 		`ALTER TABLE hoplite_accounts ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''`,
+		// Qoder models carry a `price_factor` — a relative Credits-consumption
+		// multiplier published by the vendor (docs.qoder.com "Model Usage Reference
+		// Factor Adjustment Notice": Qwen3.8-Max 0.5x, Auto 0.5x, Ultimate 2x,
+		// Sonus 8x). The provider layer parsed it and then dropped it, because there
+		// was nowhere to put it. Stored per discovered model so the dashboard can show
+		// it without an upstream call.
+		//
+		// NULL, not 0: upstream has been observed sending no factor at all (or 0) for
+		// some models, and 0 would read as "free". NULL means "not reported".
+		`ALTER TABLE discovered_models ADD COLUMN price_factor REAL DEFAULT NULL`,
 	}
 
 	for _, m := range migrations {
