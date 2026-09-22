@@ -62,6 +62,11 @@ func (s *Server) registerParityRoutes() {
 	s.mux.HandleFunc("POST /api/qoder/checkin", s.handleQoderCheckin)
 	s.mux.HandleFunc("POST /api/qoder/checkin/{connection_id}", s.handleQoderCheckin)
 	s.mux.HandleFunc("GET /api/qoder/campaigns", s.handleQoderCampaigns)
+	// Per-model Credits cost: the reference factor in force right now, the effective
+	// units a balance still buys, and when the off-peak window flips. See
+	// qoder_models_handler.go.
+	s.mux.HandleFunc("GET /api/qoder/models", s.handleQoderModels)
+	s.mux.HandleFunc("GET /api/qoder/models/{connection_id}", s.handleQoderModels)
 	s.mux.HandleFunc("GET /api/audit", s.handleAudit)
 	s.mux.HandleFunc("GET /api/features", s.handleFeatures)
 	s.mux.HandleFunc("GET /api/features/stats", s.handleFeatureStats)

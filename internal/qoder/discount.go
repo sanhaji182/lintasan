@@ -140,6 +140,27 @@ func EffectiveCredits(credits, factor float64) float64 {
 	return credits / factor
 }
 
+// IsPromoFree reports whether a model is currently free because of a recorded
+// promotion.
+//
+// Derived, never inferred from a missing factor: an unset factor means "not reported"
+// and must not be presented as free. Only a promo that is active AND has not passed its
+// end date counts.
+func IsPromoFree(d ModelDiscount, t time.Time) bool {
+	if d.PromoNote == "" {
+		return false
+	}
+	// Qwen3.8-Flash is the only free promo on record: 0.0x until its PromoUntil.
+	if d.PromoUntil == "" {
+		return false
+	}
+	until, err := time.Parse(time.RFC3339, d.PromoUntil)
+	if err != nil {
+		return false
+	}
+	return t.Before(until)
+}
+
 // DiscountWindowUTC renders the window in UTC, which is the vendor's canonical form.
 func DiscountWindowUTC() string {
 	return fmt.Sprintf("%02d:00-%02d:00 UTC", OffPeakStartUTCHour, RegularStartUTCHour)

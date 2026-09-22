@@ -39,6 +39,39 @@
     return (a.remaining ?? 0) > 0 || (a.total ?? 0) > 0;
   }
 
+  type ModelCostRow = {
+    model_id: string;
+    display_name: string;
+    /** Multiplier in force right now. */
+    factor: number;
+    standard_factor: number;
+    off_peak_factor: number;
+    /** "vendor_table" | "discovered" | "unknown" — where the number came from. */
+    factor_source: string;
+    off_peak_active: boolean;
+    /** Units of this model the connection's balance still buys at `factor`. */
+    effective_credits?: number;
+    max_input_tokens?: number;
+    promo_note?: string;
+    promo_until?: string;
+    /** True only for a live 0.0x promotion. */
+    free_now?: boolean;
+  };
+
+  type ModelCostResponse = {
+    success: boolean;
+    window: {
+      off_peak_now: boolean;
+      off_peak_utc: string;
+      off_peak_local: string;
+      next_change: string;
+      next_change_local: string;
+      server_time_local: string;
+    };
+    note: string;
+    data: { connection_id: string; name: string; credits_left: number; models: ModelCostRow[] }[];
+  };
+
   /** True when any account in the list carries bonus credits. */
   function anyBonus(): boolean {
     return connections.some(hasBonus);
@@ -109,6 +142,8 @@
   let connections = $state<QoderConnection[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  /** Per-model Credit cost. null means "not fetched / unavailable", never "no models". */
+  let modelCost = $state<ModelCostResponse | null>(null);
   let notEnabled = $state<string | null>(null);
   let refreshing = $state(false);
   let testInProgress = $state<string | null>(null);
@@ -186,6 +221,46 @@
     }
   }
 
+  /** Per-model Credits cost. The off-peak window makes a model 2.5x cheaper at some
+   *  hours, so this is refreshed with the page rather than cached in the client. */
+  async function fetchModelCost(): Promise<void> {
+    try {
+      const res = await api.get<ModelCostResponse>('/api/qoder/models');
+      modelCost = res;
+    } catch {
+      // Leave null so the panel states it is unavailable instead of showing no models.
+      modelCost = null;
+    }
+  }
+
+  /** Every distinct model across the pool, with the best (lowest) factor in force.
+   *  Deduplicated because accounts carry different entitlements and the same model
+   *  would otherwise appear once per account. */
+  function distinctModelCosts(): ModelCostRow[] {
+    if (!modelCost) return [];
+    const best = new Map<string, ModelCostRow>();
+    for (const conn of modelCost.data || []) {
+      for (const m of conn.models || []) {
+        const prev = best.get(m.model_id);
+        if (!prev || (m.factor > 0 && (prev.factor <= 0 || m.factor < prev.factor))) {
+          best.set(m.model_id, m);
+        }
+      }
+    }
+    return [...best.values()].sort((a, b) => b.factor - a.factor);
+  }
+
+  function formatFactor(f: number): string {
+    if (!f || f <= 0) return 'not reported';
+    return `${f}x`;
+  }
+
+  /** 0.5x means one credit buys two units. That is the number an operator wants. */
+  function effectiveUnits(credits: number, factor: number): string {
+    if (!factor || factor <= 0) return '–';
+    return formatCredit(Math.round(credits / factor));
+  }
+
   async function runTest(connectionId: string): Promise<void> {
     if (testInProgress === connectionId) return;
 
@@ -235,7 +310,7 @@
   async function refreshAll(): Promise<void> {
     refreshing = true;
     try {
-      await Promise.all([fetchConnections(), fetchConfig()]);
+      await Promise.all([fetchConnections(), fetchConfig(), fetchModelCost()]);
       showToast('✅ Data refreshed', 'success');
     } catch {
       showToast('❌ Refresh failed', 'error');
@@ -264,6 +339,7 @@
   onMount(() => {
     void fetchConnections();
     void fetchConfig();
+    void fetchModelCost();
   });
 </script>
 
@@ -382,6 +458,100 @@
       </div>
     {/if}
   </div>
+
+  <!-- Per-model Credit cost. Qoder prices Credits per model, and the multiplier
+       changes with the time of day, so the window state matters as much as the
+       factor itself. -->
+  {#if modelCost}
+    {@const models = distinctModelCosts()}
+    {@const w = modelCost.window}
+    <div class="qd-panel">
+      <div class="qd-panel-head">
+        <h2 class="qd-panel-title">Credit Cost per Model</h2>
+        <span class="qd-chip" class:qd-chip-off={w?.off_peak_now} class:qd-chip-on={!w?.off_peak_now}>
+          {w?.off_peak_now ? 'OFF-PEAK NOW' : 'REGULAR HOURS'}
+        </span>
+      </div>
+
+      <div class="qd-window">
+        Off-peak <span class="qd-mono">{w?.off_peak_local || w?.off_peak_utc}</span>
+        {#if w?.off_peak_now}
+          · ends {w?.next_change_local}
+        {:else}
+          · starts {w?.next_change_local}
+        {/if}
+        · <span class="qd-muted">Qoder defines the window in UTC ({w?.off_peak_utc})</span>
+      </div>
+
+      {#if models.length === 0}
+        <p class="qd-muted">
+          No models discovered for these connections yet. Run a model sync, then refresh.
+        </p>
+      {:else}
+        <div class="qd-table-wrap">
+          <table class="qd-table">
+            <thead>
+              <tr>
+                <th>MODEL</th>
+                <th>FACTOR NOW</th>
+                <th>REGULAR</th>
+                <th>OFF-PEAK</th>
+                <th>INPUT LIMIT</th>
+                <th>FACTOR SOURCE</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each models as m (m.model_id)}
+                <tr>
+                  <td>
+                    <span class="qd-strong">{m.display_name}</span>
+                    <div class="qd-id">{m.model_id}</div>
+                  </td>
+                  <td>
+                    {#if m.free_now}
+                      <span class="qd-chip qd-chip-bonus">FREE NOW</span>
+                    {:else if m.factor > 0}
+                      <span class="qd-strong" class:qd-ok={m.off_peak_active}>{formatFactor(m.factor)}</span>
+                    {:else}
+                      <span class="qd-muted">not reported</span>
+                    {/if}
+                  </td>
+                  <td>{formatFactor(m.standard_factor)}</td>
+                  <td>
+                    {#if m.off_peak_factor > 0 && m.off_peak_factor < m.standard_factor}
+                      <span class="qd-ok">{formatFactor(m.off_peak_factor)}</span>
+                    {:else}
+                      <span class="qd-muted">{formatFactor(m.off_peak_factor)}</span>
+                    {/if}
+                  </td>
+                  <td>{m.max_input_tokens ? formatCredit(m.max_input_tokens) + ' tok' : '–'}</td>
+                  <td class="qd-muted">{m.factor_source}</td>
+                </tr>
+                {#if m.promo_note}
+                  <tr class="qd-row-detail">
+                    <td colspan="6">
+                      <div class="qd-note qd-muted">
+                        Promotion: {m.promo_note}
+                        {#if m.promo_until}· ends {m.promo_until}{/if}
+                      </div>
+                    </td>
+                  </tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="qd-note qd-muted">
+          A factor of 0.5x means one Credit buys two units of that model; a factor of 2x
+          means one Credit buys half a unit. Pool balance right now:
+          <span class="qd-strong">{formatCredit(summary.total_remaining)}</span> Credits →
+          <span class="qd-strong">{effectiveUnits(summary.total_remaining, models[0]?.factor || 0)}</span>
+          units of {models[0]?.display_name || 'the top-cost model'} at the current multiplier.
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   <!-- Main Table -->
   {#if loading}
@@ -722,6 +892,11 @@
   .qd-card-orange { background: linear-gradient(90deg, #f97316, #ea580c); }
   .qd-card-purple { background: linear-gradient(90deg, #a855f7, #7e22ce); }
   .qd-card-bonus { background: linear-gradient(90deg, #f59e0b, #b45309); }
+  .qd-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .qd-window { font-size: 12px; color: var(--color-fg-2); margin: 6px 0 12px; }
+  .qd-chip-off { background: rgba(34, 197, 94, 0.16); color: #15803d; border: 1px solid rgba(34, 197, 94, 0.45); }
+  :global(html[data-theme='dark']) .qd-chip-off { color: #4ade80; }
+  .qd-chip-on { background: var(--color-bg-body); color: var(--color-fg-2); }
   /* Theme is switched via <html data-theme="dark">, not a .dark class, so the dark
      override must be :global — a plain `.dark ...` selector matches nothing here and
      svelte-check reports it as dead CSS. */
