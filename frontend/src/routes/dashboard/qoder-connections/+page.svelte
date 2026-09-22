@@ -235,7 +235,7 @@
       </button>
       <button class="qd-btn qd-btn-primary" onclick={refreshAll} disabled={refreshing || loading}>
         {#if refreshing}
-          <RefreshCw class="qd-spin" size={16} /> Refreshing…
+          <span class="qd-spin"><RefreshCw size={16} /></span> Refreshing…
         {:else}
           <RefreshCw size={16} /> Refresh
         {/if}
@@ -293,7 +293,7 @@
         <div class="qd-card-label">Total Connections</div>
         <div class="qd-card-value">{loading ? '–' : summary.connections}</div>
       </div>
-      <TrendingDown size={40} class="qd-card-icon" />
+      <span class="qd-card-icon"><TrendingDown size={40} /></span>
     </div>
 
     <div class="qd-card qd-card-green">
@@ -301,7 +301,7 @@
         <div class="qd-card-label">Available</div>
         <div class="qd-card-value">{loading ? '–' : summary.available}</div>
       </div>
-      <CheckCircle2 size={40} class="qd-card-icon" />
+      <span class="qd-card-icon"><CheckCircle2 size={40} /></span>
     </div>
 
     <div class="qd-card qd-card-orange">
@@ -309,7 +309,7 @@
         <div class="qd-card-label">Errored</div>
         <div class="qd-card-value">{loading ? '–' : summary.errored}</div>
       </div>
-      <AlertTriangle size={40} class="qd-card-icon" />
+      <span class="qd-card-icon"><AlertTriangle size={40} /></span>
     </div>
 
     <div class="qd-card qd-card-purple">
@@ -320,7 +320,7 @@
           {creditsPercentage}% of {formatCredit(summary.total_allocation)} allocated
         </div>
       </div>
-      <Coins size={40} class="qd-card-icon" />
+      <span class="qd-card-icon"><Coins size={40} /></span>
     </div>
   </div>
 
