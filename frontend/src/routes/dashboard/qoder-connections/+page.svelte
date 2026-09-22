@@ -73,7 +73,6 @@
 
   // Summary mirrors the API's summary object (`/api/qoder/quota` returns
   // connections/available/errored/total_remaining/total_allocation).
-  // `total_connections` is derived from `connections` rather than duplicated.
   let summary = $state({
     connections: 0,
     available: 0,
@@ -88,7 +87,6 @@
       : 0,
   );
 
-  // Config state
   let qoderConfig = $state<QoderConfig | null>(null);
 
   // The provider reports an explicit `not_enabled` status rather than an empty
@@ -223,29 +221,21 @@
   });
 </script>
 
-<div class="space-y-6">
+<div class="qd-page">
   <!-- Header with Config Toggle -->
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-    <h1 class="text-2xl font-bold text-gray-900">Qoder Connections</h1>
-    <div class="flex flex-wrap gap-2">
-      <button
-        onclick={() => (showingConfig = !showingConfig)}
-        class="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-      >
+  <div class="qd-head">
+    <h1 class="qd-title">Qoder Connections</h1>
+    <div class="qd-actions">
+      <button class="qd-btn qd-btn-ghost" onclick={() => (showingConfig = !showingConfig)}>
         {#if showingConfig}
           <X size={16} /> Hide Config
         {:else}
           <Settings size={16} /> Show Config
         {/if}
       </button>
-      <button
-        onclick={refreshAll}
-        disabled={refreshing || loading}
-        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-      >
+      <button class="qd-btn qd-btn-primary" onclick={refreshAll} disabled={refreshing || loading}>
         {#if refreshing}
-          <RefreshCw class="animate-spin" size={16} />
-          Refreshing…
+          <RefreshCw class="qd-spin" size={16} /> Refreshing…
         {:else}
           <RefreshCw size={16} /> Refresh
         {/if}
@@ -255,113 +245,102 @@
 
   <!-- Config Panel -->
   {#if showingConfig}
-    <div class="bg-white border border-gray-200 rounded-lg p-6 shadow-sm">
-      <h3 class="text-lg font-semibold mb-4 flex items-center gap-2">
-        <Settings size={20} /> Configuration
-      </h3>
+    <section class="qd-panel">
+      <h3 class="qd-panel-title"><Settings size={20} /> Configuration</h3>
       {#if qoderConfig}
-        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div class="bg-gray-50 rounded p-4">
-            <div class="text-sm text-gray-600">Enabled</div>
-            <div class="font-semibold">{qoderConfig.enabled ? 'Yes ✓' : 'No ✗'}</div>
+        <div class="qd-grid4">
+          <div class="qd-tile">
+            <div class="qd-muted">Enabled</div>
+            <div class="qd-strong">{qoderConfig.enabled ? 'Yes ✓' : 'No ✗'}</div>
           </div>
-          <div class="bg-gray-50 rounded p-4">
-            <div class="text-sm text-gray-600">Template Provisioned</div>
-            <div class="font-semibold">{qoderConfig.template ? 'Yes ✓' : 'No ✗'}</div>
+          <div class="qd-tile">
+            <div class="qd-muted">Template Provisioned</div>
+            <div class="qd-strong">{qoderConfig.template ? 'Yes ✓' : 'No ✗'}</div>
           </div>
-          <div class="bg-gray-50 rounded p-4">
-            <div class="text-sm text-gray-600">Region</div>
-            <div class="font-semibold">{qoderConfig.region}</div>
+          <div class="qd-tile">
+            <div class="qd-muted">Region</div>
+            <div class="qd-strong">{qoderConfig.region}</div>
           </div>
-          <div class="bg-gray-50 rounded p-4">
-            <div class="text-sm text-gray-600">Idle Timeout</div>
-            <div class="font-semibold">{qoderConfig.idle_timeout_seconds}s</div>
+          <div class="qd-tile">
+            <div class="qd-muted">Idle Timeout</div>
+            <div class="qd-strong">{qoderConfig.idle_timeout_seconds}s</div>
           </div>
         </div>
         {#if !qoderConfig.enabled}
-          <div class="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
-            <AlertTriangle class="inline-block mr-2" size={16} />
-            Provider is not active. Enable the <code>qoder_enabled</code> setting and provision the request template.
+          <div class="qd-notice qd-notice-warn">
+            <AlertTriangle size={16} />
+            <span>
+              Provider is not active. Enable the <code>qoder_enabled</code> setting and
+              provision the request template.
+            </span>
           </div>
         {/if}
         {#if qoderConfig.hint}
-          <div class="mt-3 text-sm text-gray-600">Hint: {qoderConfig.hint}</div>
+          <div class="qd-hint">Hint: {qoderConfig.hint}</div>
         {/if}
       {:else}
-        <div class="p-4 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">
+        <div class="qd-notice qd-notice-muted">
           Could not read the Qoder configuration. Use Refresh to retry.
         </div>
       {/if}
-    </div>
+    </section>
   {/if}
 
   <!-- Summary Cards -->
-  <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-    <div class="bg-gradient-to-r from-blue-500 to-blue-600 rounded-lg p-5 text-white shadow-md">
-      <div class="flex items-center justify-between">
-        <div>
-          <div class="text-sm opacity-90">Total Connections</div>
-          <div class="text-3xl font-bold mt-2">{loading ? '–' : summary.connections}</div>
-        </div>
-        <TrendingDown size={40} class="opacity-50" />
+  <div class="qd-grid4">
+    <div class="qd-card qd-card-blue">
+      <div>
+        <div class="qd-card-label">Total Connections</div>
+        <div class="qd-card-value">{loading ? '–' : summary.connections}</div>
       </div>
+      <TrendingDown size={40} class="qd-card-icon" />
     </div>
 
-    <div class="bg-gradient-to-r from-green-500 to-green-600 rounded-lg p-5 text-white shadow-md">
-      <div class="flex items-center justify-between">
-        <div>
-          <div class="text-sm opacity-90">Available</div>
-          <div class="text-3xl font-bold mt-2">{loading ? '–' : summary.available}</div>
-        </div>
-        <CheckCircle2 size={40} class="opacity-50" />
+    <div class="qd-card qd-card-green">
+      <div>
+        <div class="qd-card-label">Available</div>
+        <div class="qd-card-value">{loading ? '–' : summary.available}</div>
       </div>
+      <CheckCircle2 size={40} class="qd-card-icon" />
     </div>
 
-    <div class="bg-gradient-to-r from-orange-500 to-orange-600 rounded-lg p-5 text-white shadow-md">
-      <div class="flex items-center justify-between">
-        <div>
-          <div class="text-sm opacity-90">Errored</div>
-          <div class="text-3xl font-bold mt-2">{loading ? '–' : summary.errored}</div>
-        </div>
-        <AlertTriangle size={40} class="opacity-50" />
+    <div class="qd-card qd-card-orange">
+      <div>
+        <div class="qd-card-label">Errored</div>
+        <div class="qd-card-value">{loading ? '–' : summary.errored}</div>
       </div>
+      <AlertTriangle size={40} class="qd-card-icon" />
     </div>
 
-    <div class="bg-gradient-to-r from-purple-500 to-purple-600 rounded-lg p-5 text-white shadow-md">
-      <div class="flex items-center justify-between">
-        <div>
-          <div class="text-sm opacity-90">Credits Remaining</div>
-          <div class="text-3xl font-bold mt-2">{loading ? '–' : formatCredit(summary.total_remaining)}</div>
-          <div class="text-xs mt-1 opacity-80">
-            {creditsPercentage}% of {formatCredit(summary.total_allocation)} allocated
-          </div>
+    <div class="qd-card qd-card-purple">
+      <div>
+        <div class="qd-card-label">Credits Remaining</div>
+        <div class="qd-card-value">{loading ? '–' : formatCredit(summary.total_remaining)}</div>
+        <div class="qd-card-sub">
+          {creditsPercentage}% of {formatCredit(summary.total_allocation)} allocated
         </div>
-        <Coins size={40} class="opacity-50" />
       </div>
+      <Coins size={40} class="qd-card-icon" />
     </div>
   </div>
 
   <!-- Main Table -->
   {#if loading}
-    <div class="bg-white border border-gray-200 rounded-lg">
+    <div class="qd-panel">
       <Spinner />
-      <p class="pb-6 text-center text-sm text-gray-500">Loading Qoder connections…</p>
+      <p class="qd-loading-text">Loading Qoder connections…</p>
     </div>
   {:else if error}
-    <div class="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
-      <p class="text-red-800 font-medium">Error: {error}</p>
-      <button onclick={refreshAll} class="mt-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-        Retry
-      </button>
+    <div class="qd-notice qd-notice-error qd-center">
+      <p><strong>Error:</strong> {error}</p>
+      <button class="qd-btn qd-btn-primary" onclick={refreshAll}>Retry</button>
     </div>
   {:else if notEnabled}
-    <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-6 text-center">
-      <CloudOff class="inline-block mb-2 text-yellow-700" size={28} />
-      <p class="text-yellow-900 font-medium">Qoder provider is not active</p>
-      <p class="mt-1 text-sm text-yellow-800">{notEnabled}</p>
-      <p class="mt-1 text-xs text-yellow-700">
-        Enable the provider and provision the request template, then Refresh.
-      </p>
+    <div class="qd-notice qd-notice-warn qd-center">
+      <CloudOff size={28} />
+      <p><strong>Qoder provider is not active</strong></p>
+      <p class="qd-sm">{notEnabled}</p>
+      <p class="qd-xs">Enable the provider and provision the request template, then Refresh.</p>
     </div>
   {:else if connections.length === 0}
     <EmptyState
@@ -370,137 +349,391 @@
       description="Add a connection with the Qoder format on the Connections page."
     />
   {:else}
-    <div class="bg-white border border-gray-200 rounded-lg overflow-x-auto shadow-sm">
-      <table class="min-w-full divide-y divide-gray-200">
-        <thead class="bg-gray-50">
-          <tr>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Connection</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Priority</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Models</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Credit Used</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Credit Left</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-          </tr>
-        </thead>
-        <tbody class="bg-white divide-y divide-gray-200">
-          {#each connections as conn (conn.connection_id)}
-            <tr class={expandedRow === conn.connection_id ? 'bg-blue-50' : ''}>
-              <td class="px-6 py-4">
-                <button
-                  onclick={() => toggleExpanded(conn.connection_id)}
-                  class="font-medium text-blue-600 hover:text-blue-800"
-                  aria-expanded={expandedRow === conn.connection_id}
-                >
-                  {conn.name}
-                  {#if expandedRow === conn.connection_id}▼{:else}▶{/if}
-                </button>
-                <div class="text-xs text-gray-500 mt-1 font-mono">{conn.connection_id.slice(0, 8)}…</div>
-              </td>
-              <td class="px-6 py-4 text-sm text-gray-700">{conn.priority}</td>
-              <td class="px-6 py-4 text-sm text-gray-700">{conn.models_count}</td>
-
-              {#if conn.quota}
-                <td class="px-6 py-4 text-sm">
-                  <span class="font-medium">{formatCredit(conn.quota.user_quota?.used || 0)}</span>
-                  <span class="text-gray-400"> / </span>
-                  <span>{formatCredit(conn.quota.user_quota?.total || 0)}</span>
-                </td>
-                <td class="px-6 py-4 text-sm">
-                  {#if conn.quota.user_quota?.remaining !== undefined}
-                    <span class="font-semibold {conn.quota.user_quota.remaining <= 0 ? 'text-red-600' : 'text-green-600'}">
-                      {formatCredit(conn.quota.user_quota.remaining)}
-                    </span>
-                  {:else}
-                    –
-                  {/if}
-                  {#if conn.quota.is_quota_exceeded}
-                    <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">
-                      EXCEEDED
-                    </span>
-                  {/if}
-                </td>
-              {:else}
-                <td class="px-6 py-4 text-sm text-gray-500">–</td>
-                <td class="px-6 py-4 text-sm text-gray-500">–</td>
-              {/if}
-
-              <td class="px-6 py-4">
-                {#if conn.error}
-                  <StatusBadge status="error" />
-                  <div class="text-xs text-gray-500 mt-1">{conn.error}</div>
-                {:else if testResults[conn.connection_id]}
-                  <StatusBadge status={badgeStatus(testResults[conn.connection_id].status)} />
-                  {#if testResults[conn.connection_id].message}
-                    <div class="text-xs text-gray-500 mt-1">{testResults[conn.connection_id].message}</div>
-                  {/if}
-                {:else}
-                  <span class="text-gray-400 text-sm">Not tested</span>
-                {/if}
-              </td>
-
-              <td class="px-6 py-4">
-                <button
-                  onclick={() => runTest(conn.connection_id)}
-                  disabled={testInProgress === conn.connection_id}
-                  class="px-3 py-1 bg-indigo-100 text-indigo-700 rounded hover:bg-indigo-200 disabled:opacity-50 transition-colors text-sm font-medium inline-flex items-center gap-1"
-                >
-                  {#if testInProgress === conn.connection_id}
-                    Testing…
-                  {:else}
-                    <TestTube2 size={14} /> Test Model
-                  {/if}
-                </button>
-              </td>
+    <div class="qd-panel qd-panel-flush">
+      <div class="qd-table-wrap">
+        <table class="qd-table">
+          <thead>
+            <tr>
+              <th>Connection</th>
+              <th>Priority</th>
+              <th>Models</th>
+              <th>Credit Used</th>
+              <th>Credit Left</th>
+              <th>Status</th>
+              <th>Actions</th>
             </tr>
+          </thead>
+          <tbody>
+            {#each connections as conn (conn.connection_id)}
+              <tr class:qd-row-open={expandedRow === conn.connection_id}>
+                <td>
+                  <button
+                    class="qd-expand"
+                    onclick={() => toggleExpanded(conn.connection_id)}
+                    aria-expanded={expandedRow === conn.connection_id}
+                  >
+                    {conn.name}
+                    {#if expandedRow === conn.connection_id}▼{:else}▶{/if}
+                  </button>
+                  <div class="qd-id">{conn.connection_id.slice(0, 8)}…</div>
+                </td>
+                <td>{conn.priority}</td>
+                <td>{conn.models_count}</td>
 
-            {#if expandedRow === conn.connection_id && conn.quota}
-              <tr class="bg-gray-50">
-                <td colspan="7" class="px-6 py-4">
-                  <div class="bg-white border border-gray-200 rounded-lg p-4">
-                    <h4 class="font-semibold text-sm mb-3">Detailed Credit Breakdown</h4>
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                      <div>
-                        <div class="text-gray-600">Used</div>
-                        <div class="font-semibold">{formatCredit(conn.quota.user_quota?.used || 0)}</div>
-                      </div>
-                      <div>
-                        <div class="text-gray-600">Total Allocation</div>
-                        <div class="font-semibold">{formatCredit(conn.quota.user_quota?.total || 0)}</div>
-                      </div>
-                      <div>
-                        <div class="text-gray-600">Remaining</div>
-                        <div class="font-semibold text-green-600">{formatCredit(conn.quota.user_quota?.remaining || 0)}</div>
-                      </div>
-                      <div>
-                        <div class="text-gray-600">Reset Time</div>
-                        <div class="font-mono text-xs">{conn.quota.reset_time || 'N/A'}</div>
-                      </div>
-                    </div>
-                    {#if conn.quota.expires_at}
-                      <div class="mt-3 text-xs text-gray-500">
-                        Expires: {new Date(conn.quota.expires_at * 1000).toLocaleString()}
-                      </div>
+                {#if conn.quota}
+                  <td>
+                    <span class="qd-strong">{formatCredit(conn.quota.user_quota?.used || 0)}</span>
+                    <span class="qd-sep"> / </span>
+                    <span>{formatCredit(conn.quota.user_quota?.total || 0)}</span>
+                  </td>
+                  <td>
+                    {#if conn.quota.user_quota?.remaining !== undefined}
+                      <span
+                        class="qd-strong"
+                        class:qd-ok={conn.quota.user_quota.remaining > 0}
+                        class:qd-bad={conn.quota.user_quota.remaining <= 0}
+                      >{formatCredit(conn.quota.user_quota.remaining)}</span>
+                    {:else}
+                      –
                     {/if}
-                    {#if conn.quota.fetched_at}
-                      <div class="mt-1 text-xs text-gray-400">
-                        Last fetched: {new Date(conn.quota.fetched_at).toLocaleTimeString()}
-                      </div>
+                    {#if conn.quota.is_quota_exceeded}
+                      <span class="qd-chip">EXCEEDED</span>
                     {/if}
-                  </div>
+                  </td>
+                {:else}
+                  <td class="qd-muted">–</td>
+                  <td class="qd-muted">–</td>
+                {/if}
+
+                <td>
+                  {#if conn.error}
+                    <StatusBadge status="error" />
+                    <div class="qd-note">{conn.error}</div>
+                  {:else if testResults[conn.connection_id]}
+                    <StatusBadge status={badgeStatus(testResults[conn.connection_id].status)} />
+                    {#if testResults[conn.connection_id].message}
+                      <div class="qd-note">{testResults[conn.connection_id].message}</div>
+                    {/if}
+                  {:else}
+                    <span class="qd-muted">Not tested</span>
+                  {/if}
+                </td>
+
+                <td>
+                  <button
+                    class="qd-btn qd-btn-test"
+                    onclick={() => runTest(conn.connection_id)}
+                    disabled={testInProgress === conn.connection_id}
+                  >
+                    {#if testInProgress === conn.connection_id}
+                      Testing…
+                    {:else}
+                      <TestTube2 size={14} /> Test Model
+                    {/if}
+                  </button>
                 </td>
               </tr>
-            {/if}
-          {/each}
-        </tbody>
-      </table>
+
+              {#if expandedRow === conn.connection_id && conn.quota}
+                <tr class="qd-row-detail">
+                  <td colspan="7">
+                    <div class="qd-detail">
+                      <h4 class="qd-panel-title">Detailed Credit Breakdown</h4>
+                      <div class="qd-grid4 qd-sm">
+                        <div>
+                          <div class="qd-muted">Used</div>
+                          <div class="qd-strong">{formatCredit(conn.quota.user_quota?.used || 0)}</div>
+                        </div>
+                        <div>
+                          <div class="qd-muted">Total Allocation</div>
+                          <div class="qd-strong">{formatCredit(conn.quota.user_quota?.total || 0)}</div>
+                        </div>
+                        <div>
+                          <div class="qd-muted">Remaining</div>
+                          <div class="qd-strong qd-ok">
+                            {formatCredit(conn.quota.user_quota?.remaining || 0)}
+                          </div>
+                        </div>
+                        <div>
+                          <div class="qd-muted">Reset Time</div>
+                          <div class="qd-mono">{conn.quota.reset_time || 'N/A'}</div>
+                        </div>
+                      </div>
+                      {#if conn.quota.expires_at}
+                        <div class="qd-note qd-muted">
+                          Expires: {new Date(conn.quota.expires_at * 1000).toLocaleString()}
+                        </div>
+                      {/if}
+                      {#if conn.quota.fetched_at}
+                        <div class="qd-note qd-muted">
+                          Last fetched: {new Date(conn.quota.fetched_at).toLocaleTimeString()}
+                        </div>
+                      {/if}
+                    </div>
+                  </td>
+                </tr>
+              {/if}
+            {/each}
+          </tbody>
+        </table>
+      </div>
     </div>
   {/if}
 
   <!-- Footer info -->
   {#if lastUpdated}
-    <div class="mt-4 text-xs text-gray-500 text-center">
-      Last updated: {lastUpdated.toLocaleString()}
-    </div>
+    <div class="qd-foot">Last updated: {lastUpdated.toLocaleString()}</div>
   {/if}
 </div>
+
+<style>
+  /* Every surface/text colour comes from the dashboard's design tokens
+     (--color-bg-*, --color-fg-*, --color-border), so the page follows light and
+     dark mode like the rest of the dashboard. Raw Tailwind palette utilities
+     (bg-white, text-gray-900, border-gray-200) are light-only literals and
+     produced white-on-white text in dark mode. */
+  .qd-page {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .qd-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .qd-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--color-fg-0);
+    margin: 0;
+  }
+  .qd-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .qd-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+  }
+  .qd-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  .qd-btn-ghost {
+    background: var(--color-bg-body);
+    border-color: var(--color-border);
+    color: var(--color-fg-1);
+  }
+  .qd-btn-ghost:hover:not(:disabled) {
+    background: var(--color-bg-hover);
+  }
+  .qd-btn-primary {
+    background: var(--color-primary);
+    color: #fff;
+  }
+  .qd-btn-primary:hover:not(:disabled) {
+    background: var(--color-primary-hover);
+  }
+  .qd-btn-test {
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  }
+  .qd-btn-test:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  }
+  .qd-spin {
+    animation: qd-spin 1s linear infinite;
+  }
+
+  .qd-panel {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius, 12px);
+    padding: 20px;
+    box-shadow: var(--shadow, 0 1px 2px rgba(0, 0, 0, 0.04));
+  }
+  .qd-panel-flush {
+    padding: 0;
+    overflow: hidden;
+  }
+  .qd-panel-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-fg-0);
+    margin: 0 0 14px;
+  }
+
+  .qd-grid4 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+  }
+
+  .qd-tile {
+    background: var(--color-bg-body);
+    border: 1px solid var(--color-border-light);
+    border-radius: 10px;
+    padding: 14px;
+  }
+
+  /* Summary cards keep their saturated gradients — white text reads correctly on
+     them in both themes. */
+  .qd-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border-radius: 12px;
+    padding: 18px;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  }
+  .qd-card-blue { background: linear-gradient(90deg, #3b82f6, #2563eb); }
+  .qd-card-green { background: linear-gradient(90deg, #22c55e, #16a34a); }
+  .qd-card-orange { background: linear-gradient(90deg, #f97316, #ea580c); }
+  .qd-card-purple { background: linear-gradient(90deg, #a855f7, #7e22ce); }
+  .qd-card-label { font-size: 13px; opacity: 0.9; }
+  .qd-card-value { font-size: 30px; font-weight: 700; line-height: 1.15; }
+  .qd-card-sub { font-size: 11px; opacity: 0.85; margin-top: 2px; }
+  .qd-card-icon { opacity: 0.5; flex-shrink: 0; }
+
+  .qd-notice {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-card);
+    color: var(--color-fg-1);
+    font-size: 13px;
+  }
+  .qd-notice-warn {
+    background: var(--color-warning-light);
+    border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+    color: var(--color-fg-1);
+  }
+  .qd-notice-error {
+    background: var(--color-error-light);
+    border-color: color-mix(in srgb, var(--color-error) 35%, transparent);
+  }
+  .qd-notice-muted { background: var(--color-bg-body); }
+  .qd-center { text-align: center; }
+
+  .qd-hint {
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--color-fg-2);
+  }
+  .qd-loading-text {
+    text-align: center;
+    font-size: 13px;
+    color: var(--color-fg-2);
+    margin: 0 0 8px;
+  }
+
+  .qd-table-wrap { overflow-x: auto; }
+  .qd-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .qd-table thead th {
+    text-align: left;
+    padding: 10px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-fg-2);
+    background: var(--color-bg-body);
+    border-bottom: 1px solid var(--color-border);
+    white-space: nowrap;
+  }
+  .qd-table tbody td {
+    padding: 12px 16px;
+    color: var(--color-fg-1);
+    border-bottom: 1px solid var(--color-border-light);
+    vertical-align: top;
+  }
+  .qd-table tbody tr:hover td { background: var(--color-bg-hover); }
+  .qd-row-open td { background: var(--color-primary-light); }
+  .qd-row-detail td { background: var(--color-bg-body); }
+
+  .qd-detail {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    padding: 14px;
+  }
+
+  .qd-expand {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-weight: 600;
+    color: var(--color-primary);
+    cursor: pointer;
+    text-align: left;
+  }
+  .qd-expand:hover { text-decoration: underline; }
+
+  .qd-id {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 11px;
+    color: var(--color-fg-3);
+    margin-top: 3px;
+  }
+  .qd-note { font-size: 11px; color: var(--color-fg-2); margin-top: 3px; }
+  .qd-mono { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+  .qd-muted { color: var(--color-fg-2); }
+  .qd-strong { font-weight: 600; color: var(--color-fg-0); }
+  .qd-ok { color: var(--color-success); }
+  .qd-bad { color: var(--color-error); }
+  .qd-sep { color: var(--color-fg-3); }
+  .qd-sm { font-size: 12px; }
+  .qd-xs { font-size: 11px; color: var(--color-fg-2); }
+
+  .qd-chip {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 8px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    background: var(--color-error-light);
+    color: var(--color-error);
+  }
+
+  .qd-foot {
+    text-align: center;
+    font-size: 11px;
+    color: var(--color-fg-3);
+  }
+
+  @keyframes qd-spin {
+    to { transform: rotate(360deg); }
+  }
+</style>
