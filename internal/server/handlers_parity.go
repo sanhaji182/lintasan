@@ -49,6 +49,12 @@ func (s *Server) registerParityRoutes() {
 	s.mux.HandleFunc("GET /api/qoder/config", s.handleQoderConfig)
 	s.mux.HandleFunc("GET /api/qoder/quota", s.handleQoderQuota)
 	s.mux.HandleFunc("GET /api/qoder/quota/{connection_id}", s.handleQoderQuota)
+	// Check-in / campaign visibility. Read-only by design: the global region has no
+	// credit-granting check-in endpoint, so no claim control is exposed. See
+	// qoder_checkin_handlers.go.
+	s.mux.HandleFunc("GET /api/qoder/checkin", s.handleQoderCheckin)
+	s.mux.HandleFunc("GET /api/qoder/checkin/{connection_id}", s.handleQoderCheckin)
+	s.mux.HandleFunc("GET /api/qoder/campaigns", s.handleQoderCampaigns)
 	s.mux.HandleFunc("GET /api/audit", s.handleAudit)
 	s.mux.HandleFunc("GET /api/features", s.handleFeatures)
 	s.mux.HandleFunc("GET /api/features/stats", s.handleFeatureStats)
