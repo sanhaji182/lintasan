@@ -124,6 +124,11 @@
     } catch (err) {
       error = err instanceof Error ? err.message : 'Unknown error';
       return false;
+    } finally {
+      // Must clear here, not only on the success path: the summary cards and the
+      // table are both gated on `loading`, so leaving it true renders a
+      // permanent "Loading…" with blank cards even though the data has arrived.
+      loading = false;
     }
   }
 
