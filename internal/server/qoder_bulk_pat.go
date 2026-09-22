@@ -39,6 +39,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -50,6 +51,17 @@ import (
 // qoderConnectionBaseURL is the base every Qoder row uses. Kept as a constant so the
 // value cannot drift between the bulk path and the preset catalogue.
 const qoderConnectionBaseURL = "https://api.qoder.com/v1"
+
+// qoderPATShape is the credential format Qoder issues: "pt-" followed by a long
+// URL-safe token. Used as a pre-flight so an obviously malformed paste is rejected
+// before it can be written, and rejected identically whether or not validation is on.
+//
+// Why this matters: with validation OFF (an operator opting for speed on a large
+// batch), a mistyped or truncated value would otherwise be inserted verbatim and
+// surface later as a connection that 401s on every request — the exact failure the
+// validate-on-by-default setting exists to prevent. A shape check costs nothing and
+// catches the common case (paste truncation, wrong column, stray prose).
+var qoderPATShape = regexp.MustCompile(`^pt-[A-Za-z0-9_-]{16,}$`)
 
 // qoderBulkCredential is one input row, after parsing.
 type qoderBulkCredential struct {
@@ -223,6 +235,17 @@ func (s *Server) handleQoderBulkAdd(w http.ResponseWriter, r *http.Request) {
 			res.Status = "duplicate"
 			res.Message = "already present in this deployment"
 			duplicates++
+			results = append(results, res)
+			continue
+		}
+
+		// Shape pre-flight, applied whether or not validation is on. A malformed value
+		// written verbatim becomes a connection that 401s on every request; catching it
+		// here costs nothing and keeps "validate: false" from meaning "accept anything".
+		if !qoderPATShape.MatchString(c.Raw) {
+			res.Status = "invalid"
+			res.Message = "not a Qoder PAT (expected \"pt-\" followed by a long token)"
+			invalid++
 			results = append(results, res)
 			continue
 		}
