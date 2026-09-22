@@ -936,7 +936,9 @@
   .qd-examples li { margin: 2px 0; }
   .qd-chip-off { background: rgba(34, 197, 94, 0.16); color: #15803d; border: 1px solid rgba(34, 197, 94, 0.45); }
   :global(html[data-theme='dark']) .qd-chip-off { color: #4ade80; }
-  .qd-chip-on { background: var(--color-bg-body); color: var(--color-fg-2); }
+  /* Neutral, not the base .qd-chip red: "Regular hours" is a state, not an error, and
+     the base chip style is the error palette. */
+  .qd-chip-on { background: var(--color-bg-body); color: var(--color-fg-2); border: 1px solid var(--color-border); }
   /* Theme is switched via <html data-theme="dark">, not a .dark class, so the dark
      override must be :global — a plain `.dark ...` selector matches nothing here and
      svelte-check reports it as dead CSS. */
