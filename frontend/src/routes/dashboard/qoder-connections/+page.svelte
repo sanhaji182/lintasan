@@ -936,14 +936,8 @@
   .qd-examples li { margin: 2px 0; }
   .qd-chip-off { background: rgba(34, 197, 94, 0.16); color: #15803d; border: 1px solid rgba(34, 197, 94, 0.45); }
   :global(html[data-theme='dark']) .qd-chip-off { color: #4ade80; }
-  /* Neutral, not the base .qd-chip red: "Regular hours" is a state, not an error, and
-     the base chip style is the error palette. */
-  .qd-chip-on { background: var(--color-bg-body); color: var(--color-fg-2); border: 1px solid var(--color-border); }
-  /* Theme is switched via <html data-theme="dark">, not a .dark class, so the dark
-     override must be :global — a plain `.dark ...` selector matches nothing here and
-     svelte-check reports it as dead CSS. */
-  .qd-chip-bonus { background: rgba(245, 158, 11, 0.18); color: #b45309; border: 1px solid rgba(245, 158, 11, 0.45); }
-  :global(html[data-theme='dark']) .qd-chip-bonus { color: #fbbf24; }
+  /* .qd-chip-bonus and .qd-chip-on are declared after the base .qd-chip rule — see the
+     note there. Source order decides at equal specificity. */
   .qd-bonus-row { border-top: 1px dashed var(--color-border); padding-top: 10px; margin-top: 10px; }
   .qd-card-label { font-size: 13px; opacity: 0.9; }
   .qd-card-value { font-size: 30px; font-weight: 700; line-height: 1.15; }
@@ -1061,6 +1055,23 @@
     background: var(--color-error-light);
     color: var(--color-error);
   }
+
+  /* Chip variants MUST come after the base .qd-chip rule above. Equal specificity
+     means source order decides, so an override declared earlier loses — which is
+     exactly how "REGULAR HOURS" ended up rendering in the error palette. */
+  /* Neutral, not red: a window state is not a fault. The red base style above is for
+     the EXCEEDED chip it was designed for. */
+  .qd-chip-on {
+    background: var(--color-bg-body);
+    color: var(--color-fg-2);
+    border: 1px solid var(--color-border);
+  }
+  .qd-chip-bonus {
+    background: rgba(245, 158, 11, 0.18);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.45);
+  }
+  :global(html[data-theme='dark']) .qd-chip-bonus { color: #fbbf24; }
 
   .qd-foot {
     text-align: center;
