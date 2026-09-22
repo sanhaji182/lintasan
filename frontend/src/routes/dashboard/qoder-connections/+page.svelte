@@ -7,13 +7,59 @@
   import { showToast } from '$lib/toast';
   import { TestTube2, RefreshCw, CheckCircle2, AlertTriangle, TrendingDown, Coins, X, Settings, CloudOff } from 'lucide-svelte';
 
+  type QuotaBucket = { used?: number; total?: number; remaining?: number; unit?: string; percentage?: number };
+
   type Quota = {
-    user_quota?: { used?: number; total?: number; remaining?: number };
+    user_quota?: QuotaBucket;
+    /** Add-on / bonus credits from promotions and rewards. Awarded separately from
+     *  the plan allocation (e.g. the "Claim 100 Credits" reward lands here), and it
+     *  expires 30 days from claim rather than with the plan. */
+    addon_quota?: QuotaBucket;
     is_quota_exceeded?: boolean;
     reset_time?: string;
     expires_at?: number;
     fetched_at?: string;
+    /** Upstream's own used/total ratio (0..1), carried for cross-checking. */
+    total_usage_percentage?: number;
+    /** Metered unit (observed: "credits"). */
+    usage_type?: string;
+    /** Entitlement class, e.g. "personal_professional_trial". */
+    account_type?: string;
+    /** Where upstream sends a user to raise quota. */
+    upgrade_url?: string;
+    /** Kept verbatim: per-provider bonus quota would appear here. Empty in every
+     *  response observed so far. Rendered raw on purpose — the shape is unverified. */
+    outer_providers?: unknown;
   };
+
+  /** A bonus bucket is worth showing only once it carries something. */
+  function hasBonus(conn: QoderConnection): boolean {
+    const a = conn.quota?.addon_quota;
+    if (!a) return false;
+    return (a.remaining ?? 0) > 0 || (a.total ?? 0) > 0;
+  }
+
+  /** True when any account in the list carries bonus credits. */
+  function anyBonus(): boolean {
+    return connections.some(hasBonus);
+  }
+
+  /** Sum of bonus remaining across the pool. */
+  function totalBonusRemaining(): number {
+    return connections.reduce((sum, c) => sum + (c.quota?.addon_quota?.remaining ?? 0), 0);
+  }
+
+  /**
+   * Qoder sends expiresAt as epoch MILLISECONDS (e.g. 1790546012024). The previous
+   * code multiplied by 1000, which rendered a date ~56,000 years out. Detect the
+   * unit instead of assuming it.
+   */
+  function formatEpoch(v?: number): string {
+    if (!v) return 'N/A';
+    // Anything past ~year 33658 in seconds is really milliseconds.
+    const ms = v > 1e11 ? v : v * 1000;
+    return new Date(ms).toLocaleString();
+  }
 
   type QoderConnection = {
     connection_id: string;
@@ -322,6 +368,19 @@
       </div>
       <span class="qd-card-icon"><Coins size={40} /></span>
     </div>
+
+    {#if anyBonus()}
+      <div class="qd-card qd-card-bonus">
+        <div>
+          <div class="qd-card-label">Bonus Credits</div>
+          <div class="qd-card-value">{loading ? '–' : formatCredit(totalBonusRemaining())}</div>
+          <div class="qd-card-sub">
+            from promotions · separate from plan allocation
+          </div>
+        </div>
+        <span class="qd-card-icon"><Coins size={40} /></span>
+      </div>
+    {/if}
   </div>
 
   <!-- Main Table -->
@@ -399,6 +458,11 @@
                     {#if conn.quota.is_quota_exceeded}
                       <span class="qd-chip">EXCEEDED</span>
                     {/if}
+                    {#if hasBonus(conn)}
+                      <span class="qd-chip qd-chip-bonus" title="Add-on / bonus credits awarded by promotions">
+                        +{formatCredit(conn.quota.addon_quota?.remaining || 0)} BONUS
+                      </span>
+                    {/if}
                   </td>
                 {:else}
                   <td class="qd-muted">–</td>
@@ -459,9 +523,56 @@
                           <div class="qd-mono">{conn.quota.reset_time || 'N/A'}</div>
                         </div>
                       </div>
+
+                      {#if hasBonus(conn)}
+                        <div class="qd-grid4 qd-sm qd-bonus-row">
+                          <div>
+                            <div class="qd-muted">Bonus — Used</div>
+                            <div class="qd-strong">{formatCredit(conn.quota.addon_quota?.used || 0)}</div>
+                          </div>
+                          <div>
+                            <div class="qd-muted">Bonus — Total</div>
+                            <div class="qd-strong">{formatCredit(conn.quota.addon_quota?.total || 0)}</div>
+                          </div>
+                          <div>
+                            <div class="qd-muted">Bonus — Remaining</div>
+                            <div class="qd-strong qd-ok">{formatCredit(conn.quota.addon_quota?.remaining || 0)}</div>
+                          </div>
+                          <div>
+                            <div class="qd-muted">Unit</div>
+                            <div class="qd-mono">{conn.quota.addon_quota?.unit || conn.quota.usage_type || 'credits'}</div>
+                          </div>
+                        </div>
+                        <div class="qd-note qd-muted">
+                          Bonus credits come from promotions and rewards, not the plan allocation.
+                          Each reward expires 30 days after it is claimed.
+                        </div>
+                      {:else}
+                        <div class="qd-note qd-muted">
+                          No add-on / bonus credits on this account yet. Promotion rewards (including
+                          any daily claim) are credited here, separately from the plan allocation.
+                        </div>
+                      {/if}
+
+                      {#if conn.quota.account_type || conn.quota.usage_type || conn.quota.upgrade_url}
+                        <div class="qd-note qd-muted">
+                          {#if conn.quota.account_type}Entitlement: <span class="qd-mono">{conn.quota.account_type}</span>{/if}
+                          {#if conn.quota.usage_type} · metered in <span class="qd-mono">{conn.quota.usage_type}</span>{/if}
+                          {#if conn.quota.upgrade_url}
+                            · <a href={conn.quota.upgrade_url} target="_blank" rel="noopener">upgrade quota</a>
+                          {/if}
+                        </div>
+                      {/if}
+
+                      {#if Array.isArray(conn.quota.outer_providers) && conn.quota.outer_providers.length > 0}
+                        <div class="qd-note qd-muted">
+                          Per-provider quota reported by upstream:
+                          <span class="qd-mono">{JSON.stringify(conn.quota.outer_providers)}</span>
+                        </div>
+                      {/if}
                       {#if conn.quota.expires_at}
                         <div class="qd-note qd-muted">
-                          Expires: {new Date(conn.quota.expires_at * 1000).toLocaleString()}
+                          Expires: {formatEpoch(conn.quota.expires_at)}
                         </div>
                       {/if}
                       {#if conn.quota.fetched_at}
@@ -610,6 +721,13 @@
   .qd-card-green { background: linear-gradient(90deg, #22c55e, #16a34a); }
   .qd-card-orange { background: linear-gradient(90deg, #f97316, #ea580c); }
   .qd-card-purple { background: linear-gradient(90deg, #a855f7, #7e22ce); }
+  .qd-card-bonus { background: linear-gradient(90deg, #f59e0b, #b45309); }
+  /* Theme is switched via <html data-theme="dark">, not a .dark class, so the dark
+     override must be :global — a plain `.dark ...` selector matches nothing here and
+     svelte-check reports it as dead CSS. */
+  .qd-chip-bonus { background: rgba(245, 158, 11, 0.18); color: #b45309; border: 1px solid rgba(245, 158, 11, 0.45); }
+  :global(html[data-theme='dark']) .qd-chip-bonus { color: #fbbf24; }
+  .qd-bonus-row { border-top: 1px dashed var(--color-border); padding-top: 10px; margin-top: 10px; }
   .qd-card-label { font-size: 13px; opacity: 0.9; }
   .qd-card-value { font-size: 30px; font-weight: 700; line-height: 1.15; }
   .qd-card-sub { font-size: 11px; opacity: 0.85; margin-top: 2px; }

@@ -41,12 +41,37 @@ type QuotaBucket struct {
 }
 
 // Quota is an account's credit state.
+//
+// Every field the upstream payload carries is surfaced, including the ones Lintasan
+// does not interpret. That is deliberate: this struct previously dropped
+// `outerProviders`, `totalUsagePercentage`, `usageType`, `userType` and `upgradeUrl`
+// because nothing read them — and `outerProviders` is the obvious carrier for
+// per-provider bonus quota (the vendor advertises model-specific rewards). A field
+// that is silently dropped cannot be noticed when it starts carrying data.
 type Quota struct {
 	Plan            string       `json:"plan,omitempty"`
 	UserQuota       *QuotaBucket `json:"user_quota,omitempty"`
 	AddonQuota      *QuotaBucket `json:"addon_quota,omitempty"`
 	IsQuotaExceeded bool         `json:"is_quota_exceeded"`
 	ExpiresAt       int64        `json:"expires_at,omitempty"`
+
+	// TotalUsagePercentage is upstream's own used/total ratio (0..1). Carried for
+	// cross-checking our own arithmetic rather than recomputing it.
+	TotalUsagePercentage float64 `json:"total_usage_percentage,omitempty"`
+	// UsageType names the unit being metered (observed: "credits").
+	UsageType string `json:"usage_type,omitempty"`
+	// AccountType is upstream's user type (observed: "personal_professional_trial").
+	// Distinct from Plan: the plan is a marketing name, this is the entitlement class.
+	AccountType string `json:"account_type,omitempty"`
+	// UpgradeURL is where upstream wants the user sent to increase quota.
+	UpgradeURL string `json:"upgrade_url,omitempty"`
+	// OuterProviders is kept VERBATIM. Upstream has been observed sending an empty
+	// array here, which is where per-provider (e.g. model-specific) bonus quota would
+	// appear. Held as raw JSON rather than a typed slice precisely because its shape
+	// is unverified — parsing it into a struct would drop whatever fields the shape
+	// turns out to have, which is the failure this field is meant to prevent.
+	OuterProviders json.RawMessage `json:"outer_providers,omitempty"`
+
 	// FetchedAt records when this snapshot was taken, so a dashboard can show its
 	// age rather than implying it is live.
 	FetchedAt time.Time `json:"fetched_at"`
@@ -206,6 +231,18 @@ func parseQuota(raw []byte) (*Quota, error) {
 		ExpiresAt:       int64(numField(envelope, "expiresAt")),
 		UserQuota:       bucketFrom(envelope, "userQuota"),
 		AddonQuota:      bucketFrom(envelope, "addOnQuota"),
+		// Surfaced even though nothing in Lintasan branches on them: dropped fields
+		// cannot be noticed when upstream starts using them.
+		TotalUsagePercentage: numField(envelope, "totalUsagePercentage"),
+		UsageType:            strField(envelope, "usageType"),
+		AccountType:          strField(envelope, "userType"),
+		UpgradeURL:           strField(envelope, "upgradeUrl"),
+	}
+	// outerProviders is preserved byte-for-byte. It is empty in every response
+	// observed so far; if upstream starts returning per-provider bonus quota here,
+	// the operator sees it without a code change.
+	if raw, err := json.Marshal(envelope["outerProviders"]); err == nil && string(raw) != "null" {
+		q.OuterProviders = json.RawMessage(raw)
 	}
 	if q.UserQuota == nil && q.AddonQuota == nil {
 		return nil, fmt.Errorf("qoder: quota response contained no recognizable buckets")
