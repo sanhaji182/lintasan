@@ -261,6 +261,33 @@
     return formatCredit(Math.round(credits / factor));
   }
 
+  /**
+   * The models worth showing worked examples for.
+   *
+   * Picks the cheapest and the dearest model that actually have a factor, plus any
+   * model with an off-peak discount — because the cheap/dear pair is what makes a
+   * factor legible, and the discounted ones are where the timing decision lives.
+   * Bounded to 4 so the note stays a note.
+   */
+  function explainerModels(models: ModelCostRow[]): ModelCostRow[] {
+    const priced = models.filter((m) => m.factor > 0);
+    if (priced.length === 0) return [];
+    const cheapest = priced[priced.length - 1];
+    const dearest = priced[0];
+    const discounted = priced.filter(
+      (m) => m.off_peak_factor > 0 && m.off_peak_factor < m.standard_factor,
+    );
+    const seen = new Set<string>();
+    const out: ModelCostRow[] = [];
+    for (const m of [discounted[0], cheapest, dearest, ...discounted.slice(1)]) {
+      if (!m || seen.has(m.model_id)) continue;
+      seen.add(m.model_id);
+      out.push(m);
+      if (out.length === 4) break;
+    }
+    return out;
+  }
+
   async function runTest(connectionId: string): Promise<void> {
     if (testInProgress === connectionId) return;
 
@@ -543,11 +570,22 @@
         </div>
 
         <div class="qd-note qd-muted">
-          A factor of 0.5x means one Credit buys two units of that model; a factor of 2x
-          means one Credit buys half a unit. Pool balance right now:
-          <span class="qd-strong">{formatCredit(summary.total_remaining)}</span> Credits →
-          <span class="qd-strong">{effectiveUnits(summary.total_remaining, models[0]?.factor || 0)}</span>
-          units of {models[0]?.display_name || 'the top-cost model'} at the current multiplier.
+          A factor of 0.5x means one Credit buys two units of that model; 2x means one
+          Credit buys half a unit. With {formatCredit(summary.total_remaining)} Credits
+          left in the pool, at the multiplier in force now:
+          <ul class="qd-examples">
+            {#each explainerModels(models) as m (m.model_id)}
+              <li>
+                <span class="qd-strong">{m.display_name}</span> at {formatFactor(m.factor)}
+                → <span class="qd-strong">{effectiveUnits(summary.total_remaining, m.factor)}</span> units
+                {#if m.off_peak_factor > 0 && m.off_peak_factor < m.standard_factor}
+                  <span class="qd-muted">
+                    ({effectiveUnits(summary.total_remaining, m.off_peak_factor)} if run off-peak)
+                  </span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
         </div>
       {/if}
     </div>
@@ -894,6 +932,8 @@
   .qd-card-bonus { background: linear-gradient(90deg, #f59e0b, #b45309); }
   .qd-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .qd-window { font-size: 12px; color: var(--color-fg-2); margin: 6px 0 12px; }
+  .qd-examples { margin: 6px 0 0; padding-left: 18px; }
+  .qd-examples li { margin: 2px 0; }
   .qd-chip-off { background: rgba(34, 197, 94, 0.16); color: #15803d; border: 1px solid rgba(34, 197, 94, 0.45); }
   :global(html[data-theme='dark']) .qd-chip-off { color: #4ade80; }
   .qd-chip-on { background: var(--color-bg-body); color: var(--color-fg-2); }
