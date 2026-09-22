@@ -279,6 +279,20 @@ func qoderErrorDiagnosis(err error) (message, kind string) {
 	return msg, k
 }
 
+// FirstByteTimeout exposes the first-frame allowance to other handlers.
+func (p *ProxyHandler) FirstByteTimeout() time.Duration { return p.qoderFirstByteTimeout() }
+
+// IdleTimeout exposes the idle allowance to other handlers.
+func (p *ProxyHandler) IdleTimeout() time.Duration { return p.qoderIdleTimeout() }
+
+// qoderRegion reports the configured upstream region.
+func (p *ProxyHandler) qoderRegion() string {
+	if r := strings.TrimSpace(os.Getenv("LINTASAN_QODER_REGION")); r != "" {
+		return r
+	}
+	return "global"
+}
+
 // qoderIdleTimeout is the per-request idle allowance, overridable by an operator.
 //
 // The default is deliberately short relative to a normal turn: a stream that has

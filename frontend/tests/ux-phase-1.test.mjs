@@ -123,6 +123,7 @@ test('sidebar intent groups preserve every dashboard route and progressive discl
   const expected = [
     '/dashboard', '/dashboard/quickstart', '/dashboard/playground', '/dashboard/connections',
     '/dashboard/models', '/dashboard/providers', '/dashboard/routing', '/dashboard/analytics', '/dashboard/keys',
+    '/dashboard/qoder-connections',
     '/dashboard/teams', '/dashboard/users', '/dashboard/webhooks', '/dashboard/memory',
     '/dashboard/mcp', '/dashboard/translator', '/dashboard/plugins', '/dashboard/backup',
     '/dashboard/migrate', '/dashboard/experimental', '/dashboard/settings', '/dashboard/docs',
@@ -136,6 +137,12 @@ test('sidebar intent groups preserve every dashboard route and progressive discl
   assert.equal(groupIsInitiallyOpen('Configure', '/dashboard/memory'), true);
   assert.equal(routeIsActive('/dashboard/connections', '/dashboard/discover'), true);
   assert.equal(routeIsActive('/dashboard/analytics', '/dashboard/logs'), true);
+  // Qoder Connections lives in Build and must be reachable from the sidebar.
+  assert.equal(
+    navigationGroups.find(group => group.label === 'Build')
+      ?.items.some(item => item.path === '/dashboard/qoder-connections'),
+    true,
+  );
 });
 
 test('command search returns only real destinations and matches intent metadata', () => {
