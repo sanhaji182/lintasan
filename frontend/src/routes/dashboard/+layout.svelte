@@ -14,7 +14,6 @@ import { page } from '$app/state';
     '/dashboard/models': 'Models',
     '/dashboard/providers': 'Provider Catalog',
     '/dashboard/experimental': 'Experimental',
-    '/dashboard/experimental/hoplite': 'Hoplite Cloud Agent',
     '/dashboard/discover': 'Discover',
     '/dashboard/routing': 'Routing',
     '/dashboard/fallback': 'Fallback',

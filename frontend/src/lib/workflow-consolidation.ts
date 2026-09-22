@@ -1,4 +1,4 @@
-export type CallableKind = 'route' | 'cloud_agent' | 'provider';
+export type CallableKind = 'route' | 'provider';
 
 export type CallableModel = {
   rowKey: string;
@@ -70,29 +70,21 @@ export function buildCallableCatalog(input: CatalogInput): CallableModel[] {
     const id = clean(combo.name) || clean(combo.provider);
     if (!id) continue;
     const entries = Array.isArray(combo.entries) ? combo.entries : [];
-    const cloud = entries.some((entry: any) => String(entry.model || '').startsWith('hoplite-'));
     push({ id, label: id, kind: 'route', route: (combo.models || entries.map((e: any) => e.model)).filter(Boolean).join(' → ') || null,
-      provider: cloud ? 'Cloud Agent combo' : 'Combo', account: null, connectionId: null, health: 'configured',
-      supportsStreaming: cloud ? false : null, contextWindow: null, price: null, capabilities: [] });
+      provider: 'Combo', account: null, connectionId: null, health: 'configured',
+      supportsStreaming: null, contextWindow: null, price: null, capabilities: [] });
   }
 
-  const models = [...(input.models || [])].sort((a, b) => {
-    const ac = a.provider_kind === 'cloud_agent' || String(a.id || '').startsWith('hoplite-') ? 0 : 1;
-    const bc = b.provider_kind === 'cloud_agent' || String(b.id || '').startsWith('hoplite-') ? 0 : 1;
-    return ac - bc;
-  });
+  const models = [...(input.models || [])];
   for (const model of models) {
     const id = clean(model.id) || clean(model.model_id);
     if (!id) continue;
-    // Cloud catalog records may omit connection_id while still carrying the
-    // authoritative account/connection identity used by model-test routing.
-    const connId = clean(model.connection_id) || clean(model.hoplite_account_id);
+    const connId = clean(model.connection_id);
     const conn = connId ? connections.get(connId) : null;
-    const cloud = model.provider_kind === 'cloud_agent' || conn?.provider_kind === 'cloud_agent' || id.startsWith('hoplite-');
     const rawCaps = model.capabilities;
     const capabilities = Array.isArray(rawCaps) ? rawCaps.map(String) : [];
-    push({ id, label: clean(model.display_name) || clean(model.model_name) || id, kind: cloud ? 'cloud_agent' : 'provider',
-      route: null, provider: clean(model.owned_by) || clean(conn?.format), account: clean(conn?.name) || (cloud ? connId : null), connectionId: connId,
+    push({ id, label: clean(model.display_name) || clean(model.model_name) || id, kind: 'provider',
+      route: null, provider: clean(model.owned_by) || clean(conn?.format), account: clean(conn?.name) || connId, connectionId: connId,
       health: clean(model.health_status) || clean(conn?.health_status) || (conn && !conn.is_active ? 'inactive' : 'unknown'),
       supportsStreaming: typeof model.supports_streaming === 'boolean' ? model.supports_streaming :
         (typeof conn?.supports_streaming === 'boolean' ? conn.supports_streaming : null),
@@ -125,14 +117,13 @@ export function groupCallableModels(rows: CallableModel[], recent: string[], rec
   const groups = [
     { label: 'Recommended & Recent', items: priority.flatMap(id => rows.filter(row => row.id === id)).filter(row => !used.has(row.id)).map(row => (used.add(row.id), row)) },
     { label: 'Aliases & Combos', items: pick(row => row.kind === 'route') },
-    { label: 'Cloud Agents', items: pick(row => row.kind === 'cloud_agent') },
     { label: 'Provider Models', items: pick(row => row.kind === 'provider') },
   ];
   return groups.filter(group => group.items.length > 0);
 }
 
 export function shouldUseStreaming(model: Pick<CallableModel, 'kind' | 'supportsStreaming'> | undefined): boolean {
-  return model?.kind !== 'cloud_agent' && model?.supportsStreaming !== false;
+  return model?.supportsStreaming !== false;
 }
 
 export function comboOrderFingerprint(combos: Array<{ id: string }>): string {

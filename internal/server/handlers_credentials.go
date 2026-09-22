@@ -22,11 +22,11 @@ type credentialDescriptor struct {
 
 func credentialDescriptors() []credentialDescriptor {
 	descriptors := expprovider.CohortADescriptors()
-	out := make([]credentialDescriptor, 0, len(descriptors)+1)
+	out := make([]credentialDescriptor, 0, len(descriptors))
 	for _, descriptor := range descriptors {
 		out = append(out, credentialDescriptor{Name: descriptor.Name, EnvVar: descriptor.AuthEnvVar})
 	}
-	return append(out, credentialDescriptor{Name: "hoplite", EnvVar: "HOPLITE_API_KEY"})
+	return out
 }
 
 func findCredentialDescriptor(name string) *credentialDescriptor {

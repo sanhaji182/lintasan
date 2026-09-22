@@ -31,42 +31,36 @@ import (
 )
 
 type Server struct {
-	cfg                 *config.Config
-	db                  *db.DB
-	mux                 *http.ServeMux
-	proxy               *ProxyHandler
-	memHandler          *MemoryHandler         // vector memory API handler
-	mitmProxy           *mitm.MITMProxy        // MITM bridge for IDE interception
-	oauthMgr            *auth.OAuthManager     // OAuth session manager
-	userMgr             *auth.UserManager      // Dashboard user manager
-	authHandler         *auth.AuthHandler      // HTTP auth handlers
-	pluginMgr           *plugin.Manager        // JS plugin engine (also in proxy.pm)
-	discoverer          *discover.Discoverer   // auto model discovery
-	fpScanner           *freeproviders.Scanner // free provider scanner
-	rtkComp             *rtk.Compressor        // RTK token compressor
-	webSearch           *websearch.Engine      // web search engine
-	mcpServer           *mcp.Server            // MCP protocol server
-	mitmOnce            sync.Once              // ensures MITM starts exactly once
-	mitmSecret          string                 // random per-boot MITM bypass secret (empty = disabled)
-	setup               setupState             // bootstrap/active one-way latch
-	metrics             *metrics.Registry      // Prometheus metrics registry (/metrics)
-	startTime           time.Time              // server boot timestamp, used by /health
-	accessLogStore      *logging.LogStore      // in-memory access log ring buffer
-	hopliteSessionStore *SessionStore          // session-based thread continuity tracker
-	hopliteBaseURL      string                 // injectable in tests; defaults to Hoplite public API
-	hopliteHTTPClient   *http.Client           // injectable in tests; bounded by hoplite.Client
-	hoplitePollInterval time.Duration          // injectable in tests; defaults to 2 seconds
-	hopliteProxyTimeout time.Duration          // injectable in tests; defaults to 4 minutes
+	cfg            *config.Config
+	db             *db.DB
+	mux            *http.ServeMux
+	proxy          *ProxyHandler
+	memHandler     *MemoryHandler         // vector memory API handler
+	mitmProxy      *mitm.MITMProxy        // MITM bridge for IDE interception
+	oauthMgr       *auth.OAuthManager     // OAuth session manager
+	userMgr        *auth.UserManager      // Dashboard user manager
+	authHandler    *auth.AuthHandler      // HTTP auth handlers
+	pluginMgr      *plugin.Manager        // JS plugin engine (also in proxy.pm)
+	discoverer     *discover.Discoverer   // auto model discovery
+	fpScanner      *freeproviders.Scanner // free provider scanner
+	rtkComp        *rtk.Compressor        // RTK token compressor
+	webSearch      *websearch.Engine      // web search engine
+	mcpServer      *mcp.Server            // MCP protocol server
+	mitmOnce       sync.Once              // ensures MITM starts exactly once
+	mitmSecret     string                 // random per-boot MITM bypass secret (empty = disabled)
+	setup          setupState             // bootstrap/active one-way latch
+	metrics        *metrics.Registry      // Prometheus metrics registry (/metrics)
+	startTime      time.Time              // server boot timestamp, used by /health
+	accessLogStore *logging.LogStore      // in-memory access log ring buffer
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
 	s := &Server{
-		cfg:                 cfg,
-		db:                  database,
-		mux:                 http.NewServeMux(),
-		metrics:             metrics.NewRegistry(),
-		accessLogStore:      logging.NewLogStore(),
-		hopliteSessionStore: NewSessionStore(30 * time.Minute), // Session TTL = 30m
+		cfg:            cfg,
+		db:             database,
+		mux:            http.NewServeMux(),
+		metrics:        metrics.NewRegistry(),
+		accessLogStore: logging.NewLogStore(),
 	}
 	// Register pull-based metric collectors. These run on every /metrics scrape
 	// and emit only numeric counters/gauges + bounded labels — no secrets.
@@ -189,9 +183,6 @@ func (s *Server) routes() {
 
 	// Register Credential Management API (V1)
 	s.registerCredentialRoutes()
-
-	// Register Experimental Cloud Agent APIs (isolated from LLM routing)
-	s.registerHopliteRoutes()
 
 	// Register competitor-router migration API (9router import, OmniRouter next)
 	s.registerMigrateRoutes()

@@ -26,7 +26,6 @@
     description?: string;
     order: number;
     entries?: Array<{ model: string; connection_ids?: string[] }>;
-    containsCloudAgent?: boolean;
   }
 
   interface Alias {
@@ -220,7 +219,6 @@
         description: c.description || '',
         order: c.order ?? i,
         entries: Array.isArray(c.entries) ? c.entries : [],
-        containsCloudAgent: Array.isArray(c.entries) && c.entries.some((entry: any) => String(entry.model || '').startsWith('hoplite-'))
       })) : [];
       baseStrategies = Object.fromEntries(combos.map(combo => [combo.id, combo.strategy]));
       stagedStrategies = {};
@@ -335,10 +333,6 @@
 
   function updateStrategy(comboId: string, strategy: string) {
     const combo = combos.find(c => c.id === comboId);
-    if (combo?.containsCloudAgent && strategy !== 'priority') {
-      showToast('Cloud Agent combos only support priority/fallback to prevent duplicate jobs', 'error');
-      return;
-    }
     if (combo) combo.strategy = strategy;
     stagedStrategies = { ...stagedStrategies, [comboId]: strategy };
   }
@@ -716,12 +710,6 @@
       </div>
     {/if}
 
-    {#if advertisedModels.some(model => model.provider_kind === 'cloud_agent')}
-      <div style="margin-bottom: 16px; padding: 12px 14px; background: rgba(124,58,237,.08); border: 1px solid rgba(124,58,237,.2); border-radius: 10px;">
-        <div style="font-size: 12px; font-weight: 650; color: #7c3aed;">Cloud Agent model catalog</div>
-        <div style="font-size: 11px; color: var(--color-fg-2); margin-top: 4px;">Project + model targets are available for combo entries. They are non-streaming and only valid with priority/fallback semantics.</div>
-      </div>
-    {/if}
 
     {#if loading}
       <Spinner />
@@ -766,7 +754,6 @@
                   <div class="flex items-center gap-1.5">
                     <Server size={14} style="color: var(--color-primary);" />
                     <span style="font-size: 14px; font-weight: 600; color: var(--color-fg-0);">{combo.provider}</span>
-                    {#if combo.containsCloudAgent}<span class="badge" style="background: rgba(124,58,237,.12); color: #7c3aed;">Cloud Agent · priority only</span>{/if}
                   </div>
                   {#if combo.description}
                     <span style="font-size: 11px; color: var(--color-fg-3);">({combo.description})</span>
@@ -812,7 +799,7 @@
                 onchange={(e) => updateStrategy(combo.id, (e.target as HTMLSelectElement).value)}
               >
                 {#each strategies as s}
-                  <option value={s.value} disabled={combo.containsCloudAgent && s.value !== 'priority'}>{s.label}</option>
+                  <option value={s.value}>{s.label}</option>
                 {/each}
               </select>
 

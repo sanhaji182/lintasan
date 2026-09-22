@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
     data: [
       { id: 'openai-1', name: 'OpenAI Production', base_url: 'https://api.openai.com/v1', format: 'openai', is_active: 1, priority: 1, models_count: 3, api_key: 'sk-secret-one' },
       { id: 'openai-2', name: 'OpenAI Backup', base_url: 'https://api.openai.com/v1', format: 'openai', is_active: 0, priority: 2, models_count: 3, api_key: 'sk-secret-two' },
-      { id: 'hoplite-cloud-agent', name: 'Hoplite Work', base_url: '', format: 'hoplite', is_active: 1, priority: 1, models_count: 21, provider_kind: 'cloud_agent', credential_masked: 'hop_…cret' },
     ],
   };
   if (path === '/api/providers/presets') return { data: [] };
@@ -54,7 +53,6 @@ describe('Connections compact workflow', () => {
     await renderPage();
     await fireEvent.click(screen.getByRole('button', { name: /Inactive 1/i }));
     expect(screen.getByRole('button', { name: /OpenAI, 0 of 1 active/i })).not.toBeNull();
-    expect(screen.queryByRole('button', { name: /Cloud Agent Providers/i })).toBeNull();
     expect(screen.queryByText('OpenAI Backup')).toBeNull();
   });
 
@@ -107,13 +105,5 @@ describe('Connections compact workflow', () => {
     expect(screen.getByRole('button', { name: /Disable All/i })).not.toBeNull();
   });
 
-  it('keeps virtual-provider identity and actions reachable without exposing a plaintext credential', async () => {
-    await renderPage();
-    const summary = screen.getByRole('button', { name: /Cloud Agent Providers/i });
-    await fireEvent.click(summary);
-    expect(screen.getByText('Hoplite Work')).not.toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'More' }));
-    expect(screen.getAllByRole('link', { name: 'Diagnostics' }).some(link => link.getAttribute('href') === '/dashboard/experimental/hoplite?account_id=hoplite-cloud-agent')).toBe(true);
-    expect(document.body.textContent).not.toContain('hop_test');
-  });
+
 });

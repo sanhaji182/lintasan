@@ -27,7 +27,7 @@ test('Quickstart accepts only active healthy connections and callable models', (
       { id: 'ready', name: 'Ready', is_active: 1, health_status: 'healthy' },
     ],
     keys: [{ id: 'key-1', name: 'App', key: 'sk-lintasan-supersecret', is_active: true }],
-    models: [{ id: '' }, { id: 'hoplite-agent/project', provider_kind: 'cloud_agent', connection_id: 'other' }, { id: 'gpt-4o-mini', owned_by: 'Ready', connection_id: 'ready', source: 'discovered' }],
+    models: [{ id: '' }, { id: 'claude-sonnet', connection_id: 'other' }, { id: 'gpt-4o-mini', owned_by: 'Ready', connection_id: 'ready', source: 'discovered' }],
     baseUrl: 'https://lintasan.example/v1',
   });
   assert.equal(state.completedSteps, 5);
@@ -36,9 +36,9 @@ test('Quickstart accepts only active healthy connections and callable models', (
   assert.equal(state.model.label, 'gpt-4o-mini');
 });
 
-test('model recommendation prefers a standard callable model over a long-running cloud agent', () => {
+test('model recommendation prefers a model whose connection is active', () => {
   assert.equal(recommendCallableModel([
-    { id: 'hoplite-agent/project', provider_kind: 'cloud_agent', connection_id: 'hoplite' },
+    { id: 'orphan-model', connection_id: 'not-active' },
     { id: 'deepseek-chat', owned_by: 'DeepSeek', connection_id: 'deepseek', source: 'discovered' },
   ], [{ id: 'deepseek', name: 'DeepSeek', is_active: 1 }])?.id, 'deepseek-chat');
   assert.equal(recommendCallableModel([]), null);
@@ -55,15 +55,6 @@ test('Quickstart does not recommend catalog fallback models unrelated to active 
   assert.equal(state.recommendedModel, null);
 });
 
-test('Quickstart correlates cloud-agent recommendations to the active account', () => {
-  const state = deriveQuickstart({
-    connections: [{ id: 'hoplite-a', name: 'Hoplite A', is_active: 1 }],
-    keys: [],
-    models: [{ id: 'hoplite-agent/other/project', provider_kind: 'cloud_agent', connection_id: 'hoplite-b', source: 'dynamic' }],
-    baseUrl: 'https://lintasan.example/v1',
-  });
-  assert.equal(state.recommendedModel, null);
-});
 
 test('Quickstart finds a callable model on any healthy active connection', () => {
   const state = deriveQuickstart({

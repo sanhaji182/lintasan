@@ -1,11 +1,9 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -68,25 +66,6 @@ func (s *Server) handleGetConnectionBalance(w http.ResponseWriter, r *http.Reque
 		writeBalanceJSON(w, http.StatusBadRequest, map[string]any{"error": "connection id required"})
 		return
 	}
-	if isHopliteConnectionID(id) {
-		account, exists := s.hopliteAccountByID(r.Context(), id)
-		if !exists {
-			writeBalanceJSON(w, http.StatusNotFound, map[string]any{"error": "connection not found"})
-			return
-		}
-		if account.IsActive != 1 {
-			writeBalanceJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "Hoplite account is inactive"})
-			return
-		}
-		key, ok := s.hopliteCredentialForAccount(r.Context(), id)
-		if !ok {
-			writeBalanceJSON(w, http.StatusBadRequest, map[string]any{"error": "no API key available for balance check"})
-			return
-		}
-		writeBalanceJSON(w, http.StatusOK, map[string]any{"data": s.fetchHopliteAccountBalance(r.Context(), id, key)})
-		return
-	}
-
 	// Check cache first
 	balanceCache.RLock()
 	if cached, ok := balanceCache.data[id]; ok && time.Since(cached.fetchedAt) < balanceCacheTTL {
@@ -201,62 +180,10 @@ func (s *Server) handleGetAllBalances(w http.ResponseWriter, r *http.Request) {
 	}
 	wg.Wait()
 
-	// Hoplite accounts are virtual connections backed by separately encrypted credentials.
-	if accounts, err := s.hopliteAccounts(r.Context()); err == nil {
-		for _, account := range accounts {
-			if account.IsActive != 1 {
-				continue
-			}
-			if key, ok := s.hopliteCredentialForAccount(r.Context(), account.ID); ok {
-				results = append(results, result{ID: account.ID, Data: s.fetchHopliteAccountBalance(r.Context(), account.ID, key)})
-			}
-		}
-	}
-
 	if results == nil {
 		results = []result{}
 	}
 	writeBalanceJSON(w, http.StatusOK, map[string]any{"data": results})
-}
-
-func (s *Server) fetchHopliteBalance(ctx context.Context, apiKey string) BalanceInfo {
-	return s.fetchHopliteAccountBalance(ctx, "", apiKey)
-}
-
-func (s *Server) fetchHopliteAccountBalance(ctx context.Context, accountID, apiKey string) BalanceInfo {
-	usage, err := s.newHopliteClient(apiKey, 10*time.Second).GetBillingUsage(ctx)
-	info := BalanceInfo{ProviderType: "hoplite", Currency: "credits", UpdatedAt: time.Now().UTC().Format(time.RFC3339)}
-	if err != nil {
-		info.Error = "billing details unavailable via Hoplite API key"
-		return info
-	}
-	info.Balance = fmt.Sprintf("%.2f credits", usage.RemainingCredits)
-	info.TotalUsed = fmt.Sprintf("%.2f credits", usage.UsedCredits)
-	info.PlanType = strings.TrimSpace(usage.Plan)
-	if strings.TrimSpace(usage.SubscriptionStatus) != "" {
-		if info.PlanType != "" {
-			info.PlanType += " · "
-		}
-		info.PlanType += usage.SubscriptionStatus
-	}
-	info.ExpiresAt = strings.TrimSpace(usage.ExpiresAt)
-	if info.ExpiresAt == "" {
-		info.ExpiresAt = strings.TrimSpace(usage.NextResetAt)
-	}
-	if expiry, parseErr := time.Parse(time.RFC3339, info.ExpiresAt); parseErr == nil {
-		remaining := time.Until(expiry)
-		if remaining > 0 {
-			info.DaysRemaining = int(math.Ceil(remaining.Hours() / 24))
-		}
-		info.BillingReset = expiry.UTC().Format("Jan 2, 2006")
-	}
-	if usage.GrantedCredits > 0 {
-		info.RateWindows = []RateWindow{{Name: "credits", Used: usage.UsedCredits, Cap: usage.GrantedCredits, Exceeded: usage.RemainingCredits <= 0}}
-	}
-	if accountID != "" {
-		_, _ = s.db.Conn().ExecContext(ctx, `UPDATE hoplite_accounts SET credits_remaining=?,expires_at=?,updated_at=? WHERE id=?`, usage.RemainingCredits, info.ExpiresAt, time.Now().UTC().Format(time.RFC3339), accountID)
-	}
-	return info
 }
 
 // fetchProviderBalance detects the provider from the base URL and fetches balance info.

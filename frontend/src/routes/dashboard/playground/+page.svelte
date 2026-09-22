@@ -32,7 +32,6 @@
   let availableModels = $state<CallableModel[]>([]);
   let recentModels = $state<string[]>([]);
   let selectedCapability = $derived(availableModels.find(model => model.id === selectedModel));
-  let isCloudAgentSelection = $derived(selectedCapability?.kind === 'cloud_agent' || selectedModel.startsWith('hoplite-agent/') || selectedModel.startsWith('hoplite-model/v1/') || selectedModel.startsWith('hoplite-model/v2/'));
 
   async function loadModelsAndCombos() {
     try {
@@ -44,21 +43,12 @@
         api.get<any>('/api/connections').catch(() => ({ data: [] })),
       ]);
       const rawModels = modelsRes?.data || [];
-      // Keep the backend contract explicit here: provider_kind === 'cloud_agent'
-      // is authoritative and preserves non-streaming Cloud Agent dispatch.
-      const hasCloudAgentModels = rawModels.some((model: any) => model.provider_kind === 'cloud_agent');
-      void hasCloudAgentModels;
       const comboRows = combosRes?.data || combosRes?.combos || [];
       const catalogRows = buildCallableCatalog({
         models: rawModels, combos: comboRows,
         aliases: aliasesRes?.data || {}, connections: connectionsRes?.data || [],
       });
-      const cloudComboIDs = new Set(comboRows.filter((combo: any) =>
-        Array.isArray(combo.entries) && combo.entries.some((entry: any) => String(entry.model || '').startsWith('hoplite-'))
-      ).map((combo: any) => combo.name || combo.provider).filter(Boolean));
-      // A combo may not expose entries in /v1/models, so preserve its long-running
-      // capability explicitly; cloud-agent combos must never use SSE streaming.
-      availableModels = catalogRows.map(model => cloudComboIDs.has(model.id) ? { ...model, kind: 'cloud_agent', supportsStreaming: false } : model);
+      availableModels = catalogRows;
       try { recentModels = JSON.parse(localStorage.getItem('lintasan.recentModels') || '[]'); } catch { recentModels = []; }
       const remembered = localStorage.getItem('lintasan.lastModel') || '';
       selectedModel = selectCatalogModel(availableModels, requestedModel, remembered);
@@ -156,9 +146,6 @@
 
       const streamResponse = shouldUseStreaming(selectedCapability);
       const requestHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (isCloudAgentSelection && activeThreadId) {
-        requestHeaders['X-Lintasan-Thread-Id'] = activeThreadId;
-      }
       const res = await api.raw('/v1/chat/completions', {
         method: 'POST',
         headers: requestHeaders,
@@ -174,10 +161,6 @@
       if (!res.ok) {
         const errBody = await res.text();
         throw new Error(errBody || `HTTP ${res.status}`);
-      }
-
-      if (isCloudAgentSelection) {
-        activeThreadId = res.headers.get('X-Lintasan-Thread-Id') || activeThreadId;
       }
 
       if (!streamResponse) {
@@ -361,9 +344,6 @@
             style="display: block; font-size: 11px; font-weight: 600; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px;"
           >Model</div>
           <ModelCombobox models={availableModels} selected={selectedModel} recent={recentModels} recommended={availableModels.find(model => model.kind === 'route')?.id || availableModels.find(model => model.kind === 'provider')?.id} onselect={selectModel} />
-          {#if isCloudAgentSelection}
-            <div class="cloud-agent-note">☁ Cloud Agent · non-streaming · project-scoped · may run for several minutes</div>
-          {/if}
         </div>
 
         <!-- Temperature -->

@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/cost"
 	"github.com/sanhaji182/lintasan-go/internal/discover"
 	"github.com/sanhaji182/lintasan-go/internal/errfmt"
-	"github.com/sanhaji182/lintasan-go/internal/hoplite"
 	"github.com/sanhaji182/lintasan-go/internal/provider"
 )
 
@@ -413,37 +411,7 @@ func truncateBody(b []byte, n int) string {
 func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request) {
 	var in map[string]any
 	json.NewDecoder(r.Body).Decode(&in)
-	// Hoplite is virtual and returns a standard connection-test envelope so the
-	// Connections page can show status/count instead of "unknown".
-	if id, _ := in["id"].(string); isHopliteConnectionID(id) {
-		account, exists := s.hopliteAccountByID(r.Context(), id)
-		if !exists || account.IsActive != 1 {
-			writeJSONStatus(w, http.StatusServiceUnavailable, map[string]any{"error": "Hoplite account is inactive or unavailable"})
-			return
-		}
-		key, ok := s.hopliteCredentialForAccount(r.Context(), id)
-		if !ok {
-			writeJSONStatus(w, http.StatusPreconditionFailed, map[string]any{"error": "Hoplite credential is not configured"})
-			return
-		}
-		client := s.newHopliteClient(key, 0)
-		started := time.Now()
-		projects, _, err := client.ListProjects(r.Context())
-		now := time.Now().UTC().Format(time.RFC3339)
-		if err != nil {
-			_, _ = s.db.Conn().Exec(`UPDATE hoplite_accounts SET health_status='unhealthy',last_tested_at=?,last_error=? WHERE id=?`, now, "connection test failed", id)
-			writeHopliteError(w, err)
-			return
-		}
-		_, _ = s.db.Conn().Exec(`UPDATE hoplite_accounts SET health_status='healthy',last_tested_at=?,last_error='' WHERE id=?`, now, id)
-		writeJSON(w, map[string]any{
-			"success": true, "message": "Hoplite connected",
-			"latency_ms":    time.Since(started).Milliseconds(),
-			"models_count":  len(projects) * (len(hoplite.Models()) + 1),
-			"project_count": len(projects), "thread_create": "not_tested",
-		})
-		return
-	}
+	// Hoplite branch removed 2026-09-22 (Cloud Agent retired).
 	base, _ := in["base_url"].(string)
 	if base == "" {
 		base, _ = in["baseUrl"].(string)
@@ -624,13 +592,6 @@ func (s *Server) handleModelTest(w http.ResponseWriter, r *http.Request) {
 		connID, _ = in["connectionId"].(string)
 	}
 	connID = strings.TrimSpace(connID)
-	// Hoplite accounts are virtual connections backed by hoplite_accounts, not
-	// rows in connections. Validate their catalog non-destructively before the
-	// ordinary LLM lookup so a model test can never create an agent thread.
-	if isHopliteConnectionID(connID) {
-		writeJSON(w, s.testHopliteModelCatalog(r.Context(), connID, modelID))
-		return
-	}
 	if connID != "" {
 		row := s.db.Conn().QueryRow(
 			"SELECT id, name, base_url, api_key, COALESCE(oauth_provider,''), format, chat_path, auth_header, auth_prefix, is_active, priority, COALESCE(pool_id,'') FROM connections WHERE id=?",
@@ -661,56 +622,6 @@ func (s *Server) handleModelTest(w http.ResponseWriter, r *http.Request) {
 
 	res := s.testModelOnce(conn, modelID)
 	writeJSON(w, res)
-}
-
-func (s *Server) testHopliteModelCatalog(ctx context.Context, accountID, modelID string) map[string]any {
-	routedAccountID, projectID, selectedModelID, selected, ok := parseHopliteRoutedModelID(modelID)
-	if !ok {
-		return map[string]any{"success": false, "status": "model_not_found", "message": "invalid Hoplite model ID"}
-	}
-	if routedAccountID != accountID {
-		return map[string]any{"success": false, "status": "account_mismatch", "message": "Hoplite model does not belong to the selected account"}
-	}
-	account, exists := s.hopliteAccountByID(ctx, accountID)
-	if !exists || account.IsActive != 1 {
-		return map[string]any{"success": false, "status": "account_unavailable", "message": "Hoplite account is inactive or unavailable"}
-	}
-	if account.HealthStatus == "unhealthy" {
-		return map[string]any{"success": false, "status": "account_unhealthy", "message": "Hoplite account failed its latest health check"}
-	}
-	if account.CreditsRemaining != nil && *account.CreditsRemaining <= 0 {
-		return map[string]any{"success": false, "status": "account_exhausted", "message": "Hoplite account has no remaining credits"}
-	}
-	if account.ExpiresAt != "" {
-		if expiry, err := time.Parse(time.RFC3339, account.ExpiresAt); err == nil && !expiry.After(time.Now()) {
-			return map[string]any{"success": false, "status": "account_expired", "message": "Hoplite account entitlement has expired"}
-		}
-	}
-	key, configured := s.hopliteCredentialForAccount(ctx, accountID)
-	if !configured {
-		return map[string]any{"success": false, "status": "auth_error", "message": "Hoplite credential is not configured"}
-	}
-	started := time.Now()
-	projects, _, err := s.newHopliteClient(key, 3*time.Second).ListProjects(ctx)
-	latency := time.Since(started).Milliseconds()
-	if err != nil {
-		return map[string]any{"success": false, "status": "upstream_error", "latency_ms": latency, "message": "Hoplite project catalog is unavailable"}
-	}
-	projectFound := false
-	for _, project := range projects {
-		if project.ID == projectID {
-			projectFound = true
-			break
-		}
-	}
-	if !projectFound {
-		return map[string]any{"success": false, "status": "model_not_found", "latency_ms": latency, "message": "Hoplite project is not available to this account", "thread_create": "not_tested"}
-	}
-	message := "Hoplite project is available in the account catalog; thread creation was not tested"
-	if selected {
-		message = fmt.Sprintf("Hoplite project and catalog model %q are available; thread creation was not tested", selectedModelID)
-	}
-	return map[string]any{"success": true, "status": "ok", "latency_ms": latency, "message": message, "thread_create": "not_tested"}
 }
 
 // testModelOnce performs the actual single-model chat probe against a resolved
@@ -1029,32 +940,6 @@ func (s *Server) handleModelsSyncByID(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleModelsDiscovered(w http.ResponseWriter, r *http.Request) {
 	connID := r.URL.Query().Get("connection_id")
-	if isHopliteConnectionID(connID) {
-		key, ok := s.hopliteCredentialForAccount(r.Context(), connID)
-		if !ok {
-			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "Hoplite credential is not configured"})
-			return
-		}
-		projects, _, err := s.newHopliteClient(key, 3*time.Second).ListProjects(r.Context())
-		if err != nil {
-			writeHopliteError(w, err)
-			return
-		}
-		out := []map[string]any{}
-		for _, project := range projects {
-			if strings.TrimSpace(project.ID) == "" {
-				continue
-			}
-			projectModelID := hopliteProjectModelIDForAccount(connID, project.ID)
-			out = append(out, map[string]any{"id": projectModelID, "model_id": projectModelID, "model_name": project.Name + " · Project default", "owned_by": "Hoplite Agent", "connection_id": connID, "is_active": 1, "provider_kind": providerKindCloudAgent, "supports_streaming": false, "long_running": true, "project_scoped": true})
-			for _, model := range hoplite.Models() {
-				id := hopliteSelectedModelIDForAccount(connID, project.ID, model.ID)
-				out = append(out, map[string]any{"id": id, "model_id": id, "model_name": model.DisplayName, "owned_by": "Hoplite Agent", "connection_id": connID, "is_active": 1, "provider_kind": providerKindCloudAgent, "supports_streaming": false, "long_running": true, "project_scoped": true})
-			}
-		}
-		writeData(w, out)
-		return
-	}
 	var rows *sql.Rows
 	var err error
 	if connID != "" {

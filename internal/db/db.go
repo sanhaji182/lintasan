@@ -251,15 +251,14 @@ func (d *DB) migrate() error {
 			created_at TEXT DEFAULT (datetime('now', 'localtime')),
 			updated_at TEXT DEFAULT (datetime('now', 'localtime'))
 		)`,
-		`CREATE TABLE IF NOT EXISTS hoplite_accounts (
-			id TEXT PRIMARY KEY, name TEXT NOT NULL, credential_name TEXT NOT NULL UNIQUE,
-			is_active INTEGER NOT NULL DEFAULT 1, health_status TEXT NOT NULL DEFAULT 'unknown',
-			last_tested_at TEXT DEFAULT NULL, last_error TEXT NOT NULL DEFAULT '',
-			credits_remaining REAL DEFAULT NULL, expires_at TEXT NOT NULL DEFAULT '',
-			created_at TEXT DEFAULT (datetime('now', 'localtime')), updated_at TEXT DEFAULT (datetime('now', 'localtime'))
-		)`,
-		`ALTER TABLE hoplite_accounts ADD COLUMN credits_remaining REAL DEFAULT NULL`,
-		`ALTER TABLE hoplite_accounts ADD COLUMN expires_at TEXT NOT NULL DEFAULT ''`,
+		// hoplite_accounts removed 2026-09-22 (Hoplite Cloud Agent retired — it was
+		// never reachable as a routing provider and had no live connection). The CREATE
+		// is gone so a fresh install never grows the table back; this DROP cleans it up
+		// on a deployment that already carries it. Data was dumped to
+		// ~/hoplite-removal-backup/hoplite_accounts-*.sql before removal.
+		//
+		// The migration loop ignores errors, so a repeat run is a harmless no-op.
+		`DROP TABLE IF EXISTS hoplite_accounts`,
 		// Qoder models carry a `price_factor` — a relative Credits-consumption
 		// multiplier published by the vendor (docs.qoder.com "Model Usage Reference
 		// Factor Adjustment Notice": Qwen3.8-Max 0.5x, Auto 0.5x, Ultimate 2x,

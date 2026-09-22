@@ -14,15 +14,13 @@
   import { showToast } from '$lib/toast';
   import { OAUTH_IDE_PRESETS, type OAuthIdePreset } from '$lib/oauthIdePresets';
   import { brandForProvider, logoPaths } from '$lib/oauthIdeBrands';
-  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, Cloud, ShieldAlert, Layers, ChevronRight, ChevronDown, Zap, CheckCircle2, AlertCircle, TriangleAlert } from 'lucide-svelte';
+  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers, ChevronRight, ChevronDown, Zap, CheckCircle2, AlertCircle, TriangleAlert } from 'lucide-svelte';
 
   let connections = $state<any[]>([]);
   let loading = $state(true);
   let error = $state('');
   let showForm = $state(false);
-  let showHopliteAccountForm = $state(false);
-  let hopliteAccountForm = $state({ id: '', name: '', credential: '' });
-  let savingHopliteAccount = $state(false);
+
   let testing = $state<string | null>(null);
 
   // Balance/credit state
@@ -368,7 +366,7 @@
   const groupedConnections = $derived.by(() => {
     const groups = new Map<string, { key: string; label: string; connections: any[]; active: number; totalModels: number; baseURL: string; formats: Set<string> }>();
     for (const conn of sortedConnections) {
-      let key = conn.provider_kind === 'cloud_agent' ? 'cloud-agent-providers' : (conn.pool_id || extractProvider(conn.base_url || ''));
+      let key = conn.pool_id || extractProvider(conn.base_url || '');
       // Split CommandCode into two groups: official /v1/chat/completions vs
       // the alpha /alpha/generate endpoint (same base URL, different protocol).
       if (key.toLowerCase() === 'commandcode') {
@@ -386,7 +384,7 @@
     }
     // Set labels after grouping
     for (const g of groups.values()) {
-      g.label = g.key === 'cloud-agent-providers' ? 'Cloud Agent Providers' : providerDisplayName(g.key, g.connections);
+      g.label = providerDisplayName(g.key, g.connections);
     }
     return [...groups.values()];
   });
@@ -758,27 +756,6 @@
     finally { loading = false; }
   }
 
-  function editHopliteAccount(conn: any) {
-    hopliteAccountForm = { id: conn.id, name: conn.name, credential: '' };
-    showHopliteAccountForm = true;
-  }
-
-  async function saveHopliteAccount() {
-    if (!hopliteAccountForm.name.trim() || (!hopliteAccountForm.id && !hopliteAccountForm.credential.trim())) { showToast('Account name and API key are required', 'error'); return; }
-    savingHopliteAccount = true;
-    try {
-      if (hopliteAccountForm.id) {
-        const body: any = { name: hopliteAccountForm.name.trim() };
-        if (hopliteAccountForm.credential.trim()) body.credential = hopliteAccountForm.credential.trim();
-        await api.patch(`/api/experimental/cloud-agents/hoplite/accounts/${hopliteAccountForm.id}`, body);
-      } else {
-        await api.post('/api/experimental/cloud-agents/hoplite/accounts', { name: hopliteAccountForm.name.trim(), credential: hopliteAccountForm.credential.trim() });
-      }
-      showHopliteAccountForm = false; hopliteAccountForm = { id: '', name: '', credential: '' };
-      await fetchConnections(); fetchBalances(); showToast('Hoplite account saved', 'success');
-    } catch (e: any) { showToast('Failed to save Hoplite account: ' + e.message, 'error'); }
-    finally { savingHopliteAccount = false; }
-  }
 
   async function fetchBalances() {
     balancesLoading = true;
@@ -1269,16 +1246,12 @@
   });
 
   async function deleteConn(id: string) {
-    const conn = connections.find(c => c.id === id);
-    const warning = conn?.provider_kind === 'cloud_agent'
-      ? `Delete Hoplite account “${conn.name}”? This permanently removes its separately encrypted API key and account routing identity.`
-      : 'Delete this connection?';
-    if (!confirm(warning)) return;
+    if (!confirm('Delete this connection?')) return;
     try {
       await api.delete('/api/connections/' + id);
       connections = connections.filter(c => c.id !== id);
       delete balances[id];
-      showToast(conn?.provider_kind === 'cloud_agent' ? 'Hoplite account deleted' : 'Connection deleted', 'success');
+      showToast('Connection deleted', 'success');
     } catch (e: any) { error = e.message; showToast('Delete failed: ' + e.message, 'error'); }
   }
 
@@ -1511,7 +1484,6 @@
         {#if addMenuOpen}
           <div class="conn-dropdown add-menu" role="menu" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeAddMenu(); } }}>
             <button bind:this={firstAddMenuItem} class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; showForm=true; }}><Link2 size={13}/> Provider API</button>
-            <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; hopliteAccountForm={id:'',name:'',credential:''}; showHopliteAccountForm=true; }}><Cloud size={13}/> Cloud Agent / Hoplite</button>
             <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; showCurlImport=true; curlResult=null; }}><Copy size={13}/> Import curl</button>
             <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; presetsExpanded=true; }}><Sparkles size={13}/> Provider preset</button>
           </div>
@@ -1530,14 +1502,6 @@
     </div>
   {/if}
 
-  {#if showHopliteAccountForm}
-    <div class="card mb-5" style="border-color: rgba(139,92,246,.35); background: rgba(139,92,246,.05);">
-      <div class="flex items-center justify-between mb-4"><h3>{hopliteAccountForm.id ? 'Edit Hoplite account' : 'Add Hoplite account'}</h3><button class="btn-secondary" onclick={() => showHopliteAccountForm=false}><X size={14}/> Cancel</button></div>
-      <div class="grid grid-cols-1 md:grid-cols-2" style="gap:12px"><label>Display name<input class="input-field" bind:value={hopliteAccountForm.name} placeholder="Work account" /></label><label>Organization API Key<input class="input-field" type="password" bind:value={hopliteAccountForm.credential} placeholder={hopliteAccountForm.id ? 'Leave blank to keep stored secret' : 'hop_…'} /></label></div>
-      <p style="font-size:12px;color:var(--color-fg-3)">Each account is encrypted separately. A masked secret is never submitted or used as a replacement.</p>
-      <button class="btn-primary" onclick={saveHopliteAccount} disabled={savingHopliteAccount}>{savingHopliteAccount ? 'Saving…' : 'Save Hoplite account'}</button>
-    </div>
-  {/if}
 
   <!-- Create form -->
   {#if showForm}
@@ -2123,10 +2087,6 @@
                 <div class="group-title-col">
                   <div class="group-title-row">
                     <span class="conn-group-label">{group.label}</span>
-                    {#if group.key === 'cloud-agent-providers'}
-                      <span class="badge" style="background: rgba(124,58,237,.12); color: #7c3aed;">Cloud Agent</span>
-                      <a href="/dashboard/experimental/hoplite" class="badge" onclick={(e) => e.stopPropagation()}>Diagnostics</a>
-                    {/if}
                     {#each [...group.formats] as fmt}
                       <span class="badge conn-format-badge">{fmt}</span>
                     {/each}
@@ -2234,7 +2194,7 @@
 
                 {#each visibleConns as conn (conn.id)}
                   <div class="conn-row" class:conn-inactive={!conn.is_active}>
-                    {#if bulkMode && conn.provider_kind !== 'cloud_agent'}
+                    {#if bulkMode}
                       <label class="conn-select" title="Select {conn.name}">
                         <input type="checkbox" aria-label={`Select ${conn.name}`} checked={selectedConnectionIds.has(conn.id)} onchange={() => toggleConnectionSelection(conn.id)} />
                       </label>
@@ -2363,13 +2323,10 @@
                           <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
                             <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; syncModels(conn.id); }}><RefreshCw size={13} /> Sync Models</button>
                             <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}><Cpu size={13} /> View Models</button>
-                            {#if conn.provider_kind === 'cloud_agent'}
-                              <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; editHopliteAccount(conn); }}><Pencil size={13} /> Edit account</button>
-                              <a class="conn-dropdown-item" href={`/dashboard/experimental/hoplite?account_id=${encodeURIComponent(conn.id)}`}><Settings size={13} /> Diagnostics</a>
-                            {:else if !conn.pool_id}
+                            {#if !conn.pool_id}
                               <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={13} /> Edit Pool</button>
                             {/if}
-                            {#if conn.provider_kind !== 'cloud_agent'}<button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={13} /> Copy Full Key</button>{/if}
+                            <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={13} /> Copy Full Key</button>
                             <div class="conn-dropdown-divider"></div>
                             <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}><Trash2 size={13} /> Delete</button>
                           </div>

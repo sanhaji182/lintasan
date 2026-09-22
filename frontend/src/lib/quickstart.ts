@@ -38,7 +38,7 @@ export function recommendCallableModel(models: CallableModel[], connections: Qui
     return Boolean(model.connection_id && activeIDs.has(model.connection_id));
   });
   if (!callable.length) return null;
-  return callable.find(model => model.provider_kind !== 'cloud_agent') || callable[0];
+  return callable[0];
 }
 
 export function buildQuickstartSnippets(input: { baseUrl: string; model: string; gatewayKey: string | null }) {

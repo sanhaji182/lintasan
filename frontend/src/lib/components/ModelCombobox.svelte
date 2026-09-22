@@ -42,7 +42,7 @@
             {#each group.items as model}
               {@const index = flat.findIndex(item => item.id === model.id)}
               <button id={`model-${index}`} type="button" role="option" aria-selected={model.id === selected} class:active={index === activeIndex} onclick={() => choose(model)} onmouseenter={() => activeIndex = index}>
-                <span class="kind">{#if model.kind === 'route'}<Route size={14} />{:else if model.kind === 'cloud_agent'}<Cloud size={14} />{:else}<Server size={14} />{/if}</span>
+                <span class="kind">{#if model.kind === 'route'}<Route size={14} />{:else}<Server size={14} />{/if}</span>
                 <span class="copy"><code>{model.id}</code><small>{[model.account, model.provider, model.health !== 'unknown' ? model.health : null].filter(Boolean).join(' · ') || 'Metadata not reported'}</small></span>
                 {#if model.id === selected}<Check size={14} />{/if}
               </button>

@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,7 +11,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sanhaji182/lintasan-go/internal/combo"
-	"github.com/sanhaji182/lintasan-go/internal/hoplite"
 	"github.com/sanhaji182/lintasan-go/internal/models"
 )
 
@@ -33,10 +30,6 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		Created             int64  `json:"created"`
 		OwnedBy             string `json:"owned_by"`
 		DisplayName         string `json:"display_name,omitempty"`
-		HopliteProjectID    string `json:"hoplite_project_id,omitempty"`
-		HopliteProjectName  string `json:"hoplite_project_name,omitempty"`
-		HopliteAccountID    string `json:"hoplite_account_id,omitempty"`
-		HopliteModelID      string `json:"hoplite_model_id,omitempty"`
 		Provider            string `json:"provider,omitempty"`
 		ContextWindowTokens int    `json:"context_window_tokens,omitempty"`
 		CatalogEligibility  string `json:"catalog_eligibility,omitempty"`
@@ -88,46 +81,6 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 					OwnedBy: p.Name,
 					Source:  "catalog",
 				})
-			}
-		}
-	}
-
-	// Hoplite exposes projects dynamically but currently ships its selectable
-	// model contract in the official app bundle rather than a discovery API.
-	// Each account gets its own namespace so identical project/model names
-	// across accounts stay distinct.
-	if accounts, accountErr := s.hopliteAccounts(r.Context()); accountErr == nil {
-		for _, account := range accounts {
-			if account.IsActive != 1 || account.HealthStatus == "unhealthy" {
-				continue
-			}
-			key, ok := s.hopliteCredentialForAccount(r.Context(), account.ID)
-			if !ok {
-				continue
-			}
-			projects, _, listErr := s.newHopliteClient(key, 3*time.Second).ListProjects(r.Context())
-			if listErr != nil {
-				continue
-			}
-			for _, project := range projects {
-				if strings.TrimSpace(project.ID) == "" {
-					continue
-				}
-				noStreaming := false
-				modelsList = append(modelsList, Model{
-					ID: hopliteProjectModelIDForAccount(account.ID, project.ID), Object: "model", Created: time.Now().Unix(), OwnedBy: "Hoplite Agent", ConnectionID: account.ID, Source: "dynamic",
-					DisplayName: account.Name + " · " + project.Name + " · Project default", HopliteProjectID: project.ID, HopliteProjectName: project.Name, HopliteAccountID: account.ID,
-					CatalogEligibility: "project-default", ProviderKind: "cloud_agent", SupportsStreaming: &noStreaming, LongRunning: true, ProjectScoped: true,
-				})
-				for _, model := range hoplite.Models() {
-					modelsList = append(modelsList, Model{
-						ID: hopliteSelectedModelIDForAccount(account.ID, project.ID, model.ID), Object: "model", Created: time.Now().Unix(), OwnedBy: "Hoplite Agent", ConnectionID: account.ID, Source: "dynamic",
-						DisplayName: account.Name + " · " + project.Name + " · " + model.DisplayName, HopliteProjectID: project.ID, HopliteProjectName: project.Name, HopliteAccountID: account.ID,
-						HopliteModelID: model.ID, Provider: model.Provider, ContextWindowTokens: model.ContextTokens,
-						CatalogEligibility: model.Plan, CatalogRevision: hoplite.ModelCatalogRevision,
-						ProviderKind: "cloud_agent", SupportsStreaming: &noStreaming, LongRunning: true, ProjectScoped: true,
-					})
-				}
 			}
 		}
 	}
@@ -280,33 +233,7 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 	if conns == nil {
 		conns = []ConnResponse{}
 	}
-	// Hoplite is a virtual first-class connection backed by the authoritative
-	// encrypted credential store, so no extra plaintext connection row exists.
-	// It appears once configured (including an invalid credential for diagnostics)
-	// and therefore does not change empty-install connection semantics.
 	rows.Close()
-	// Every Hoplite account is a virtual connection backed by its own encrypted
-	// credential, so each account appears as an independent card.
-	if accounts, accountErr := s.hopliteAccounts(r.Context()); accountErr == nil {
-		for _, account := range accounts {
-			if !account.CredentialSet {
-				continue
-			}
-			modelsCount := 0
-			if key, ok := s.hopliteCredentialForAccount(r.Context(), account.ID); ok {
-				client := s.newHopliteClient(key, 3*time.Second)
-				if projects, _, err := client.ListProjects(r.Context()); err == nil {
-					modelsCount = len(projects) * (len(hoplite.Models()) + 1)
-				}
-			}
-			conns = append(conns, ConnResponse{
-				ID: account.ID, Name: account.Name, BaseURL: "https://api.hoplite.sh", Format: "hoplite-agent",
-				IsActive: account.IsActive, ModelsCount: modelsCount, ProviderKind: providerKindCloudAgent, CredentialLabel: "Organization API Key",
-				CredentialConfigured: account.CredentialSet, CredentialMasked: account.CredentialMasked,
-				SupportsStreaming: false, LongRunning: true, ProjectScoped: true,
-			})
-		}
-	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"data": conns})
@@ -393,12 +320,6 @@ func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, `{"error":"id is required"}`, http.StatusBadRequest)
 		return
 	}
-	if isHopliteConnectionID(id) {
-		r.SetPathValue("id", id)
-		s.handleHopliteAccountDelete(w, r)
-		return
-	}
-
 	_, err := s.db.Conn().Exec("DELETE FROM connections WHERE id = ?", id)
 	if err != nil {
 		http.Error(w, `{"error":"failed to delete connection"}`, http.StatusInternalServerError)
@@ -497,24 +418,6 @@ func (s *Server) handlePatchConnection(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"id is required"}}`, http.StatusBadRequest)
 		return
 	}
-	if isHopliteConnectionID(id) {
-		accountPatch := make(map[string]any, len(raw)-1)
-		for key, value := range raw {
-			if key != "id" {
-				accountPatch[key] = value
-			}
-		}
-		body, err := json.Marshal(accountPatch)
-		if err != nil {
-			writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
-			return
-		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		r.SetPathValue("id", id)
-		s.handleHopliteAccountPatch(w, r)
-		return
-	}
-
 	var updates []string
 	var args []any
 	if name, ok := raw["name"].(string); ok {
@@ -615,10 +518,6 @@ func (s *Server) handleCreateCombo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 		return
 	}
-	if err := validateCloudAgentCombo(s.db.Conn(), input); err != nil {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
 
 	// Get existing combos
 	combosJSON, _ := s.db.GetSetting("combos")
@@ -651,11 +550,6 @@ func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 		return
 	}
-	if err := validateCloudAgentCombo(s.db.Conn(), input); err != nil {
-		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
-		return
-	}
-
 	// Get existing combos
 	combosJSON, _ := s.db.GetSetting("combos")
 	var combos []map[string]any

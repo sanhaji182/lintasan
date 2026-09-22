@@ -205,31 +205,17 @@ describe('callable catalog row identity', () => {
     expect(new Set(rows.map(row => row.rowKey)).size).toBe(2);
   });
 
-  it('preserves authoritative cloud-account identity without connection_id', () => {
-    const rows = buildCallableCatalog({
-      models: [
-        { id: 'hoplite-agent/shared', provider_kind: 'cloud_agent', hoplite_account_id: 'hoplite-cloud-agent', owned_by: 'Hoplite Agent' },
-        { id: 'hoplite-agent/shared', provider_kind: 'cloud_agent', hoplite_account_id: 'hoplite-cloud-agent', owned_by: 'Hoplite Agent' },
-        { id: 'hoplite-agent/shared', provider_kind: 'cloud_agent', hoplite_account_id: 'hoplite-cloud-agent-secondary', owned_by: 'Hoplite Agent' },
-      ],
-    });
-    expect(rows).toHaveLength(2);
-    expect(rows.map(row => row.connectionId)).toEqual(['hoplite-cloud-agent', 'hoplite-cloud-agent-secondary']);
-    expect(rows.map(row => row.account)).toEqual(['hoplite-cloud-agent', 'hoplite-cloud-agent-secondary']);
-    expect(new Set(rows.map(row => row.rowKey)).size).toBe(2);
-  });
-
-  it('keeps route, cloud-agent, and provider identities separate for the same model ID', () => {
+  it('keeps route and provider identities separate for the same model ID', () => {
     const rows = buildCallableCatalog({
       aliases: { same: 'target' },
-      connections: [{ id: 'cloud-account', name: 'Cloud', provider_kind: 'cloud_agent' }],
+      connections: [{ id: 'account-a', name: 'A' }],
       models: [
-        { id: 'same', provider_kind: 'cloud_agent', hoplite_account_id: 'cloud-account' },
+        { id: 'same', connection_id: 'account-b', owned_by: 'Other' },
         { id: 'same', connection_id: 'provider-account', owned_by: 'Provider' },
       ],
     });
     expect(rows).toHaveLength(3);
     expect(new Set(rows.map(row => row.rowKey)).size).toBe(3);
-    expect(rows.map(row => row.kind).sort()).toEqual(['cloud_agent', 'provider', 'route']);
+    expect(rows.map(row => row.kind).sort()).toEqual(['provider', 'provider', 'route']);
   });
 });

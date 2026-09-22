@@ -7,25 +7,22 @@ import {
   sourceFreshness, selectCatalogModel,
 } from '../src/lib/workflow-consolidation.ts';
 
-test('catalog combines aliases, combos, provider models and cloud agents without duplicate callable IDs', () => {
+test('catalog combines aliases, combos and provider models without duplicate callable IDs', () => {
   const rows = buildCallableCatalog({
     aliases: { fast: { model: 'gpt-mini' } },
     combos: [{ id: 'combo-1', name: 'core', strategy: 'priority', models: ['gpt-mini'] }],
     connections: [
       { id: 'openai-1', name: 'OpenAI Prod', is_active: 1, provider_kind: 'llm', health_status: 'healthy' },
-      { id: 'hoplite-account/a', name: 'Hoplite Work', is_active: 1, provider_kind: 'cloud_agent' },
     ],
     models: [
       { id: 'gpt-mini', connection_id: 'openai-1', owned_by: 'openai', context_window_tokens: 128000 },
       { id: 'gpt-mini', connection_id: 'openai-1', owned_by: 'openai' },
-      { id: 'hoplite-agent/a/project', connection_id: 'hoplite-account/a', provider_kind: 'cloud_agent', supports_streaming: false },
     ],
   });
-  assert.deepEqual(rows.map(row => row.id), ['fast', 'core', 'hoplite-agent/a/project', 'gpt-mini']);
+  assert.deepEqual(rows.map(row => row.id), ['fast', 'core', 'gpt-mini']);
   assert.equal(rows.find(row => row.id === 'gpt-mini')?.account, 'OpenAI Prod');
   assert.equal(rows.find(row => row.id === 'gpt-mini')?.contextWindow, 128000);
   assert.equal(rows.find(row => row.id === 'fast')?.route, 'gpt-mini');
-  assert.equal(rows.find(row => row.id === 'hoplite-agent/a/project')?.supportsStreaming, false);
 });
 
 test('catalog preserves authoritative context metadata and legacy compatibility', () => {
@@ -70,21 +67,20 @@ test('fuzzy model search tolerates separators and matches route/account metadata
   assert.equal(filterCallableModels(rows, 'missing').length, 0);
 });
 
-test('picker groups recommended/recent, routes, cloud agents and provider models', () => {
+test('picker groups recommended/recent, routes and provider models', () => {
   const rows = buildCallableCatalog({
     aliases: { fast: 'gpt-mini' }, combos: [], connections: [],
-    models: [{ id: 'hoplite-agent/project', provider_kind: 'cloud_agent' }, { id: 'gpt-mini' }],
+    models: [{ id: 'gpt-mini' }],
   });
   const groups = groupCallableModels(rows, ['gpt-mini'], 'gpt-mini');
-  assert.deepEqual(groups.map(g => g.label), ['Recommended & Recent', 'Aliases & Combos', 'Cloud Agents']);
+  assert.deepEqual(groups.map(g => g.label), ['Recommended & Recent', 'Aliases & Combos']);
   assert.equal(groups[0].items[0].id, 'gpt-mini');
   assert.equal(groups.flatMap(group => group.items).filter(item => item.id === 'gpt-mini').length, 1);
   assert.equal(rememberRecentModel(['a', 'b', 'a'], 'c', 3).join(','), 'c,a,b');
 });
 
-test('cloud-agent direct IDs and cloud-agent combos stay non-streaming', () => {
-  assert.equal(shouldUseStreaming({ id: 'hoplite-agent/project', kind: 'cloud_agent', supportsStreaming: false }), false);
-  assert.equal(shouldUseStreaming({ id: 'agent-combo', kind: 'route', provider: 'Cloud Agent combo', supportsStreaming: false }), false);
+test('streaming is disabled for any capability that declares it unsupported', () => {
+  assert.equal(shouldUseStreaming({ id: 'non-streaming-combo', kind: 'route', supportsStreaming: false }), false);
   assert.equal(shouldUseStreaming({ id: 'gpt-mini', kind: 'provider', supportsStreaming: null }), true);
 });
 
