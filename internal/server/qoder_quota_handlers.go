@@ -251,6 +251,10 @@ func (s *Server) handleQoderConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if !active {
 		resp["hint"] = "set qoder_enabled, provision " + qoder.TemplateEnvVar + ", and restart"
+		// Must write before returning: an early return without writeJSON sends an
+		// empty 200 body, which the dashboard cannot parse and reports as an
+		// unreadable config rather than the `enabled: false` + hint it needs.
+		writeJSON(w, resp)
 		return
 	}
 	resp["region"] = s.proxy.qoderRegion()
