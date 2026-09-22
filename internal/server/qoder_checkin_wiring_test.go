@@ -90,19 +90,50 @@ func TestQoderCampaignsFlagsNonGrantingPromotions(t *testing.T) {
 	}
 }
 
-// TestCheckinHandlerReportsClaimDisabled documents the deliberate product decision
-// in the API surface: there is no claim endpoint, and the response says so.
-func TestCheckinHandlerReportsClaimDisabled(t *testing.T) {
+// TestCheckinHandlerDeclaresClaimGate documents that the claim write is gated.
+//
+// Claiming was measured to WORK on this host (200 status=CLAIMED grantId=...), so a
+// POST route exists — but it is a write, so it defaults to a dry run and is enabled
+// only by the `qoder_checkin_enabled` setting. This test pins that default so a
+// future edit cannot quietly make production claim on every call.
+func TestCheckinHandlerDeclaresClaimGate(t *testing.T) {
 	src, err := os.ReadFile("qoder_checkin_handlers.go")
 	if err != nil {
 		t.Skipf("handler source not readable from test cwd: %v", err)
 	}
 	body := string(src)
-	if !strings.Contains(body, `"claim_endpoint_enabled": false`) {
-		t.Error("the check-in handler must declare claim_endpoint_enabled=false")
+	if !strings.Contains(body, `qoderCheckinSettingKey = "qoder_checkin_enabled"`) {
+		t.Error("the check-in claim gate setting must be named qoder_checkin_enabled")
 	}
-	if strings.Contains(body, `HandleFunc("POST /api/qoder/checkin`) {
-		t.Error("a POST check-in route must not exist unless credit granting is verified for this region")
+	// The toggle must read from settings and fail closed.
+	if !strings.Contains(body, "s.db.GetSetting(qoderCheckinSettingKey)") {
+		t.Error("the gate must be read from settings")
+	}
+	if !strings.Contains(body, `"dry_run": !enabled`) {
+		t.Error("the claim response must report dry_run so a caller cannot mistake a " +
+			"no-op for a completed claim")
+	}
+}
+
+// TestQoderCheckinPostRouteExists is the other half of the 405 guard: the POST must
+// be registered, since a GET-only registration silently 405s every claim.
+func TestQoderCheckinPostRouteExists(t *testing.T) {
+	s, _ := newTestServer(t, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/qoder/checkin", nil)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusMethodNotAllowed {
+		t.Fatal("POST /api/qoder/checkin: 405 — the POST registration is missing from " +
+			"registerParityRoutes; claims would silently never work")
+	}
+	// This harness drives s.mux directly, so authMiddleware is not in the path and a
+	// handled request answers 200. Only 405 (no handler for POST) is a failure here;
+	// the auth boundary itself is covered by security_boundary_test.go.
+	if rec.Code != http.StatusOK && rec.Code != http.StatusUnauthorized {
+		t.Errorf("unexpected status %d for POST /api/qoder/checkin (body: %s)",
+			rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
 }
 

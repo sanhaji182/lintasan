@@ -112,9 +112,13 @@ func TestCheckin_FallsBackToCampaignsWhenDailyMissing(t *testing.T) {
 	}
 }
 
-// --- a VIEW_DETAILS promotion must NOT be reported as claimable credits ---
+// --- a VIEW_DETAILS promotion IS claimable, but is not a credit grant ---
+//
+// Measured: POST /sash/api/v1/me/campaigns/{id}/claim returns 200 status=CLAIMED
+// grantId=... for a VIEW_DETAILS campaign. So claimable must be true. What must stay
+// false is GrantsCredits — the benefit is deferred, not paid at claim time.
 
-func TestCheckin_PromotionIsNotClaimableCredits(t *testing.T) {
+func TestCheckin_PromotionIsClaimableButNotACreditGrant(t *testing.T) {
 	campaigns := `{"claimable":true,"showCampaign":true,"campaigns":[{
 		"campaignId":"cid-2","campaignKey":"act-20260901-493","actionType":"VIEW_DETAILS","claimStatus":"CLAIMABLE",
 		"placements":[{"content":{"en":{"title":"September perk"}}}]}]}`
@@ -122,17 +126,118 @@ func TestCheckin_PromotionIsNotClaimableCredits(t *testing.T) {
 	defer srv.Close()
 
 	st := managerFor(srv).CheckinStatusAt(context.Background(), []string{srv.URL}, "tok")
-	if st.Claimable {
-		t.Error("a VIEW_DETAILS campaign must not make the account claimable for credits")
+	if !st.Claimable {
+		t.Error("upstream accepts a claim for a VIEW_DETAILS campaign, so Claimable must be true")
 	}
-	if st.Supported {
-		t.Error("VIEW_DETAILS is not a credit grant; Supported must be false")
-	}
-	if !strings.Contains(st.Reason, "VIEW_DETAILS") {
-		t.Fatalf("reason should name the actionType so an operator sees why; got %q", st.Reason)
+	if !st.Supported {
+		t.Error("a claimable campaign means the account is supported")
 	}
 	if len(st.Campaigns) != 1 || st.Campaigns[0].GrantsCredits {
-		t.Fatalf("campaign should be reported but flagged non-granting: %+v", st.Campaigns)
+		t.Fatalf("GrantsCredits must stay false for VIEW_DETAILS, so a UI cannot call it a "+
+			"credit grant: %+v", st.Campaigns)
+	}
+}
+
+// --- pickClaimableCampaign prefers a real grant, but falls back to any claimable ---
+
+func TestCheckin_PickClaimablePrefersGrant(t *testing.T) {
+	grant := CheckinCampaign{CampaignKey: "grant", ActionType: CheckinActionClaimBenefit, ClaimStatus: CheckinClaimable, GrantsCredits: true}
+	promo := CheckinCampaign{CampaignKey: "promo", ActionType: "VIEW_DETAILS", ClaimStatus: CheckinClaimable}
+	done := CheckinCampaign{CampaignKey: "done", ActionType: CheckinActionClaimBenefit, ClaimStatus: "CLAIMED", GrantsCredits: true}
+
+	if got := pickClaimableCampaign([]CheckinCampaign{promo, grant}); got == nil || got.CampaignKey != "grant" {
+		t.Fatalf("a CLAIM_BENEFIT campaign must win: %+v", got)
+	}
+	if got := pickClaimableCampaign([]CheckinCampaign{done, promo}); got == nil || got.CampaignKey != "promo" {
+		t.Fatalf("with no grant left, any claimable campaign must be used: %+v", got)
+	}
+	if got := pickClaimableCampaign([]CheckinCampaign{done}); got != nil {
+		t.Fatalf("nothing claimable must return nil, got %+v", got)
+	}
+}
+
+// --- a claim that returns no benefit is a SUCCESS with 0 credits, reported honestly ---
+
+func TestCheckin_ClaimSucceedsWithoutBenefit(t *testing.T) {
+	var posts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			posts = append(posts, r.URL.Path)
+			// The real shape: CLAIMED + grantId, and NO benefit field.
+			_, _ = w.Write([]byte(`{"grantId":"01a0c79e-a9d6-7de7-9bbf-abda11386b44","status":"CLAIMED","replayed":false,"campaignKey":"act-20260901-493"}`))
+			return
+		}
+		switch r.URL.Path {
+		case checkinPathDailyStatus:
+			w.WriteHeader(http.StatusNotFound)
+		case checkinPathCampaigns:
+			_, _ = w.Write([]byte(`{"claimable":true,"campaigns":[{"campaignId":"cid-1","campaignKey":"act-20260901-493","actionType":"VIEW_DETAILS","claimStatus":"CLAIMABLE"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	res, err := managerFor(srv).claimAt(context.Background(), []string{srv.URL}, "tok")
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if len(posts) != 1 {
+		t.Fatalf("expected exactly one POST, got %v", posts)
+	}
+	if res.Status != "claimed" {
+		t.Fatalf("status should be claimed, got %+v", res)
+	}
+	if res.CreditsGranted || res.Credits != 0 {
+		t.Errorf("no benefit means no credits at claim time: %+v", res)
+	}
+	if res.GrantID == "" {
+		t.Error("grantId must be surfaced — it is the only proof the claim was recorded")
+	}
+	if !strings.Contains(res.Message, "deferred") {
+		t.Errorf("the message must explain why no credits arrived, got %q", res.Message)
+	}
+}
+
+// --- a replayed claim is already_claimed, not a fresh success ---
+
+func TestCheckin_ReplayedClaimIsAlreadyClaimed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			_, _ = w.Write([]byte(`{"grantId":"g1","status":"CLAIMED","replayed":true}`))
+			return
+		}
+		switch r.URL.Path {
+		case checkinPathDailyStatus:
+			w.WriteHeader(http.StatusNotFound)
+		case checkinPathCampaigns:
+			_, _ = w.Write([]byte(`{"campaigns":[{"campaignId":"cid-1","campaignKey":"k","actionType":"VIEW_DETAILS","claimStatus":"CLAIMABLE"}]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	res, err := managerFor(srv).claimAt(context.Background(), []string{srv.URL}, "tok")
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if res.Status != "already_claimed" {
+		t.Fatalf("a replayed claim must report already_claimed, got %+v", res)
+	}
+}
+
+// --- claimDecision proceeds on any claimable campaign ---
+
+func TestCheckin_ClaimDecisionAllowsClaimablePromotion(t *testing.T) {
+	st := &CheckinStatus{
+		Claimable: true,
+		Campaigns: []CheckinCampaign{{ActionType: "VIEW_DETAILS", ClaimStatus: CheckinClaimable}},
+	}
+	if d := claimDecision(st); d.Status != "claimable" {
+		t.Fatalf("a claimable promotion must proceed (upstream accepts it), got %+v", d)
 	}
 }
 
@@ -151,22 +256,25 @@ func TestCheckin_EmptyCampaignListExplained(t *testing.T) {
 	}
 }
 
-// --- the guard: no write when nothing grants credits ---
+// --- nothing claimable => no write attempted ---
 
-func TestCheckin_ClaimRefusesWithoutGrantCampaign(t *testing.T) {
-	campaigns := `{"campaigns":[{"campaignId":"cid-2","campaignKey":"act-x","actionType":"VIEW_DETAILS","claimStatus":"CLAIMABLE"}]}`
+func TestCheckin_ClaimRefusesWhenNothingClaimable(t *testing.T) {
+	// Every campaign already claimed: nothing left to claim.
+	campaigns := `{"campaigns":[{"campaignId":"cid-2","campaignKey":"act-x","actionType":"VIEW_DETAILS","claimStatus":"CLAIMED"}]}`
 	var posts []string
 	srv := (&mockCheckin{campaigns: campaigns, daily: false, requireHeader: true, posts: &posts}).server(t)
 	defer srv.Close()
 
 	st := managerFor(srv).CheckinStatusAt(context.Background(), []string{srv.URL}, "tok")
 
-	// The decision that gates the write must be "no_campaign".
 	if d := claimDecision(st); d.Status != "no_campaign" {
-		t.Fatalf("claimDecision should refuse, got %+v", d)
+		t.Fatalf("claimDecision should refuse when nothing is claimable, got %+v", d)
 	}
 	if len(posts) != 0 {
-		t.Fatalf("no POST may be attempted when nothing grants credits; got %v", posts)
+		t.Fatalf("no POST may be attempted when nothing is claimable; got %v", posts)
+	}
+	if !strings.Contains(st.Reason, "CLAIMED") {
+		t.Errorf("the reason should name the campaign state, got %q", st.Reason)
 	}
 }
 

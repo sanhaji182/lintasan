@@ -105,15 +105,24 @@ type CheckinStatus struct {
 	FetchedAt time.Time `json:"fetched_at"`
 }
 
-// CheckinResult is the outcome of a claim attempt (or of a decision not to claim).
+// CheckinResult is the outcome of a claim attempt.
 type CheckinResult struct {
-	Status      string `json:"status"` // claimed | already_claimed | no_campaign | error
-	Credits     int    `json:"credits,omitempty"`
-	CampaignKey string `json:"campaign_key,omitempty"`
-	ExpiresAt   string `json:"expires_at,omitempty"`
-	Message     string `json:"message"`
-	Host        string `json:"host,omitempty"`
-	Retryable   bool   `json:"retryable"`
+	Status string `json:"status"` // claimed | already_claimed | no_campaign | error
+	// Credits is what upstream reported in benefit.amount. It is routinely 0: a
+	// VIEW_DETAILS campaign returns status=CLAIMED with benefit absent, because the
+	// benefit lands when the underlying promotion is fulfilled (e.g. a subscription
+	// is taken), not at claim time.
+	Credits int `json:"credits"`
+	// CreditsGranted is true only when benefit.amount was actually present. It
+	// exists so a caller can say "claimed" and "earned nothing" at the same time
+	// without either being misread as a failure.
+	CreditsGranted bool   `json:"credits_granted"`
+	GrantID        string `json:"grant_id,omitempty"`
+	CampaignKey    string `json:"campaign_key,omitempty"`
+	ExpiresAt      string `json:"expires_at,omitempty"`
+	Message        string `json:"message"`
+	Host           string `json:"host,omitempty"`
+	Retryable      bool   `json:"retryable"`
 }
 
 // placement is one rendering slot of a campaign (POPUP / USAGE ...), carrying
@@ -249,7 +258,11 @@ func (m *SessionManager) probeCheckinHost(ctx context.Context, host, token strin
 			Title:         placementTitle(c.Placements),
 		}
 		st.Campaigns = append(st.Campaigns, out)
-		if out.GrantsCredits && out.ClaimStatus == CheckinClaimable {
+		// Claimable means "upstream will accept a claim", which is true for any
+		// claimable campaign — measured: a VIEW_DETAILS campaign returns
+		// 200 status=CLAIMED. GrantsCredits separately records whether the benefit is
+		// paid now (CLAIM_BENEFIT) or deferred to fulfilment (VIEW_DETAILS).
+		if out.ClaimStatus == CheckinClaimable {
 			st.Claimable = true
 		}
 	}
@@ -259,19 +272,24 @@ func (m *SessionManager) probeCheckinHost(ctx context.Context, host, token strin
 		return st, true
 	}
 
-	// Reachable, but nothing that grants credits. Distinguish "promotion only" from
-	// "empty list": the operator response differs and a blank panel would hide both.
+	// Reachable, but nothing is claimable right now. Distinguish "promotion already
+	// claimed" from "empty list": the operator response differs, and a blank panel
+	// would hide both.
 	if len(st.Campaigns) == 0 {
 		st.Reason = "no check-in campaigns are exposed for this account on " + host
 	} else {
-		kinds := make([]string, 0, len(st.Campaigns))
-		for _, c := range st.Campaigns {
-			kinds = append(kinds, c.ActionType+"/"+c.ClaimStatus)
-		}
-		st.Reason = "campaigns are present but none grants credits (" +
-			strings.Join(kinds, ", ") + "); only " + CheckinActionClaimBenefit + " campaigns do"
+		st.Reason = "no campaign is claimable right now (" + st.campaignSummary() + ")"
 	}
 	return st, true
+}
+
+// campaignSummary renders the campaign states compactly for a Reason string.
+func (st *CheckinStatus) campaignSummary() string {
+	kinds := make([]string, 0, len(st.Campaigns))
+	for _, c := range st.Campaigns {
+		kinds = append(kinds, c.ActionType+"/"+c.ClaimStatus)
+	}
+	return strings.Join(kinds, ", ")
 }
 
 // placementTitle extracts human-readable campaign copy, preferring English.
@@ -356,10 +374,21 @@ func (m *SessionManager) CheckinStatusFor(ctx context.Context, credential string
 
 // ClaimCheckin performs the claim for one credential.
 //
-// Refuses to act when no CLAIM_BENEFIT campaign is claimable: claiming a
-// VIEW_DETAILS promotion would be a write with no benefit, and reporting success
-// for it would be a lie. Those states return Retryable=false — they do not clear on
-// retry, they clear when the campaign changes.
+// MEASURED BEHAVIOUR (2026-09-22, all nine accounts, global region):
+//
+//	POST /sash/api/v1/me/campaigns/{id}/claim -> 200
+//	{"grantId":"...","status":"CLAIMED","replayed":false,...,"benefit":absent}
+//
+// So a claim SUCCEEDS for a campaign whose actionType is VIEW_DETAILS. The vendor's
+// own growth page claims exactly this way, and the response carries no `benefit`
+// field — the entitlement is recorded by grantId and the credits land when the
+// underlying promotion is fulfilled (e.g. a Pro subscription is taken), not at
+// claim time.
+//
+// This is why the claim is attempted for any CLAIMABLE campaign rather than only
+// for CLAIM_BENEFIT ones: gating on CLAIM_BENEFIT would refuse a claim that upstream
+// accepts. The absence of `benefit` is reported honestly via CreditsGranted, so a
+// caller can show "claimed" and "no credits at claim time" at once.
 func (m *SessionManager) ClaimCheckin(ctx context.Context, credential string) (*CheckinResult, error) {
 	st, err := m.CheckinStatusFor(ctx, credential)
 	if err != nil {
@@ -368,73 +397,82 @@ func (m *SessionManager) ClaimCheckin(ctx context.Context, credential string) (*
 	if decision := claimDecision(st); decision.Status == "no_campaign" {
 		return decision, nil
 	}
-
 	sess, err := m.session(ctx, credential)
 	if err != nil {
 		return nil, err
 	}
-	token := sess.Identity.SecurityOauthToken
+	return m.claimWithStatus(ctx, st, sess.Identity.SecurityOauthToken), nil
+}
+
+// claimWithStatus performs the claim for an already-resolved status and token.
+//
+// Split out so tests can drive the claim against a stub host (via CheckinStatusAt)
+// without a real credential.
+func (m *SessionManager) claimWithStatus(ctx context.Context, st *CheckinStatus, token string) *CheckinResult {
 	res := &CheckinResult{Host: st.Host}
 
-	// Prefer the daily endpoint when it exists; otherwise claim the campaign.
+	// Prefer the daily endpoint when it exists (CN region); otherwise claim the
+	// campaign, which is the only route that exists on the global host.
 	if st.DailyEndpointAvailable {
 		code, raw, err := m.checkinRequest(ctx, http.MethodPost, st.Host, checkinPathDailyClaim, token, map[string]any{})
 		if err != nil {
-			return nil, err
+			res.Status = "error"
+			res.Message = err.Error()
+			res.Retryable = true
+			return res
 		}
 		switch code {
 		case http.StatusConflict: // 409 = already claimed today (idempotent)
 			res.Status = "already_claimed"
 			res.Message = "already claimed today"
-			return res, nil
+			return res
 		case http.StatusOK:
 			var d struct {
-				Success       bool `json:"success"`
-				RewardCredits int  `json:"rewardCredits"`
+				RewardCredits int `json:"rewardCredits"`
 			}
 			if json.Unmarshal(raw, &d) == nil {
 				res.Status = "claimed"
 				res.Credits = d.RewardCredits
+				res.CreditsGranted = d.RewardCredits > 0
 				res.Message = fmt.Sprintf("claimed +%d credits", d.RewardCredits)
-				return res, nil
+				return res
 			}
 		case http.StatusUnauthorized:
 			res.Status = "error"
 			res.Message = "credential rejected by the check-in host"
-			return res, nil
+			return res
 		}
 	}
 
-	// Campaigns claim.
-	var target *CheckinCampaign
-	for i := range st.Campaigns {
-		c := &st.Campaigns[i]
-		if c.GrantsCredits && c.ClaimStatus == CheckinClaimable {
-			target = c
-			break
-		}
-	}
+	// Campaigns claim: pick the claimable campaign. Prefer one that grants credits
+	// outright, then fall back to any claimable campaign — an accepted claim is a
+	// real result even when its benefit is deferred.
+	target := pickClaimableCampaign(st.Campaigns)
 	if target == nil {
 		res.Status = "no_campaign"
 		res.Message = "no claimable campaign"
-		return res, nil
+		return res
 	}
 
 	code, raw, err := m.checkinRequest(ctx, http.MethodPost, st.Host,
 		fmt.Sprintf(checkinPathCampaignClaim, target.CampaignID), token, nil)
 	if err != nil {
-		return nil, err
+		res.Status = "error"
+		res.Message = err.Error()
+		res.Retryable = true
+		return res
 	}
 	if code != http.StatusOK {
 		res.Status = "error"
 		res.Message = fmt.Sprintf("claim failed with HTTP %d: %s", code, truncateForMessage(string(raw), 200))
 		res.Retryable = code >= 500
-		return res, nil
+		return res
 	}
 
 	var cr struct {
 		Status   string `json:"status"`
 		Replayed bool   `json:"replayed"`
+		GrantID  string `json:"grantId"`
 		Benefit  *struct {
 			Amount int `json:"amount"`
 		} `json:"benefit"`
@@ -443,35 +481,80 @@ func (m *SessionManager) ClaimCheckin(ctx context.Context, credential string) (*
 	if json.Unmarshal(raw, &cr) != nil {
 		res.Status = "error"
 		res.Message = "unrecognised claim response"
-		return res, nil
+		return res
 	}
 
 	res.CampaignKey = target.CampaignKey
+	res.GrantID = cr.GrantID
 	res.ExpiresAt = cr.ExpiresAt
 	if cr.Replayed {
 		res.Status = "already_claimed"
-		res.Message = "already claimed today (idempotent)"
-		return res, nil
+		res.Message = "already claimed (idempotent)"
+		return res
 	}
+	if cr.Status != "CLAIMED" {
+		res.Status = "error"
+		res.Message = "unexpected claim status: " + cr.Status
+		return res
+	}
+
 	res.Status = "claimed"
 	if cr.Benefit != nil {
 		res.Credits = cr.Benefit.Amount
+		res.CreditsGranted = cr.Benefit.Amount > 0
+		res.Message = fmt.Sprintf("claimed +%d credits (%s)", cr.Benefit.Amount, target.CampaignKey)
+	} else {
+		// The honest message for the common case: the claim is recorded upstream
+		// (grantId) but no credits arrived, because the benefit is deferred.
+		res.Message = fmt.Sprintf("claimed %s — no credits at claim time (benefit is deferred to fulfilment)", target.CampaignKey)
 	}
-	res.Message = fmt.Sprintf("claimed +%d credits (%s)", res.Credits, target.CampaignKey)
-	return res, nil
+	return res
+}
+
+// claimAt is the test-facing entry point: resolve state from the given hosts, then
+// claim if anything is claimable.
+func (m *SessionManager) claimAt(ctx context.Context, hosts []string, token string) (*CheckinResult, error) {
+	st := m.CheckinStatusAt(ctx, hosts, token)
+	if decision := claimDecision(st); decision.Status == "no_campaign" {
+		return decision, nil
+	}
+	return m.claimWithStatus(ctx, st, token), nil
+}
+
+// pickClaimableCampaign chooses which campaign to claim.
+//
+// A CLAIM_BENEFIT campaign is preferred because its benefit is granted immediately.
+// Failing that, ANY claimable campaign is returned: upstream accepts a claim for a
+// VIEW_DETAILS campaign and records a grantId, so refusing it would understate what
+// the account can do.
+func pickClaimableCampaign(campaigns []CheckinCampaign) *CheckinCampaign {
+	var fallback *CheckinCampaign
+	for i := range campaigns {
+		c := &campaigns[i]
+		if c.ClaimStatus != CheckinClaimable {
+			continue
+		}
+		if c.GrantsCredits {
+			return c
+		}
+		if fallback == nil {
+			fallback = c
+		}
+	}
+	return fallback
 }
 
 // claimDecision encodes what a claim WOULD do, without performing it.
 //
-// Exists so "should we write?" is a testable function rather than a condition
-// buried inside the claim flow, and so no caller can POST when nothing grants
-// credits.
+// A claimable campaign is enough to proceed — including a VIEW_DETAILS one, since
+// upstream accepts that claim (measured: 200 status=CLAIMED grantId=...). Only
+// "nothing claimable" refuses.
 func claimDecision(st *CheckinStatus) *CheckinResult {
 	res := &CheckinResult{Retryable: false}
 	if st != nil {
 		res.Host = st.Host
 	}
-	if st == nil || !st.Supported || !st.Claimable {
+	if st == nil || !st.Claimable {
 		res.Status = "no_campaign"
 		res.Message = "no claimable check-in campaign for this account"
 		if st != nil && st.Reason != "" {
@@ -480,7 +563,7 @@ func claimDecision(st *CheckinStatus) *CheckinResult {
 		return res
 	}
 	res.Status = "claimable"
-	res.Message = "a claimable credit campaign exists"
+	res.Message = "a claimable campaign exists"
 	return res
 }
 

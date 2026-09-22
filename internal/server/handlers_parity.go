@@ -49,11 +49,18 @@ func (s *Server) registerParityRoutes() {
 	s.mux.HandleFunc("GET /api/qoder/config", s.handleQoderConfig)
 	s.mux.HandleFunc("GET /api/qoder/quota", s.handleQoderQuota)
 	s.mux.HandleFunc("GET /api/qoder/quota/{connection_id}", s.handleQoderQuota)
-	// Check-in / campaign visibility. Read-only by design: the global region has no
-	// credit-granting check-in endpoint, so no claim control is exposed. See
-	// qoder_checkin_handlers.go.
+	// Check-in / campaign visibility and claiming.
+	//
+	// Measured on this host: POST /sash/api/v1/me/campaigns/{id}/claim returns 200
+	// status=CLAIMED grantId=..., so claiming genuinely works. The campaign currently
+	// on offer (act-20260901-493, actionType VIEW_DETAILS) pays no credits at claim
+	// time — its benefit lands when a Pro/Pro+ subscription is taken. The POST route
+	// is therefore gated by the `qoder_checkin_enabled` setting and dry-runs by
+	// default. See qoder_checkin_handlers.go.
 	s.mux.HandleFunc("GET /api/qoder/checkin", s.handleQoderCheckin)
 	s.mux.HandleFunc("GET /api/qoder/checkin/{connection_id}", s.handleQoderCheckin)
+	s.mux.HandleFunc("POST /api/qoder/checkin", s.handleQoderCheckin)
+	s.mux.HandleFunc("POST /api/qoder/checkin/{connection_id}", s.handleQoderCheckin)
 	s.mux.HandleFunc("GET /api/qoder/campaigns", s.handleQoderCampaigns)
 	s.mux.HandleFunc("GET /api/audit", s.handleAudit)
 	s.mux.HandleFunc("GET /api/features", s.handleFeatures)
