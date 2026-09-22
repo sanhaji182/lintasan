@@ -5,7 +5,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
-  import { TestTube2, RefreshCw, CheckCircle2, AlertTriangle, TrendingDown, Coins, X, Settings, CloudOff } from 'lucide-svelte';
+  import { TestTube2, RefreshCw, CheckCircle2, AlertTriangle, TrendingDown, Coins, X, Settings, CloudOff, Plus } from 'lucide-svelte';
 
   type QuotaBucket = { used?: number; total?: number; remaining?: number; unit?: string; percentage?: number };
 
@@ -70,6 +70,29 @@
     };
     note: string;
     data: { connection_id: string; name: string; credits_left: number; models: ModelCostRow[] }[];
+  };
+
+  type BulkAddRow = {
+    credential: string;
+    status: 'added' | 'duplicate' | 'invalid' | 'error';
+    connection_id?: string;
+    name?: string;
+    account?: string;
+    message?: string;
+  };
+
+  type BulkAddResponse = {
+    success: boolean;
+    validated: boolean;
+    summary: {
+      submitted: number;
+      added: number;
+      duplicates: number;
+      invalid: number;
+      failed: number;
+      next_step?: string;
+    };
+    data: BulkAddRow[];
   };
 
   /** True when any account in the list carries bonus credits. */
@@ -150,6 +173,14 @@
   let testResults = $state<Record<string, TestResult>>({});
   let expandedRow = $state<string | null>(null);
   let showingConfig = $state(false);
+
+  // Bulk-add state. Kept separate from `connections` because the panel works before
+  // any connection exists.
+  let showingAddPATs = $state(false);
+  let bulkPats = $state('');
+  let bulkValidating = $state(true);
+  let bulkBusy = $state(false);
+  let bulkResult = $state<BulkAddResponse | null>(null);
   let lastUpdated = $state<Date | null>(null);
 
   // Summary mirrors the API's summary object (`/api/qoder/quota` returns
@@ -346,6 +377,49 @@
     }
   }
 
+  /** How many credentials the paste field currently holds. Mirrors the server's
+   *  splitter so the button label and the submitted count cannot disagree. */
+  function pastedCount(): number {
+    const seen = new Set<string>();
+    for (const t of bulkPats.split(/[\s,;"']+/)) {
+      const v = t.trim();
+      if (v) seen.add(v);
+    }
+    return seen.size;
+  }
+
+  async function submitBulkPats(): Promise<void> {
+    if (bulkBusy || pastedCount() === 0) return;
+    bulkBusy = true;
+    bulkResult = null;
+    try {
+      const res = await api.post<BulkAddResponse>('/api/qoder/credentials', {
+        pats: bulkPats,
+        validate: bulkValidating,
+      });
+      bulkResult = res;
+      const s = res.summary;
+      if (s.added > 0) {
+        // Optimistic copy, then refetch so the table reflects the server, not the
+        // response — the two can differ if another operator added rows meanwhile.
+        showToast(`✅ Added ${s.added} of ${s.submitted}`, 'success');
+        await Promise.all([fetchConnections(), fetchModelCost()]);
+        bulkPats = '';
+      } else if (s.duplicates === s.submitted) {
+        showToast('All credentials were already present', 'info');
+      } else {
+        showToast(`⚠️ Nothing added (${s.invalid} invalid, ${s.failed} failed)`, 'error');
+      }
+    } catch (err) {
+      showToast(
+        `❌ Bulk add failed: ${err instanceof Error ? err.message : 'unknown error'}`,
+        'error',
+      );
+    } finally {
+      bulkBusy = false;
+    }
+  }
+
   function toggleExpanded(connectionId: string): void {
     expandedRow = expandedRow === connectionId ? null : connectionId;
   }
@@ -375,6 +449,9 @@
   <div class="qd-head">
     <h1 class="qd-title">Qoder Connections</h1>
     <div class="qd-actions">
+      <button class="qd-btn qd-btn-ghost" onclick={() => (showingAddPATs = !showingAddPATs)}>
+        <Plus size={16} /> Add PATs
+      </button>
       <button class="qd-btn qd-btn-ghost" onclick={() => (showingConfig = !showingConfig)}>
         {#if showingConfig}
           <X size={16} /> Hide Config
@@ -391,6 +468,113 @@
       </button>
     </div>
   </div>
+
+  <!-- Bulk-add panel. Placed above the table because it is the first thing an
+       operator needs when the pool is empty or needs topping up. -->
+  {#if showingAddPATs}
+    <section class="qd-panel">
+      <h3 class="qd-panel-title"><Plus size={20} /> Add Qoder PATs</h3>
+      <p class="qd-muted qd-sm">
+        Paste Personal Access Tokens — one per line, or separated by commas, semicolons
+        or spaces. Everything else about the connection (base URL, paths, auth header,
+        format, priority) is derived, so a batch is identical to a single add.
+      </p>
+
+      <textarea
+        class="qd-textarea"
+        rows="6"
+        placeholder={"pt-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\npt-yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"}
+        bind:value={bulkPats}
+        disabled={bulkBusy}
+      ></textarea>
+
+      <div class="qd-addrow">
+        <label class="qd-check">
+          <input type="checkbox" bind:checked={bulkValidating} disabled={bulkBusy} />
+          Validate each credential before adding
+        </label>
+        <span class="qd-muted qd-xs">
+          {pastedCount()} credential{pastedCount() === 1 ? '' : 's'} pasted
+        </span>
+        <div class="qd-actions">
+          <button
+            class="qd-btn qd-btn-primary"
+            onclick={submitBulkPats}
+            disabled={bulkBusy || pastedCount() === 0}
+          >
+            {#if bulkBusy}
+              <span class="qd-spin"><RefreshCw size={16} /></span> Adding…
+            {:else}
+              <Plus size={16} /> Add {pastedCount() || ''} PATs
+            {/if}
+          </button>
+          <button
+            class="qd-btn qd-btn-ghost"
+            onclick={() => { bulkPats = ''; bulkResult = null; }}
+            disabled={bulkBusy}
+          >Clear</button>
+        </div>
+      </div>
+
+      {#if bulkValidating}
+        <div class="qd-note qd-muted">
+          Validation runs the real session exchange, so a credential that passes here
+          genuinely works — it is not a format check.
+        </div>
+      {:else}
+        <div class="qd-notice qd-notice-warn">
+          <AlertTriangle size={16} />
+          <span>
+            Validation is off. A credential that cannot authenticate will be added and
+            will fail on every request instead of being reported now.
+          </span>
+        </div>
+      {/if}
+
+      {#if bulkResult}
+        <div class="qd-added">
+          <div class="qd-strong">
+            {bulkResult.summary.added} added ·
+            {bulkResult.summary.duplicates} duplicate ·
+            {bulkResult.summary.invalid} invalid ·
+            {bulkResult.summary.failed} failed
+            <span class="qd-muted">of {bulkResult.summary.submitted} submitted</span>
+          </div>
+          <div class="qd-table-wrap">
+            <table class="qd-table qd-sm">
+              <thead>
+                <tr><th>CREDENTIAL</th><th>STATUS</th><th>NAME</th><th>DETAIL</th></tr>
+              </thead>
+              <tbody>
+                {#each bulkResult.data as r (r.credential)}
+                  <tr>
+                    <td class="qd-mono">{r.credential}</td>
+                    <td>
+                      {#if r.status === 'added'}
+                        <StatusBadge status="success" />
+                      {:else if r.status === 'duplicate'}
+                        <StatusBadge status="pending" />
+                      {:else}
+                        <StatusBadge status="error" />
+                      {/if}
+                      <span class="qd-muted qd-xs">{r.status}</span>
+                    </td>
+                    <td class="qd-mono">{r.name || '–'}</td>
+                    <td class="qd-muted">{r.message || '–'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          {#if bulkResult.summary.added > 0}
+            <div class="qd-note qd-muted">
+              {bulkResult.summary.next_step}
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </section>
+  {/if}
 
   <!-- Config Panel -->
   {#if showingConfig}
@@ -932,6 +1116,25 @@
   .qd-card-bonus { background: linear-gradient(90deg, #f59e0b, #b45309); }
   .qd-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .qd-window { font-size: 12px; color: var(--color-fg-2); margin: 6px 0 12px; }
+  .qd-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 10px 12px;
+    border-radius: 8px;
+    /* Token-based so the field follows the theme; the paste is a PAT, and a
+       light-only textarea in dark mode is where credentials get mistyped. */
+    background: var(--color-bg-card);
+    color: var(--color-fg-0);
+    border: 1px solid var(--color-border);
+    resize: vertical;
+  }
+  .qd-textarea:focus { outline: 2px solid var(--color-primary, #3c50e0); outline-offset: 1px; }
+  .qd-addrow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+  .qd-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--color-fg-1); }
+  .qd-added { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
   .qd-examples { margin: 6px 0 0; padding-left: 18px; }
   .qd-examples li { margin: 2px 0; }
   .qd-chip-off { background: rgba(34, 197, 94, 0.16); color: #15803d; border: 1px solid rgba(34, 197, 94, 0.45); }

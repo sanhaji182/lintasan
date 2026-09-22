@@ -67,6 +67,10 @@ func (s *Server) registerParityRoutes() {
 	// qoder_models_handler.go.
 	s.mux.HandleFunc("GET /api/qoder/models", s.handleQoderModels)
 	s.mux.HandleFunc("GET /api/qoder/models/{connection_id}", s.handleQoderModels)
+	// Bulk-add Qoder PATs. One credential per row is the generic /api/connections
+	// path; this takes a pasted list and derives the identical per-row config. See
+	// qoder_bulk_pat.go.
+	s.mux.HandleFunc("POST /api/qoder/credentials", s.handleQoderBulkAdd)
 	s.mux.HandleFunc("GET /api/audit", s.handleAudit)
 	s.mux.HandleFunc("GET /api/features", s.handleFeatures)
 	s.mux.HandleFunc("GET /api/features/stats", s.handleFeatureStats)

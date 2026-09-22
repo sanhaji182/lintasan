@@ -621,6 +621,24 @@ func (c *CheckinCache) Invalidate(credential string) {
 	delete(c.items, credential)
 }
 
+// IdentityFor resolves the account identity behind a credential.
+//
+// Exported so a caller can identify a credential without digging into the session
+// type — chiefly bulk-add, which labels a new connection from the account itself
+// ("BrendaBrown") rather than inventing a name. Running the real exchange means a
+// successful call is proof the credential works, not merely that it parses.
+//
+// The identity carries nothing sensitive beyond the account name and id; the tokens
+// inside it are never returned to a caller that only needs a label. Callers that do
+// need the session should use CheckinStatusFor or StartChatStream.
+func (m *SessionManager) IdentityFor(ctx context.Context, credential string) (Identity, error) {
+	sess, err := m.session(ctx, credential)
+	if err != nil {
+		return Identity{}, err
+	}
+	return sess.Identity, nil
+}
+
 // truncateForMessage keeps an upstream error readable in a dashboard without
 // pasting a whole HTML body into the UI.
 func truncateForMessage(s string, n int) string {
