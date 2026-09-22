@@ -54,32 +54,48 @@ type ModelDiscount struct {
 	PromoUntil string `json:"promo_until,omitempty"`
 }
 
-// OffPeakDiscounts is the published table.
+// OffPeakDiscounts is the published table, keyed by the upstream model key Lintasan
+// actually receives (not the vendor's display name) so a caller can join straight onto
+// a discovered model.
 //
-// Keys are the upstream model keys Lintasan receives, not the vendor's display names,
-// so a caller can join straight onto a discovered model. Where a temporary promotion
-// zeroes the factor (Qwen3.8-Flash is free until 2026-09-30 23:59 SGT) that is
-// recorded as a PromoNote rather than baked into OffPeakFactor — when the promo ends,
-// only the note is stale, not the arithmetic.
+// Two distinct things are encoded here, and conflating them would misreport cost:
+//
+//   - StandardFactor: the published reference factor, applies around the clock.
+//   - OffPeakFactor: the multiplier during Off-Peak hours. Only Qwen3.8-Max,
+//     Qwen3.7-Max and Qwen3.7-Plus have an off-peak discount ("Other models are not
+//     part of this activity"), so for everything else it EQUALS StandardFactor rather
+//     than being zero — zero would read as "free".
+//
+// Key mapping was verified against two independent sources: the factor notice's model
+// names, and the model list the Qoder API returns for these accounts (which is why
+// keys like `dmodel`/`gmodel`/`qmodel_latest` appear here — those are Qoder's internal
+// keys, not the vendor's marketing names).
 var OffPeakDiscounts = []ModelDiscount{
-	{
-		ModelKey: "qmodel_38max", DisplayName: "Qwen3.8-Max",
-		StandardFactor: 0.50, OffPeakFactor: 0.20,
-	},
+	// --- model tiers ---
+	{ModelKey: "auto", DisplayName: "Auto", StandardFactor: 0.50, OffPeakFactor: 0.50},
+	{ModelKey: "ultimate", DisplayName: "Ultimate", StandardFactor: 2.00, OffPeakFactor: 2.00},
+	{ModelKey: "performance", DisplayName: "Performance", StandardFactor: 1.10, OffPeakFactor: 1.10},
+	{ModelKey: "efficient", DisplayName: "Efficient", StandardFactor: 0.30, OffPeakFactor: 0.30},
+
+	// --- Qwen (the only family with an off-peak discount) ---
+	{ModelKey: "qmodel_38max", DisplayName: "Qwen3.8-Max", StandardFactor: 0.50, OffPeakFactor: 0.20},
 	{
 		ModelKey: "qfmodel", DisplayName: "Qwen3.8-Flash",
 		StandardFactor: 0.10, OffPeakFactor: 0.04,
 		PromoNote:  "free (0.0x) for a limited time; no claim required, and accounts with a zero balance are eligible",
 		PromoUntil: "2026-09-30T23:59:59+08:00",
 	},
-	{
-		ModelKey: "qmodel_37max", DisplayName: "Qwen3.7-Max",
-		StandardFactor: 0.50, OffPeakFactor: 0.10,
-	},
-	{
-		ModelKey: "qmodel_37plus", DisplayName: "Qwen3.7-Plus",
-		StandardFactor: 0.10, OffPeakFactor: 0.04,
-	},
+	{ModelKey: "qmodel_latest", DisplayName: "Qwen3.7-Max", StandardFactor: 0.50, OffPeakFactor: 0.10},
+	{ModelKey: "qmodel", DisplayName: "Qwen3.7-Plus", StandardFactor: 0.10, OffPeakFactor: 0.04},
+
+	// --- other premium models: standard rate around the clock ---
+	{ModelKey: "dmodel", DisplayName: "DeepSeek-V4-Pro", StandardFactor: 0.50, OffPeakFactor: 0.50},
+	{ModelKey: "dfmodel", DisplayName: "DeepSeek-Flash", StandardFactor: 0.10, OffPeakFactor: 0.10},
+	{ModelKey: "gmodel", DisplayName: "GLM-5.3", StandardFactor: 0.80, OffPeakFactor: 0.80},
+	{ModelKey: "gfmodel", DisplayName: "GLM-5.3-Flash", StandardFactor: 0.10, OffPeakFactor: 0.10},
+	{ModelKey: "kmodel_latest", DisplayName: "Kimi-K3", StandardFactor: 1.40, OffPeakFactor: 1.40},
+	{ModelKey: "kmodel", DisplayName: "Kimi-K2.8-Preview", StandardFactor: 0.80, OffPeakFactor: 0.80},
+	{ModelKey: "mmodel", DisplayName: "MiniMax-M3", StandardFactor: 0.20, OffPeakFactor: 0.20},
 }
 
 // FactorForModel returns the published discount entry for an upstream model key.

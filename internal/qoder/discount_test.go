@@ -139,11 +139,28 @@ func TestNextWindowChange(t *testing.T) {
 
 // The published table must stay consistent with the vendor's own numbers.
 func TestOffPeakDiscountTableMatchesPublishedRates(t *testing.T) {
-	want := map[string]struct{ std, off float64 }{
-		"qmodel_38max":  {0.50, 0.20}, // Qwen3.8-Max: 60% off
-		"qfmodel":       {0.10, 0.04}, // Qwen3.8-Flash: 60% off (and free-promo until 09-30)
-		"qmodel_37max":  {0.50, 0.10}, // Qwen3.7-Max: 80% off
-		"qmodel_37plus": {0.10, 0.04}, // Qwen3.7-Plus: 60% off
+	want := map[string]struct {
+		std, off float64
+		discount bool // does this model have an off-peak discount at all?
+	}{
+		// Model tiers, from the Factor Adjustment Notice.
+		"auto":        {0.50, 0.50, false},
+		"ultimate":    {2.00, 2.00, false},
+		"performance": {1.10, 1.10, false},
+		"efficient":   {0.30, 0.30, false},
+		// Qwen: the only family with an off-peak discount.
+		"qmodel_38max":  {0.50, 0.20, true}, // 60% off
+		"qfmodel":       {0.10, 0.04, true}, // 60% off, plus a free promo
+		"qmodel_latest": {0.50, 0.10, true}, // Qwen3.7-Max, 80% off
+		"qmodel":        {0.10, 0.04, true}, // Qwen3.7-Plus, 60% off
+		// Other premium models: standard rate around the clock.
+		"dmodel":        {0.50, 0.50, false},
+		"dfmodel":       {0.10, 0.10, false},
+		"gmodel":        {0.80, 0.80, false},
+		"gfmodel":       {0.10, 0.10, false},
+		"kmodel_latest": {1.40, 1.40, false},
+		"kmodel":        {0.80, 0.80, false},
+		"mmodel":        {0.20, 0.20, false},
 	}
 	for key, w := range want {
 		d, ok := FactorForModel(key)
@@ -159,6 +176,10 @@ func TestOffPeakDiscountTableMatchesPublishedRates(t *testing.T) {
 		}
 		if d.OffPeakFactor > d.StandardFactor {
 			t.Errorf("%s off-peak factor is HIGHER than standard — that is a bug, not a discount", key)
+		}
+		if !w.discount && d.OffPeakFactor != d.StandardFactor {
+			t.Errorf("%s has no published off-peak discount but its factors differ (%v vs %v); "+
+				"an invented discount misreports cost", key, d.StandardFactor, d.OffPeakFactor)
 		}
 	}
 	// The free promotion must be recorded as a note, not as a zeroed factor, so the
