@@ -5,7 +5,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
-  import { TestTube2, RefreshCw, CheckCircle2, AlertTriangle, TrendingDown, Coins, X, Settings, CloudOff, Plus } from 'lucide-svelte';
+  import { TestTube2, RefreshCw, CheckCircle2, AlertTriangle, TrendingDown, Coins, X, Settings, CloudOff, Plus, ChevronRight } from 'lucide-svelte';
 
   type QuotaBucket = { used?: number; total?: number; remaining?: number; unit?: string; percentage?: number };
 
@@ -181,6 +181,31 @@
   let bulkValidating = $state(true);
   let bulkBusy = $state(false);
   let bulkResult = $state<BulkAddResponse | null>(null);
+
+  // The cost table is reference material, not something an operator needs on screen
+  // while working the connection list below it — so it collapses, and the choice is
+  // remembered. Default collapsed: a returning visitor has already read the factors.
+  const COST_PANEL_KEY = 'lintasan_qoder_cost_panel_collapsed';
+  let costCollapsed = $state(true);
+
+  function readCostPanelPref(): void {
+    try {
+      // Absent means first visit → stay collapsed (the default).
+      costCollapsed = localStorage.getItem(COST_PANEL_KEY) !== '0';
+    } catch {
+      // Private mode / storage disabled: keep the in-memory default rather than
+      // throwing on a cosmetic preference.
+    }
+  }
+
+  function toggleCostPanel(): void {
+    costCollapsed = !costCollapsed;
+    try {
+      localStorage.setItem(COST_PANEL_KEY, costCollapsed ? '1' : '0');
+    } catch {
+      // Non-fatal: the toggle still works for this session.
+    }
+  }
   let lastUpdated = $state<Date | null>(null);
 
   // Summary mirrors the API's summary object (`/api/qoder/quota` returns
@@ -441,6 +466,7 @@
     void fetchConnections();
     void fetchConfig();
     void fetchModelCost();
+    readCostPanelPref();
   });
 </script>
 
@@ -677,13 +703,31 @@
     {@const models = distinctModelCosts()}
     {@const w = modelCost.window}
     <div class="qd-panel">
-      <div class="qd-panel-head">
-        <h2 class="qd-panel-title">Credit Cost per Model</h2>
-        <span class="qd-chip" class:qd-chip-off={w?.off_peak_now} class:qd-chip-on={!w?.off_peak_now}>
-          {w?.off_peak_now ? 'OFF-PEAK NOW' : 'REGULAR HOURS'}
+      <!-- The header is the toggle and stays visible when collapsed, so the window
+           state and cheapest-model hint are readable without expanding. -->
+      <button
+        class="qd-panel-toggle qd-panel-head"
+        onclick={toggleCostPanel}
+        aria-expanded={!costCollapsed}
+        aria-controls="qoder-cost-body"
+      >
+        <span class="qd-toggle-lead">
+          <span class="qd-chevron" class:qd-chevron-open={!costCollapsed}>
+            <ChevronRight size={16} />
+          </span>
+          <h2 class="qd-panel-title">Credit Cost per Model</h2>
         </span>
-      </div>
+        <span class="qd-toggle-trail">
+          {#if costCollapsed}
+            <span class="qd-muted qd-xs">{models.length} models · {summary.total_remaining} credits left</span>
+          {/if}
+          <span class="qd-chip" class:qd-chip-off={w?.off_peak_now} class:qd-chip-on={!w?.off_peak_now}>
+            {w?.off_peak_now ? 'OFF-PEAK NOW' : 'REGULAR HOURS'}
+          </span>
+        </span>
+      </button>
 
+      <div id="qoder-cost-body" class="qd-collapsible" class:qd-collapsed={costCollapsed}>
       <div class="qd-window">
         Off-peak <span class="qd-mono">{w?.off_peak_local || w?.off_peak_utc}</span>
         {#if w?.off_peak_now}
@@ -772,6 +816,7 @@
           </ul>
         </div>
       {/if}
+      </div>
     </div>
   {/if}
 
@@ -1115,6 +1160,28 @@
   .qd-card-purple { background: linear-gradient(90deg, #a855f7, #7e22ce); }
   .qd-card-bonus { background: linear-gradient(90deg, #f59e0b, #b45309); }
   .qd-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  /* The panel header doubles as a collapse toggle. Reset the button chrome so it still
+     reads as a heading, and keep a focus ring because it is now interactive. */
+  .qd-panel-toggle {
+    width: 100%;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+  }
+  .qd-panel-toggle:hover .qd-panel-title { text-decoration: underline; text-underline-offset: 3px; }
+  .qd-panel-toggle:focus-visible { outline: 2px solid var(--color-primary, #3c50e0); outline-offset: 3px; border-radius: 6px; }
+  .qd-toggle-lead { display: inline-flex; align-items: center; gap: 6px; }
+  .qd-toggle-trail { display: inline-flex; align-items: center; gap: 8px; }
+  /* .qd-chevron rotates to indicate state. ChevronRight -> down when open. */
+  .qd-chevron { display: inline-flex; transition: transform 0.15s ease; color: var(--color-fg-3); }
+  .qd-chevron-open { transform: rotate(90deg); }
+  .qd-collapsible { display: block; }
+  .qd-collapsed { display: none; }
+  @media (prefers-reduced-motion: reduce) { .qd-chevron { transition: none; } }
   .qd-window { font-size: 12px; color: var(--color-fg-2); margin: 6px 0 12px; }
   .qd-textarea {
     width: 100%;
