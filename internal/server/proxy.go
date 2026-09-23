@@ -1099,8 +1099,11 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			case p.isQoder(conn):
 				// Qoder's frames are enveloped and its failures are in-stream, so this
 				// is the one provider that must be consumed here rather than piped.
+				// The commit gate is passed in: Qoder opens with a role-only chunk
+				// before a refusal can arrive, so writing that chunk would commit the
+				// response and strand the failover.
 				streamBuffer, tokensOut, qCostStream, streamErr =
-					p.streamQoderToOpenAICost(r.Context(), resp.Body, w, flusher, resolvedModel)
+					p.streamQoderToOpenAICost(r.Context(), resp.Body, w, flusher, resolvedModel, commit)
 			case conn.Format == "commandcode":
 				// CommandCode Alpha speaks NDJSON, not OpenAI SSE, so it needs its own
 				// translator. It deliberately does NOT go through the commit gate: the
@@ -1136,9 +1139,16 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 				continue
 			}
 
-			// Committed and successful: the client has the stream. Finish the same
-			// bookkeeping the pre-buffering code did and leave the loop.
-			if commit.Committing() && streamErr == nil {
+			// Committed or completed: the client has (or is about to get) the stream.
+			// Finish the same bookkeeping the pre-buffering code did and leave the loop.
+			if commit.Committing() || streamErr == nil {
+				// A stream that produced only frames the gate held back (a role
+				// preamble, or nothing at all) still has to be released — otherwise
+				// the client gets a silent open-and-close. See streamCommit.Flush.
+				if err := commit.Flush(w, flusher); err != nil {
+					return
+				}
+
 				// Approximate token counts when the provider reported none.
 				if tokensOut == 0 {
 					tokensOut = len(streamBuffer) / 4

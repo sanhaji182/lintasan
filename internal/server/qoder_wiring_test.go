@@ -192,6 +192,14 @@ func TestStreamQoderToOpenAITranslatesFrames(t *testing.T) {
 // already flushed by the time the failure is known, so the only channel left is a
 // typed SSE error frame. A client that gets that can retry; a client that gets a
 // silent empty stream cannot tell refusal from a slow model.
+// TestStreamQoderSurfacesRefusalAsErrorFrame pins the legacy no-candidate-loop
+// entry point: with `commit == nil` the streamer writes the client frame itself, so
+// a caller with nothing to fall back to still gets a diagnosis rather than a bare
+// stream close.
+//
+// The failover path deliberately does NOT behave this way — there the failure is
+// returned and the error frame is written by the caller, after it has decided the
+// attempt cannot be retried. See TestQoderRefusalIsNotWrittenByTheStreamer.
 func TestStreamQoderSurfacesRefusalAsErrorFrame(t *testing.T) {
 	h := newTestProxyHandler(t)
 

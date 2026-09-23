@@ -172,7 +172,9 @@ func (p *ProxyHandler) qoderUpstream(ctx context.Context, conn *Connection, body
 // lets an operator tell "this provider is misconfigured" apart from "this
 // provider is having a bad minute".
 func (p *ProxyHandler) streamQoderToOpenAI(ctx context.Context, streamBody io.ReadCloser, w http.ResponseWriter, flusher http.Flusher, model string) ([]byte, int, error) {
-	buf, chunks, _, err := p.streamQoderToOpenAICost(ctx, streamBody, w, flusher, model)
+	// No commit gate: this entry point has no candidate loop behind it, so it
+	// commits on the first chunk exactly as it always has.
+	buf, chunks, _, err := p.streamQoderToOpenAICost(ctx, streamBody, w, flusher, model, nil)
 	return buf, chunks, err
 }
 
@@ -184,7 +186,14 @@ func (p *ProxyHandler) streamQoderToOpenAI(ctx context.Context, streamBody io.Re
 // out — the same model and prompt cost 4.617 credits on a cold prompt prefix and
 // 0.449 with the prefix cached. Token counts cannot reconstruct that; the reported
 // figure can.
-func (p *ProxyHandler) streamQoderToOpenAICost(ctx context.Context, streamBody io.ReadCloser, w http.ResponseWriter, flusher http.Flusher, model string) ([]byte, int, costSample, error) {
+//
+// `commit` gates every client-visible write when non-nil, which is what makes this
+// provider retryable. Qoder opens its stream with a role-only chunk, and a refusal
+// (code 105) can arrive after it — so writing on the first chunk would commit the
+// response and strand the failover, which is the bug this gate exists to fix. When
+// commit is nil the legacy write-immediately behaviour applies, for callers with no
+// candidate to fall back to.
+func (p *ProxyHandler) streamQoderToOpenAICost(ctx context.Context, streamBody io.ReadCloser, w http.ResponseWriter, flusher http.Flusher, model string, commit *streamCommit) ([]byte, int, costSample, error) {
 	// Qoder turns own the body's lifetime. The idle watchdog detects a stalled
 	// stream by giving up on a blocking Read, and that Read is only released when
 	// the body is closed — so a stall MUST close it, or the reader goroutine stays
@@ -192,13 +201,46 @@ func (p *ProxyHandler) streamQoderToOpenAICost(ctx context.Context, streamBody i
 	// stall path and the normal one.
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer streamBody.Close()
+	// The caller closes the body when it is going to retry (so the read below is
+	// released first); closing twice is harmless, and on the non-retry path this is
+	// the only close.
+	if commit == nil || !commit.Retryable() {
+		defer streamBody.Close()
+	} else {
+		defer func() {
+			if !commit.Retryable() {
+				streamBody.Close()
+			}
+		}()
+	}
 	body := io.Reader(streamBody)
 	reqID := "chatcmpl-" + qoder.NewRequestID()[:12]
 	created := qoder.NowUnix()
 
 	var streamBuffer []byte
 	chunks := 0
+
+	// writeFrame is the single client-write path, so no chunk can bypass the gate.
+	//
+	// `commits` says whether this frame is something a client acts on. Only a frame
+	// that carries content, reasoning or tool calls does; a role-only announcement
+	// does not, and holding it is what keeps a refusal that arrives right afterwards
+	// (the observed code-105 shape) retryable. See streamCommit.DeferFrame.
+	writeFrame := func(frame []byte, commits bool) error {
+		if commit == nil {
+			if _, err := w.Write(frame); err != nil {
+				return err
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return nil
+		}
+		if commits {
+			return commit.WriteFrame(w, flusher, frame)
+		}
+		return commit.DeferFrame(w, flusher, frame)
+	}
 
 	outcome, err := qoder.ConsumeStream(ctx, body, model, func(d qoder.StreamDelta) error {
 		delta := map[string]any{}
@@ -223,11 +265,13 @@ func (p *ProxyHandler) streamQoderToOpenAICost(ctx context.Context, streamBody i
 		if mErr != nil {
 			return nil
 		}
-		w.Write([]byte("data: "))
-		w.Write(raw)
-		w.Write([]byte("\n\n"))
-		if flusher != nil {
-			flusher.Flush()
+		// A frame carrying only a role announcement, a keep-alive or a metadata
+		// update is not something a client acts on, so it is held rather than
+		// committed. Anything with content, reasoning or tool calls is the real
+		// thing and commits — a client that has received it cannot be un-served.
+		commits := d.Content != "" || d.Reasoning != "" || len(d.ToolCalls) > 0
+		if err := writeFrame([]byte("data: "+string(raw)+"\n\n"), commits); err != nil {
+			return err
 		}
 
 		// Accumulate only the user-visible text for the non-streaming cache path.
@@ -237,19 +281,20 @@ func (p *ProxyHandler) streamQoderToOpenAICost(ctx context.Context, streamBody i
 	})
 
 	if err != nil {
-		// Translate the typed upstream error into a client-visible SSE error frame.
-		// The status cannot be changed now — headers were flushed with the first
-		// chunk — so the diagnosis travels in the body, which is the only channel
-		// left open.
-		msg, kind := qoderErrorDiagnosis(err)
-		frame, _ := json.Marshal(map[string]any{
-			"error": map[string]any{"message": msg, "type": kind},
-		})
-		w.Write([]byte("data: "))
-		w.Write(frame)
-		w.Write([]byte("\n\n"))
-		if flusher != nil {
-			flusher.Flush()
+		// With no commit gate this entry point has no candidate to fall back to, so
+		// it reports the failure itself: a diagnosis frame plus a deliberate
+		// terminal, because a silent stream close is indistinguishable from a slow
+		// model. The failover path returns instead and lets its caller decide — see
+		// streamQoderToOpenAICost's `commit` note.
+		if commit == nil {
+			msg, kind := qoderErrorDiagnosis(err)
+			frame, _ := json.Marshal(map[string]any{
+				"error": map[string]any{"message": msg, "type": kind},
+			})
+			_, _ = w.Write([]byte("data: " + string(frame) + "\n\ndata: [DONE]\n\n"))
+			if flusher != nil {
+				flusher.Flush()
+			}
 		}
 		return streamBuffer, chunks, qoderCostSample(outcome), err
 	}
@@ -268,11 +313,10 @@ func (p *ProxyHandler) streamQoderToOpenAICost(ctx context.Context, streamBody i
 		}
 	}
 	raw, _ := json.Marshal(done)
-	w.Write([]byte("data: "))
-	w.Write(raw)
-	w.Write([]byte("\n\ndata: [DONE]\n\n"))
-	if flusher != nil {
-		flusher.Flush()
+	// One frame, not two: the terminal chunk and the [DONE] sentinel together. The
+	// terminal always commits — a completed turn is a served turn.
+	if err := writeFrame([]byte("data: "+string(raw)+"\n\ndata: [DONE]\n\n"), true); err != nil {
+		return streamBuffer, chunks, qoderCostSample(outcome), err
 	}
 	return streamBuffer, chunks, qoderCostSample(outcome), nil
 }

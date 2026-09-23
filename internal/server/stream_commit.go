@@ -53,6 +53,13 @@ import (
 type streamCommit struct {
 	statusWritten bool
 	bodyWritten   bool
+
+	// deferred holds SSE frames that arrived before the response was viable —
+	// role-only chunks, keep-alives, metadata. They are not written yet because
+	// writing would commit, and they are not discarded because a client expects
+	// them. They are flushed, in order, immediately before the first frame that
+	// does commit.
+	deferred []byte
 }
 
 // MarkStatusWritten records that the response status is on the wire.
@@ -99,11 +106,78 @@ func (c *streamCommit) WriteFrame(w http.ResponseWriter, flusher http.Flusher, f
 	if !c.statusWritten {
 		c.FlushHeaders(w, http.StatusOK)
 	}
+	if err := c.writeDeferred(w, flusher); err != nil {
+		return err
+	}
 	if _, err := w.Write(frame); err != nil {
 		return err
 	}
 	if flusher != nil {
 		flusher.Flush()
+	}
+	c.bodyWritten = true
+	return nil
+}
+
+// DeferFrame holds a frame back until something worth committing on arrives.
+//
+// This is the streaming flow-control primitive. A provider that opens a stream with
+// a role-only chunk, a keep-alive, or a metadata event has told the client nothing
+// yet — and if it then fails, the attempt must still be discardable. Holding the
+// frame keeps both properties: the attempt stays retryable, and the client still
+// receives those frames (they are flushed in order by WriteFrame).
+//
+// Once committed this is a straight pass-through.
+func (c *streamCommit) DeferFrame(w http.ResponseWriter, flusher http.Flusher, frame []byte) error {
+	if len(frame) == 0 {
+		return nil
+	}
+	if c.Committing() {
+		return c.WriteFrame(w, flusher, frame)
+	}
+	c.deferred = append(c.deferred, frame...)
+	return nil
+}
+
+// writeDeferred flushes frames held by DeferFrame, before the committing frame.
+func (c *streamCommit) writeDeferred(w http.ResponseWriter, flusher http.Flusher) error {
+	if len(c.deferred) == 0 {
+		return nil
+	}
+	held := c.deferred
+	c.deferred = nil
+	if _, err := w.Write(held); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	return nil
+}
+
+// Abandon discards everything held for an attempt that is being retried.
+//
+// Required for correctness of the failover: the held frames belong to the FAILED
+// candidate. Flushing them into the next candidate's stream would splice two
+// upstreams' output together, and a duplicate role/`id` chunk is exactly the kind of
+// malformed stream that is hard to attribute later.
+func (c *streamCommit) Abandon() { c.deferred = nil }
+
+// Flush releases everything held and marks the response committed.
+//
+// The counterpart to Abandon, and the reason DeferFrame is safe: on a SUCCESSFUL
+// attempt the held frames are exactly what the client should receive, so the caller
+// releases them once the attempt can no longer fail. Without this the gate would
+// hold a healthy stream forever — a bug this method exists to close, caught by
+// TestQoderHealthyStreamCommitsAndDeliversEverything.
+func (c *streamCommit) Flush(w http.ResponseWriter, flusher http.Flusher) error {
+	// A stream that never produced a committing frame still needs its status on the
+	// wire, or the client sees a connection close with no response at all.
+	if !c.statusWritten {
+		c.FlushHeaders(w, http.StatusOK)
+	}
+	if err := c.writeDeferred(w, flusher); err != nil {
+		return err
 	}
 	c.bodyWritten = true
 	return nil
@@ -120,20 +194,8 @@ func pumpStreamToClient(body io.Reader, w http.ResponseWriter, flusher http.Flus
 	var collected []byte
 	buf := make([]byte, 4096)
 	var pending []byte
-	// deferred holds frames received before the response was committed — comments,
-	// keep-alives, metadata. They are not written yet (writing would commit), but
-	// they are also not discarded: once a content frame commits the response they
-	// are flushed FIRST, so a healthy stream's bytes are exactly what the previous
-	// unconditional pump would have emitted.
-	var deferred []byte
 
 	emit := func(frame []byte) error {
-		if len(deferred) > 0 {
-			if werr := commit.WriteFrame(w, flusher, deferred); werr != nil {
-				return werr
-			}
-			deferred = nil
-		}
 		return commit.WriteFrame(w, flusher, frame)
 	}
 
@@ -167,8 +229,12 @@ func pumpStreamToClient(body io.Reader, w http.ResponseWriter, flusher http.Flus
 						return collected, werr
 					}
 				default:
-					// Not worth committing on, and not worth dropping either.
-					deferred = append(deferred, frame...)
+					// Not worth committing on — a comment, keep-alive or metadata
+					// frame. Hand it to the commit gate, which holds it until a frame
+					// that does commit and then flushes it in order.
+					if werr := commit.DeferFrame(w, flusher, frame); werr != nil {
+						return collected, werr
+					}
 				}
 			}
 		}
@@ -299,10 +365,14 @@ func (p *ProxyHandler) handleStreamFailure(f streamFailure, w http.ResponseWrite
 		return false
 	}
 
-	// Nothing written yet: this attempt is discardable. Close the upstream body and
-	// let the candidate loop try the next one.
+	// Nothing written yet: this attempt is discardable. Close the upstream body, drop
+	// anything the failed candidate had held back, and let the candidate loop try the
+	// next one.
 	if f.Body != nil {
 		f.Body.Close()
+	}
+	if f.Commit != nil {
+		f.Commit.Abandon()
 	}
 
 	if !retryableInPrinciple {
