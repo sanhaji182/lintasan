@@ -98,10 +98,21 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 	latency := time.Since(start).Milliseconds()
 
 	if err != nil {
-		msg, _, _ := qoder.DescribeStreamError(err)
+		msg, kind, _ := qoder.DescribeStreamError(err)
+		// An upstream business code is what makes this classifiable; a transport error
+		// has none and must not clear or set a flag.
+		code := ""
+		if ue, ok := err.(*qoder.UpstreamError); ok {
+			code = ue.Code
+		}
+		s.recordAccountErrorFlag(conn.ID, code, modelID, msg)
 		logAttempt(http.StatusBadGateway, msg)
 		fail := qoderProbeFailure(err, latency)
 		fail["http_status"] = resp.StatusCode
+		// Surfaced so the dashboard can show the flag without a second lookup.
+		if kind != "" {
+			fail["error_kind"] = kind
+		}
 		return fail
 	}
 	if !sawContent {
@@ -112,6 +123,9 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 			"message":     "upstream accepted the request but produced no content within the idle window",
 		}
 	}
+
+	// Served: the account is working for this model, so any earlier flag is stale.
+	s.clearAccountErrorFlag(conn.ID)
 
 	// A model test is a REAL request that consumes the account's credits, so it is
 	// recorded like any other turn. It previously left no trace: not in
@@ -130,6 +144,53 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 	s.proxy.logRequestCost(modelID, conn.ID, conn.Name, resp.StatusCode, latency, outcome.InputTokens, outcome.OutputTokens, false, "", "model-test", "probe", cost)
 
 	return qoderProbeResult(outcome, latency, resp.StatusCode)
+}
+
+// ---------------------------------------------------------------------------
+// Account error flags
+// ---------------------------------------------------------------------------
+
+// recordAccountErrorFlag persists the most recent upstream-code refusal for a
+// connection, plus a counter for credit-limit refusals.
+//
+// INFORMATIONAL ONLY. Nothing reads these to route around, skip, or disable an
+// account, and that is a deliberate design decision rather than an omission:
+//
+//   - Measured 2026-09-23: an account at used=300/300 with isQuotaExceeded=true still
+//     served basic models (HTTP 200, real content, ~400 ms) while premium models
+//     returned code 112. A credit-limited account is scoped-down, not dead.
+//   - Auto-skipping on this flag would therefore remove working capacity from the pool,
+//     which is the same mistake `Quota.IsQuotaExceeded` is deliberately not used for.
+//
+// The operator sees the flag and decides, using the existing enable/disable control.
+func (s *Server) recordAccountErrorFlag(connID, code, model, errMsg string) {
+	if connID == "" || code == "" {
+		return
+	}
+	hits := 0
+	if code == qoder.CreditLimitCode {
+		hits = 1
+	}
+	s.db.Conn().Exec(`
+		UPDATE connections
+		SET last_error_code = ?, last_error_at = datetime('now','localtime'),
+		    last_error_model = ?, credit_limit_hits = credit_limit_hits + ?
+		WHERE id = ?`, code, model, hits, connID)
+}
+
+// clearAccountErrorFlag removes the flag after a request the account served.
+//
+// A stale flag is worse than no flag: it would tell an operator to look at an account
+// that has since recovered. Clearing on success is what makes the flag mean "most recent
+// state" rather than "has ever failed".
+func (s *Server) clearAccountErrorFlag(connID string) {
+	if connID == "" {
+		return
+	}
+	s.db.Conn().Exec(`
+		UPDATE connections
+		SET last_error_code = NULL, last_error_model = NULL
+		WHERE id = ? AND last_error_code IS NOT NULL`, connID)
 }
 
 // qoderProbeResult builds the success payload for a model probe.
@@ -198,7 +259,9 @@ func (s *Server) handleQoderQuota(w http.ResponseWriter, r *http.Request) {
 	one := strings.TrimSpace(r.PathValue("connection_id"))
 
 	rows, err := s.db.Conn().Query(`
-		SELECT id, name, api_key, priority, models_count
+		SELECT id, name, api_key, priority, models_count, is_active,
+		       COALESCE(last_error_code,''), COALESCE(last_error_at,''),
+		       COALESCE(last_error_model,''), credit_limit_hits
 		FROM connections
 		WHERE LOWER(format) = 'qoder' AND is_active = 1
 		ORDER BY priority DESC`)
@@ -209,14 +272,15 @@ func (s *Server) handleQoderQuota(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	type row struct {
-		id, name, key string
-		priority      int
-		models        int
+		id, name, key                        string
+		priority, models, active, creditHits int
+		lastCode, lastAt, lastModel          string
 	}
 	var want []row
 	for rows.Next() {
 		var it row
-		if err := rows.Scan(&it.id, &it.name, &it.key, &it.priority, &it.models); err != nil {
+		if err := rows.Scan(&it.id, &it.name, &it.key, &it.priority, &it.models, &it.active,
+			&it.lastCode, &it.lastAt, &it.lastModel, &it.creditHits); err != nil {
 			continue
 		}
 		if one != "" && it.id != one {
@@ -242,6 +306,17 @@ func (s *Server) handleQoderQuota(w http.ResponseWriter, r *http.Request) {
 		ModelsCount  int          `json:"models_count"`
 		Quota        *qoder.Quota `json:"quota,omitempty"`
 		Error        string       `json:"error,omitempty"`
+		// Diagnostic flag: the most recent upstream-code refusal for this account.
+		// Informational — the dashboard shows it beside the enable/disable control so
+		// the decision to disable stays with the operator. Nothing here routes on it.
+		LastErrorCode   string `json:"last_error_code,omitempty"`
+		LastErrorAt     string `json:"last_error_at,omitempty"`
+		LastErrorModel  string `json:"last_error_model,omitempty"`
+		CreditLimitHits int    `json:"credit_limit_hits,omitempty"`
+		// CreditLimited is the readable verdict the UI acts on: the last refusal was a
+		// plan/entitlement limit rather than a dead credential. Scoped to
+		// LastErrorModel — the account itself still serves other models.
+		CreditLimited bool `json:"credit_limited,omitempty"`
 	}
 
 	out := make([]entry, 0, len(want))
@@ -249,7 +324,17 @@ func (s *Server) handleQoderQuota(w http.ResponseWriter, r *http.Request) {
 	available, errored := 0, 0
 
 	for _, it := range want {
-		e := entry{ConnectionID: it.id, Name: it.name, Priority: it.priority, ModelsCount: it.models}
+		e := entry{
+			ConnectionID:    it.id,
+			Name:            it.name,
+			Priority:        it.priority,
+			ModelsCount:     it.models,
+			LastErrorCode:   it.lastCode,
+			LastErrorAt:     it.lastAt,
+			LastErrorModel:  it.lastModel,
+			CreditLimitHits: it.creditHits,
+			CreditLimited:   it.lastCode == qoder.CreditLimitCode,
+		}
 
 		q, ok := quotaCache.Get(it.key)
 		if !ok {

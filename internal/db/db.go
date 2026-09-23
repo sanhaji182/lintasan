@@ -288,6 +288,19 @@ func (d *DB) migrate() error {
 		`ALTER TABLE request_logs ADD COLUMN credits REAL DEFAULT NULL`,
 		// Cached portion of the prompt, the dominant cost variable for Qoder.
 		`ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER DEFAULT NULL`,
+		// Diagnosed account state, for the dashboard to surface next to the
+		// enable/disable control. `last_error_code`/`last_error_at`/`last_error_model`
+		// record the most recent UPSTREAM-CODE refusal, and `credit_limit_hits` counts
+		// code-112 refusals so a one-off cannot look like a pattern.
+		//
+		// These are INFORMATIONAL. Nothing reads them to route, skip, or disable an
+		// account: a credit-limited account still serves basic models (measured
+		// 2026-09-23), so auto-skipping on this flag would remove working capacity.
+		// Disabling stays a human act through the existing is_active control.
+		`ALTER TABLE connections ADD COLUMN last_error_code TEXT DEFAULT NULL`,
+		`ALTER TABLE connections ADD COLUMN last_error_at TEXT DEFAULT NULL`,
+		`ALTER TABLE connections ADD COLUMN last_error_model TEXT DEFAULT NULL`,
+		`ALTER TABLE connections ADD COLUMN credit_limit_hits INTEGER NOT NULL DEFAULT 0`,
 	}
 
 	for _, m := range migrations {

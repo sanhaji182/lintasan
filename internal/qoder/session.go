@@ -131,6 +131,45 @@ const QueueErrorCode = "10605"
 // for chat. It is observed alongside the message "Login expired".
 const LoginExpiredCode = "105"
 
+// CreditLimitCode is upstream's code for a request the account is not entitled to
+// serve — observed on premium models (Ultimate, Kimi-K3, GLM-5.3) against an account
+// whose credits are spent. The envelope carries a `pricingUrl` pointing at the vendor's
+// pricing page.
+//
+// It is NOT an account fault, and this is the whole reason it gets its own code rather
+// than folding into a generic auth failure:
+//
+//   - Measured 2026-09-23: an account at used=300/300, isQuotaExceeded=true still served
+//     basic models with HTTP 200 and real content (~400 ms), while premium models
+//     returned 112. A "credit limit" therefore means "this account cannot serve THIS
+//     model", never "this account is dead".
+//   - Code 112 does NOT mean the plan is over either. The same code was observed on an
+//     account with a positive reported balance, because its entitlement had shrunk to
+//     two models.
+//
+// Callers must surface it as scoped to a model, and must never use it to quarantine an
+// account. Disabling an account stays a human decision.
+const CreditLimitCode = "112"
+
+// PricingURLMarker is the body field that accompanies a credit-limit refusal. It is
+// used as a second signal so the classification does not rest on a bare number.
+const PricingURLMarker = "pricingUrl"
+
+// IsCreditLimit reports whether upstream refused the request because this account is
+// not entitled to this model.
+//
+// Deliberately requires BOTH the code and a corroborating marker. A bare code match
+// would misfile any future reuse of 112, and mislabelling an account as credit-limited
+// is the kind of wrong flag an operator acts on.
+func (e *UpstreamError) IsCreditLimit() bool {
+	if e == nil || e.Code != CreditLimitCode {
+		return false
+	}
+	return strings.Contains(e.Message, PricingURLMarker) ||
+		strings.Contains(e.Message, "pricing") ||
+		strings.Contains(strings.ToLower(e.Message), "credit")
+}
+
 // envelope is the wrapper upstream puts around every streamed frame and, in the
 // error case, around the failure itself. Reading it first is what prevents a
 // dead credential from looking like a slow-but-healthy stream.
@@ -188,10 +227,24 @@ func parseEnvelopeError(raw []byte) *UpstreamError {
 			if statusOut == 0 {
 				statusOut = http.StatusOK
 			}
+			// Message carries BOTH the human text and the raw inner body. The raw
+			// body is what the credit-limit classifier keys on: upstream puts its
+			// corroborating marker (`pricingUrl`) in the body rather than in
+			// `message`, and a classifier that only saw `message` would have to fall
+			// back to matching a bare code — which is exactly the fragile
+			// classification this avoids.
+			msg := inner.Message
+			if rawBody := strings.TrimSpace(env.Body); rawBody != "" && rawBody != msg {
+				if msg == "" {
+					msg = rawBody
+				} else {
+					msg = msg + ": " + rawBody
+				}
+			}
 			return &UpstreamError{
 				Status:            statusOut,
 				Code:              inner.Code,
-				Message:           inner.Message,
+				Message:           msg,
 				Queued:            inner.IsQueued || inner.Code == QueueErrorCode,
 				RetryAfterSeconds: inner.RetryAfterSeconds,
 			}

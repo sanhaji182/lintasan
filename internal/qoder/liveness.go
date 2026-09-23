@@ -255,6 +255,14 @@ func upstreamDiagnosis(ue *UpstreamError) (message, kind string) {
 	case ue.IsLoginExpired():
 		return "upstream refused this credential for this attempt (code 105). " +
 			"This is transient — the credential usually works again within minutes. Retry; do not discard it.", "credential_cooldown"
+	case ue.IsCreditLimit():
+		// Distinct from credential_cooldown on purpose: the credential is fine and the
+		// account is fine — this model is simply not entitled on this plan. Saying
+		// "retry" would send an operator to look for a credential problem that does
+		// not exist, and saying "this account is dead" would take working accounts out
+		// of the pool, since a credit-limited account still serves basic models.
+		return "this account is not entitled to this model on its current plan (code 112). " +
+			"Other models on the same account still work; retrying this one will not help.", "credit_limit"
 	default:
 		return ue.Error(), "qoder_upstream_error"
 	}

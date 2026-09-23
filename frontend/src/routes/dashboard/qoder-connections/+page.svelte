@@ -137,6 +137,19 @@
     models_count: number;
     quota?: Quota;
     error?: string;
+    /** Most recent upstream-code refusal for this account. Informational. */
+    last_error_code?: string;
+    last_error_at?: string;
+    last_error_model?: string;
+    /** How many code-112 refusals have been seen, so a one-off cannot look like a pattern. */
+    credit_limit_hits?: number;
+    /**
+     * The last refusal was a plan/entitlement limit (code 112), not a dead credential.
+     * Scoped to (last_error_model): the account still serves its other models, so this
+     * must NEVER be rendered as "account is dead" — that would invite an operator to
+     * disable a working account.
+     */
+    credit_limited?: boolean;
   };
 
   type QoderQuotaResponse = {
@@ -183,6 +196,35 @@
   let notEnabled = $state<string | null>(null);
   let refreshing = $state(false);
   let testInProgress = $state<string | null>(null);
+  let disabling = $state<string | null>(null);
+
+  /**
+   * Take a connection out of rotation.
+   *
+   * Deliberately manual and always confirmed: the credit-limit flag is informational, so
+   * disabling is a judgement the operator makes (an account that cannot serve premium
+   * models may still be worth keeping for basic ones). Nothing in the backend disables on
+   * this flag, and this button must not become a way to launder that into an automatic
+   * action.
+   */
+  async function disableConnection(conn: QoderConnection): Promise<void> {
+    if (disabling === conn.connection_id) return;
+    const why = conn.credit_limited
+      ? `Disable ${conn.name}?\n\nIt is flagged for a credit/plan limit${conn.last_error_model ? ` on ${conn.last_error_model}` : ''}. Note: the account may still serve its other models — check "Credit Left" first.`
+      : `Disable ${conn.name}?`;
+    if (!confirm(why)) return;
+
+    disabling = conn.connection_id;
+    try {
+      await api.patch('/api/connections', { id: conn.connection_id, is_active: false });
+      showToast(`✅ ${conn.name} disabled`, 'success');
+      await fetchConnections();
+    } catch (err) {
+      showToast(`❌ Disable failed: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+    } finally {
+      disabling = null;
+    }
+  }
   let testResults = $state<Record<string, TestResult>>({});
   let expandedRow = $state<string | null>(null);
   let showingConfig = $state(false);
@@ -945,8 +987,34 @@
                     {#if testResults[conn.connection_id].message}
                       <div class="qd-note">{testResults[conn.connection_id].message}</div>
                     {/if}
+                  {:else if conn.credit_limited}
+                    <StatusBadge status="warning" />
                   {:else}
                     <span class="qd-muted">Not tested</span>
+                  {/if}
+
+                  {#if conn.credit_limited}
+                    <!--
+                      Scoped phrasing is the point of this chip. A credit-limited account
+                      still serves its other models (measured), so "account is dead" or a
+                      bare "ERROR" would push an operator to disable a working account —
+                      the exact mistake the flag exists to prevent.
+                    -->
+                    <span
+                      class="qd-chip qd-chip-credit"
+                      title="This account is not entitled to this model on its current plan. It still serves its other models — check Credit Left before disabling."
+                    >
+                      ⚠ CREDIT LIMIT{conn.last_error_model ? `: ${conn.last_error_model}` : ''}
+                      {#if conn.credit_limit_hits && conn.credit_limit_hits > 1}· {conn.credit_limit_hits}×{/if}
+                    </span>
+                    <div class="qd-note qd-muted">
+                      Not entitled to this model — other models still work.
+                      {#if conn.last_error_at}Last seen {conn.last_error_at}.{/if}
+                    </div>
+                  {:else if conn.last_error_code}
+                    <span class="qd-chip" title="Most recent upstream refusal for this account">
+                      CODE {conn.last_error_code}
+                    </span>
                   {/if}
                 </td>
 
@@ -960,6 +1028,24 @@
                       Testing…
                     {:else}
                       <TestTube2 size={14} /> Test Model
+                    {/if}
+                  </button>
+                  <!--
+                    The flag's whole purpose: the operator decides. Disabling reuses the
+                    existing connections PATCH (is_active), which is already the documented
+                    way to take a connection out of rotation — so this adds no new state
+                    and no automatic action.
+                  -->
+                  <button
+                    class="qd-btn qd-btn-disable"
+                    onclick={() => disableConnection(conn)}
+                    disabled={disabling === conn.connection_id}
+                    title="Take this account out of rotation. Nothing does this automatically."
+                  >
+                    {#if disabling === conn.connection_id}
+                      Disabling…
+                    {:else}
+                      <CloudOff size={14} /> Disable
                     {/if}
                   </button>
                 </td>
@@ -1189,6 +1275,12 @@
   .qd-card-orange { background: linear-gradient(90deg, #f97316, #ea580c); }
   .qd-card-purple { background: linear-gradient(90deg, #a855f7, #7e22ce); }
   .qd-card-bonus { background: linear-gradient(90deg, #f59e0b, #b45309); }
+  /* Credit/plan-limit flag. Amber, not red: the account is not broken, it is
+     scoped-down. Red would read as "dead account" and invite disabling a working one. */
+  .qd-chip-credit { background: rgba(245, 158, 11, 0.18); color: #b45309; border: 1px solid rgba(245, 158, 11, 0.45); }
+  :global(html[data-theme='dark']) .qd-chip-credit { color: #fbbf24; }
+  .qd-btn-disable { background: var(--color-error-light); color: var(--color-error); border: 1px solid var(--color-error); margin-top: 6px; }
+  .qd-btn-disable:disabled { opacity: 0.6; }
   .qd-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   /* The panel header doubles as a collapse toggle. Reset the button chrome so it still
      reads as a heading, and keep a focus ring because it is now interactive. */
