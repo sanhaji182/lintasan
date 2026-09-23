@@ -248,7 +248,7 @@ func TestHandleStreamFailureRetriesWhenNothingWritten(t *testing.T) {
 		Err:    qoder.ErrStreamStalled,
 		Commit: c,
 		Body:   closerFunc(func() error { closed = true; return nil }),
-	}, w, w, nil, nil, nil)
+	}, w, w)
 
 	if !retry {
 		t.Fatal("a retryable in-stream failure before any write must be retried on another candidate")
@@ -273,7 +273,7 @@ func TestHandleStreamFailureDoesNotRetryUnclassifiedError(t *testing.T) {
 		Err:    errors.New("something unrecognised"),
 		Commit: &streamCommit{},
 		Body:   closerFunc(func() error { closed = true; return nil }),
-	}, w, w, nil, nil, nil)
+	}, w, w)
 
 	if retry {
 		t.Fatal("an unclassified error must not consume the rest of the pool")
@@ -297,7 +297,7 @@ func TestHandleStreamFailureReportsWhenCommitted(t *testing.T) {
 	retry := h.handleStreamFailure(streamFailure{
 		Err:    errors.New("stream stalled"),
 		Commit: c,
-	}, w, w, nil, nil, nil)
+	}, w, w)
 
 	if retry {
 		t.Fatal("a committed response must not be retried")
@@ -316,7 +316,7 @@ func TestHandleStreamFailureReportsWhenCommitted(t *testing.T) {
 func TestHandleStreamFailureNilErrIsNotAHandledFailure(t *testing.T) {
 	h := newTestProxyHandler(t)
 	w := newFlushable()
-	if h.handleStreamFailure(streamFailure{Err: nil, Commit: &streamCommit{}}, w, w, nil, nil, nil) {
+	if h.handleStreamFailure(streamFailure{Err: nil, Commit: &streamCommit{}}, w, w) {
 		t.Fatal("a nil error must not be treated as a handled failure")
 	}
 	if w.Body.Len() != 0 {

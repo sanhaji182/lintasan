@@ -327,9 +327,6 @@ type streamFailure struct {
 	Err error
 	// Commit reports how far the client response has gone.
 	Commit *streamCommit
-	// Budget is the same object the caller used for Commit, named separately so the
-	// handler reads as "what may I still spend" at the call site.
-	Budget *streamCommit
 	// Body is the upstream body, so a retry can also close it.
 	Body io.Closer
 	// Conn is the connection this attempt used.
@@ -351,7 +348,7 @@ type streamFailure struct {
 // particular the retry is NOT gated on which error occurred — the existing
 // classification (`IsQueued() || IsLoginExpired()`) already decides what is
 // *retryable in principle*, and this decides what is *still possible*.
-func (p *ProxyHandler) handleStreamFailure(f streamFailure, w http.ResponseWriter, flusher http.Flusher, streamBuffer *[]byte, tokensOut *int, cost *costSample) bool {
+func (p *ProxyHandler) handleStreamFailure(f streamFailure, w http.ResponseWriter, flusher http.Flusher) bool {
 	if f.Err == nil {
 		return false
 	}

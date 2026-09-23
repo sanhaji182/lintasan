@@ -1148,11 +1148,38 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			if rehandled := p.handleStreamFailure(streamFailure{
 				Err:      streamErr,
 				Commit:   commit,
-				Budget:   commit,
 				Body:     resp.Body,
 				Conn:     conn,
 				Response: resp,
-			}, w, flusher, &streamBuffer, &tokensOut, &qCostStream); rehandled {
+			}, w, flusher); rehandled {
+				// The attempt was discarded, so this candidate is unusable for this
+				// request. Advance.
+				breaker.Failure()
+				lastErr = streamErr.Error()
+				lastStatusCode = http.StatusBadGateway
+				qCostStream = costSample{}
+
+				p.logRequestCost(candidateModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCostStream)
+
+				// A plain model route yields exactly ONE candidate, so without this
+				// the `continue` above would simply exit the loop and the client would
+				// get the exhausted-routes error — the retry would have nothing to
+				// retry onto. Widen the list with another active connection serving
+				// the same model. This mirrors the 401/403 path exactly: same helper,
+				// same untried-ids guard, and the same refusal to invent candidates.
+				//
+				// Only connections genuinely serving this model are added, so a Qoder
+				// in-stream refusal can fall over to the next Qoder account while a
+				// single-account provider simply finds nothing and reports as before.
+				if i >= len(candidates)-1 {
+					tried := make([]string, 0, len(candidates))
+					for _, c := range candidates {
+						tried = append(tried, c.ID)
+					}
+					if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
+						candidates = append(candidates, alternates...)
+					}
+				}
 				continue
 			}
 
