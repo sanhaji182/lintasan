@@ -5,7 +5,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
-  import { TestTube2, RefreshCw, CheckCircle2, AlertTriangle, TrendingDown, Coins, X, Settings, CloudOff, Plus, ChevronRight } from 'lucide-svelte';
+  import { TestTube2, RefreshCw, CheckCircle2, AlertTriangle, TrendingDown, Coins, X, Settings, CloudOff, Plus, ChevronRight, Trash2 } from 'lucide-svelte';
 
   type QuotaBucket = { used?: number; total?: number; remaining?: number; unit?: string; percentage?: number };
 
@@ -197,6 +197,96 @@
   let refreshing = $state(false);
   let testInProgress = $state<string | null>(null);
   let disabling = $state<string | null>(null);
+  let deleting = $state<string | null>(null);
+  // Bulk selection. Additive, like the generic Connections page: Qoder accounts are
+  // managed in batches (a dead batch gets rotated out together), so acting on one at a
+  // time is the wrong shape for the job.
+  let selectedIds = $state<Set<string>>(new Set());
+  let bulkActing = $state(false);
+
+  function toggleSelect(id: string): void {
+    const next = new Set(selectedIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    selectedIds = next;
+  }
+
+  function toggleSelectAll(): void {
+    selectedIds = selectedIds.size === connections.length
+      ? new Set()
+      : new Set(connections.map((c) => c.connection_id));
+  }
+
+  async function bulkAct(action: 'delete' | 'disable'): Promise<void> {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+
+    // Destructive actions confirm, and the confirmation states the count and the
+    // irreversibility. Deleting a credential is not undoable from this page.
+    if (action === 'delete') {
+      const flagged = connections.filter((c) => selectedIds.has(c.connection_id) && c.credit_limited).length;
+      const extra = flagged
+        ? `\n\n${flagged} of them are flagged for a credit/plan limit — those accounts may still serve other models, so deleting is usually the wrong call for them. Disable instead if unsure.`
+        : '';
+      if (!confirm(`Delete ${ids.length} Qoder account(s)?\n\nThis removes the credential from Lintasan and cannot be undone. The PAT itself stays valid upstream.${extra}`)) {
+        return;
+      }
+    } else if (!confirm(`Disable ${ids.length} Qoder account(s)?\n\nThey stop being routed but stay in the list.`)) {
+      return;
+    }
+
+    bulkActing = true;
+    try {
+      // Reuses the existing connections endpoints rather than adding a Qoder-specific
+      // path: a Qoder connection is a connection, and a second delete route would be a
+      // second place for the invariants below to drift.
+      if (action === 'delete') {
+        await api.post('/api/connections/bulk-delete', { ids });
+      } else {
+        await api.post('/api/connections/bulk-disable', { ids });
+      }
+      showToast(`✅ ${ids.length} account(s) ${action === 'delete' ? 'deleted' : 'disabled'}`, 'success');
+      selectedIds = new Set();
+      await fetchConnections();
+    } catch (err) {
+      showToast(`❌ Bulk ${action} failed: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+    } finally {
+      bulkActing = false;
+    }
+  }
+
+  /**
+   * Delete one Qoder account.
+   *
+   * Guarded more heavily than the generic page's version because this list is where an
+   * operator lands after the credit-limit flag appears — and a flagged account is
+   * usually still serving its other models. Deleting it throws away a working
+   * credential; disabling keeps it. So the confirm says so rather than offering a bare
+   * "Delete?".
+   */
+  async function deleteConnection(conn: QoderConnection): Promise<void> {
+    if (deleting === conn.connection_id) return;
+    const warn = conn.credit_limited
+      ? `\n\n⚠ This account is flagged for a credit/plan limit on ${conn.last_error_model || 'a model'}, but it may still serve its other models. Disable instead if you are not sure.`
+      : '';
+    if (!confirm(`Delete ${conn.name}?\n\nThis removes the credential from Lintasan and cannot be undone. The PAT itself stays valid upstream.${warn}`)) {
+      return;
+    }
+
+    deleting = conn.connection_id;
+    try {
+      await api.delete(`/api/connections/${conn.connection_id}`);
+      showToast(`✅ ${conn.name} deleted`, 'success');
+      await fetchConnections();
+    } catch (err) {
+      showToast(`❌ Delete failed: ${err instanceof Error ? err.message : 'unknown'}`, 'error');
+    } finally {
+      deleting = null;
+    }
+  }
 
   /**
    * Take a connection out of rotation.
@@ -549,6 +639,27 @@
       </button>
     </div>
   </div>
+
+  <!-- Bulk-action bar. Appears only with a selection, so it costs nothing at rest and
+       the destructive actions are never one stray click away. -->
+  {#if selectedIds.size > 0}
+    <div class="qd-bulkbar">
+      <span class="qd-strong">{selectedIds.size} selected</span>
+      <button class="qd-btn qd-btn-ghost" onclick={() => (selectedIds = new Set())} disabled={bulkActing}>
+        Clear
+      </button>
+      <button class="qd-btn qd-btn-disable" onclick={() => bulkAct('disable')} disabled={bulkActing}>
+        <CloudOff size={14} /> Disable selected
+      </button>
+      <button class="qd-btn qd-btn-delete" onclick={() => bulkAct('delete')} disabled={bulkActing}>
+        {#if bulkActing}
+          Working…
+        {:else}
+          <Trash2 size={14} /> Delete selected
+        {/if}
+      </button>
+    </div>
+  {/if}
 
   <!-- Bulk-add panel. Placed above the table because it is the first thing an
        operator needs when the pool is empty or needs topping up. -->
@@ -922,6 +1033,14 @@
         <table class="qd-table">
           <thead>
             <tr>
+              <th class="qd-th-check">
+                <button
+                  class="qd-check"
+                  onclick={toggleSelectAll}
+                  aria-label={selectedIds.size === connections.length ? 'Deselect all accounts' : 'Select all accounts'}
+                  aria-pressed={selectedIds.size === connections.length}
+                >{selectedIds.size === connections.length && connections.length > 0 ? '☑' : '☐'}</button>
+              </th>
               <th>Connection</th>
               <th>Priority</th>
               <th>Models</th>
@@ -934,6 +1053,14 @@
           <tbody>
             {#each connections as conn (conn.connection_id)}
               <tr class:qd-row-open={expandedRow === conn.connection_id}>
+                <td class="qd-th-check">
+                  <button
+                    class="qd-check"
+                    onclick={() => toggleSelect(conn.connection_id)}
+                    aria-label={selectedIds.has(conn.connection_id) ? `Deselect ${conn.name}` : `Select ${conn.name}`}
+                    aria-pressed={selectedIds.has(conn.connection_id)}
+                  >{selectedIds.has(conn.connection_id) ? '☑' : '☐'}</button>
+                </td>
                 <td>
                   <button
                     class="qd-expand"
@@ -1046,6 +1173,18 @@
                       Disabling…
                     {:else}
                       <CloudOff size={14} /> Disable
+                    {/if}
+                  </button>
+                  <button
+                    class="qd-btn qd-btn-delete"
+                    onclick={() => deleteConnection(conn)}
+                    disabled={deleting === conn.connection_id}
+                    title="Remove the credential from Lintasan. The PAT stays valid upstream."
+                  >
+                    {#if deleting === conn.connection_id}
+                      Deleting…
+                    {:else}
+                      <Trash2 size={14} /> Delete
                     {/if}
                   </button>
                 </td>
@@ -1281,6 +1420,21 @@
   :global(html[data-theme='dark']) .qd-chip-credit { color: #fbbf24; }
   .qd-btn-disable { background: var(--color-error-light); color: var(--color-error); border: 1px solid var(--color-error); margin-top: 6px; }
   .qd-btn-disable:disabled { opacity: 0.6; }
+  .qd-btn-delete { background: var(--color-error); color: #fff; border: 1px solid var(--color-error); margin-top: 6px; }
+  .qd-btn-delete:disabled { opacity: 0.6; }
+  .qd-bulkbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 14px; margin-bottom: 12px;
+    background: var(--color-bg-subtle, var(--color-bg-body));
+    border: 1px solid var(--color-border); border-radius: 8px;
+  }
+  .qd-bulkbar .qd-btn { margin-top: 0; }
+  .qd-th-check { width: 34px; text-align: center; }
+  .qd-check {
+    background: none; border: 0; padding: 2px 4px; cursor: pointer;
+    font-size: 15px; line-height: 1; color: var(--color-fg-2);
+  }
+  .qd-check:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; border-radius: 4px; }
   .qd-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   /* The panel header doubles as a collapse toggle. Reset the button chrome so it still
      reads as a heading, and keep a focus ring because it is now interactive. */
