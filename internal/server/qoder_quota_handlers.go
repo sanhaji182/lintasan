@@ -57,6 +57,13 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 	// is in cooldown, and without a row the only evidence is the absence of one.
 	// Recorded with the same task class as a successful probe so both are separable
 	// from live traffic.
+	//
+	// The stored status is 502, not the upstream's 200, for the in-stream case. Qoder
+	// reports a refusal INSIDE a 200, so persisting 200 would make a refused probe
+	// indistinguishable from a served one in `request_logs` — the two rows would
+	// differ only in the error text, which is exactly the kind of "looks fine"
+	// accounting this file has already been burned by. The real upstream status is
+	// preserved in the message.
 	logAttempt := func(status int, errMsg string) {
 		s.proxy.logRequestCost(modelID, conn.ID, conn.Name, status, time.Since(start).Milliseconds(), 0, 0, false, errMsg, "model-test", "probe", costSample{})
 	}
@@ -92,13 +99,13 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 
 	if err != nil {
 		msg, _, _ := qoder.DescribeStreamError(err)
-		logAttempt(resp.StatusCode, msg)
+		logAttempt(http.StatusBadGateway, msg)
 		fail := qoderProbeFailure(err, latency)
 		fail["http_status"] = resp.StatusCode
 		return fail
 	}
 	if !sawContent {
-		logAttempt(resp.StatusCode, "upstream accepted the request but produced no content within the idle window")
+		logAttempt(http.StatusBadGateway, "upstream accepted the request but produced no content within the idle window")
 		return map[string]any{
 			"success": false, "status": "empty_stream", "latency_ms": latency,
 			"http_status": resp.StatusCode,
