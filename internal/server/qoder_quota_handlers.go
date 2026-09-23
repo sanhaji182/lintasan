@@ -51,6 +51,16 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
+	// logAttempt records a probe that did not succeed.
+	//
+	// A refused probe is the case an operator most needs to see: it means the account
+	// is in cooldown, and without a row the only evidence is the absence of one.
+	// Recorded with the same task class as a successful probe so both are separable
+	// from live traffic.
+	logAttempt := func(status int, errMsg string) {
+		s.proxy.logRequestCost(modelID, conn.ID, conn.Name, status, time.Since(start).Milliseconds(), 0, 0, false, errMsg, "model-test", "probe", costSample{})
+	}
+
 	body, err := qoder.BuildChatBody(qoder.ChatRequest{
 		Model:     modelID,
 		Messages:  []map[string]any{{"role": "user", "content": "ping"}},
@@ -58,11 +68,13 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 		MaxTokens: qoderProbeMaxTokens,
 	})
 	if err != nil {
+		logAttempt(http.StatusBadRequest, err.Error())
 		return map[string]any{"success": false, "status": "upstream_error", "message": err.Error()}
 	}
 
 	resp, err := provider.Sessions().StartChatStream(ctx, conn.APIKey, modelID, body, "")
 	if err != nil {
+		logAttempt(http.StatusBadGateway, err.Error())
 		return qoderProbeFailure(err, time.Since(start).Milliseconds())
 	}
 	defer resp.Body.Close()
@@ -79,11 +91,14 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 	latency := time.Since(start).Milliseconds()
 
 	if err != nil {
+		msg, _, _ := qoder.DescribeStreamError(err)
+		logAttempt(resp.StatusCode, msg)
 		fail := qoderProbeFailure(err, latency)
 		fail["http_status"] = resp.StatusCode
 		return fail
 	}
 	if !sawContent {
+		logAttempt(resp.StatusCode, "upstream accepted the request but produced no content within the idle window")
 		return map[string]any{
 			"success": false, "status": "empty_stream", "latency_ms": latency,
 			"http_status": resp.StatusCode,
