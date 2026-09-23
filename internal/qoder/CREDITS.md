@@ -169,25 +169,87 @@ is parsed, surfaced in `/api/qoder/quota`, read by the dashboard, and
 The pool drain and the routing behaviour are unrelated problems. Fixing the
 routing causes an outage; fixing the sharing stops the drain.
 
-## 7. Mitigation options (none applied by this document)
+## 7. Decision taken: shared capacity, alerted on burn rate
 
-This is a finding, not a change. The decision belongs to the operator:
+**Operator decision, 2026-09-23: option 2 — the sharing is ACCEPTED.** The nine
+PATs stay in both Lintasan and 9router. De-sharing was considered and rejected;
+the options are kept below because the reasoning still matters if the decision is
+ever revisited.
 
-1. **De-share the credentials (root fix).** Either remove the nine shared PATs
-   from 9router's `providerConnections`, or give 9router its own accounts
-   (`Akun [41]`–`[50]` already are, but the shared rows are still active and
-   still take round-robin turns). Two proxies must not present the same PAT:
-   the device fingerprint derives from `account_id + credential`, so both
-   collide on one device identity as well as one quota.
-2. **Treat the pool as shared capacity (acceptance path).** If sharing is
-   intended, size the pool for the combined load and alert on burn rate rather
-   than on absolute balance — 2.81 credits/request × 9router's rate is the
-   number that matters, and it is not visible from either side alone.
-3. **Per-account alerting.** A drop of >N credits between two 5-minute windows
-   with no matching `request_logs.credits` is the signature. That comparison is
-   the detector; either half alone tells you nothing.
+The consequences of accepting it, spelled out so nobody rediscovers them as bugs:
+
+- **The pool is shared capacity, so its absolute balance is not ours to read.**
+  A low balance is not an incident. `summary.available` counting accounts at zero
+  as available is correct for the same reason — a `credits=0` account still serves
+  chat (see the VENDOR ALLOWANCE section).
+- **The number that matters is the burn RATE, and specifically the part of it we
+  cannot account for.** Ours is `SUM(request_logs.credits)` for qoder connections;
+  the pool delta is everyone's. The difference is the signal.
+- **Sizing must assume both consumers.** Anything sized against our own traffic
+  alone will be wrong by roughly an order of magnitude — on 2026-09-23 our share was
+  ~2% of the drain (5.49 of 267 credits).
+- **Two proxies present the same PAT**, and the device fingerprint derives from
+  `account_id + credential`, so both also collide on one device identity. A symptom
+  that looks like "impossible" concurrency or rotation on one account is expected
+  under sharing, not a bug.
+
+### The detector is live
+
+`~/.hermes/scripts/qoder_burn_watch.py`, cron **`aa722a156bbb`** every 30 minutes,
+`no_agent`, delivering to the DevOps topic. It compares the pool delta against
+`request_logs.credits` over the same window and is **silent unless the drop is
+unattributable to us**:
+
+```
+alert when  pool_drop >= 20 credits
+      AND   unaccounted >= 15 credits
+      AND   unaccounted / pool_drop >= 50%
+```
+
+Verified before arming, because an alerting rule nobody has seen fire is not a
+verified rule:
+
+| case | expected | observed |
+|---|---|---|
+| 280 -> 13 with 5.5 ours | alert, 98% unaccounted | alert, "Unaccounted: 261.5 (98%)" |
+| drop below 20 credits | silent | silent |
+| big drop, spend matches (7 unaccounted) | silent | silent |
+| pool unreadable this cycle | silent, no false report | silent |
+
+Also verified: **polling is free.** 30 forced quota reads moved the pool by exactly
+0.0000 and added 0 rows to `request_logs`, so the watchdog cannot consume what it
+measures. It forces `?refresh=1` per account because `QuotaCache` TTL is 5 minutes
+and a stale read would report a delta of zero.
+
+State lives in `~/.hermes/state/qoder_burn_watch.json` (mode 600, self-resetting so
+a reboot does not produce a bogus delta). `--verbose` prints every cycle's numbers;
+`--reset-state` clears the baseline after a pool reset.
+
+## 7a. Options considered (kept for the record)
+
+1. **De-share the credentials (root fix) — NOT taken.** Either remove the nine
+   shared PATs from 9router's `providerConnections`, or give 9router its own
+   accounts (`Akun [41]`–`[50]` already are, but the shared rows are still active
+   and still take round-robin turns). Rejected because it changes 9router's routing
+   behaviour, which is a system the operator relies on. Note for any future revisit:
+   9router has **ten Qoder accounts of its own** whose credentials match none of
+   ours, so de-sharing may cost it little.
+2. **Treat the pool as shared capacity — TAKEN.** See above.
+3. **Per-account alerting.** Implemented as part of the watchdog: the alert names
+   the per-account movers, so it says where the credits went as well as how many.
 
 ## 8. How to re-verify
+
+```bash
+# Is the watchdog armed, and did its last run stay silent or alert?
+hermes cron list | grep -A9 aa722a156bbb
+
+# What is it seeing right now? (prints every cycle's numbers, never alerts)
+python3 ~/.hermes/scripts/qoder_burn_watch.py --verbose
+
+# Force a fresh baseline after the pool resets (next reset: check nextResetAt)
+python3 ~/.hermes/scripts/qoder_burn_watch.py --reset-state
+```
 
 ```bash
 # What WE spent (core)
