@@ -1230,7 +1230,27 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		b, _ := io.ReadAll(resp.Body)
+		// A non-streaming client still needs an answer in bounded time, and this read
+		// had no deadline. When an upstream opens a response and then stalls — which
+		// Qoder does once its account pool is exhausted (HTTP 200, then nothing) — the
+		// request sat here until the CLIENT gave up. Measured: a recorded 120,002 ms
+		// with error "context canceled", i.e. the client cancelled; the server would
+		// have waited longer.
+		//
+		// The allowance is generous relative to the streaming first-byte timeout: a
+		// non-streaming client cannot observe progress, and a slow-but-working
+		// reasoning model must not be cut off mid-answer.
+		b, readErr := p.readUpstreamBodyBounded(r.Context(), resp.Body, p.qoderNonStreamReadTimeout())
+		if readErr != nil {
+			lastErr = readErr.Error()
+			lastStatusCode = http.StatusGatewayTimeout
+			breaker.Failure()
+			p.logRequestCost(candidateModel, conn.ID, conn.Name, http.StatusGatewayTimeout, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, costSample{})
+			// Another candidate may still answer; the timeout is retryable in the same
+			// sense a refused credential is — the connection is unusable for THIS
+			// request, not permanently dead.
+			continue
+		}
 
 		// Plugin post-response hook: transform response body
 		if p.pm != nil {

@@ -354,6 +354,64 @@ func (p *ProxyHandler) FirstByteTimeout() time.Duration { return p.qoderFirstByt
 // IdleTimeout exposes the idle allowance to other handlers.
 func (p *ProxyHandler) IdleTimeout() time.Duration { return p.qoderIdleTimeout() }
 
+// qoderNonStreamReadTimeout bounds how long a non-streaming request will wait for an
+// upstream body that never arrives.
+//
+// It exists because an unbounded read let a stalled upstream hold a request until the
+// client gave up (measured: 120,002 ms, recorded as "context canceled" — the client
+// cancelled, not the server). Qoder produces exactly that state when its account pool
+// is exhausted: HTTP 200, then no body.
+//
+// Overridable by an operator via qoder_nonstream_read_timeout_seconds, and deliberately
+// generous by default: a non-streaming caller sees no progress, so cutting off a
+// slow-but-working reasoning model would be worse than waiting.
+func (p *ProxyHandler) qoderNonStreamReadTimeout() time.Duration {
+	if v, err := p.db.GetSetting("qoder_nonstream_read_timeout_seconds"); err == nil {
+		if n, perr := strconv.Atoi(strings.TrimSpace(v)); perr == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return 180 * time.Second
+}
+
+// qoderNonStreamReadContext derives the deadline used to bound a body read.
+func (p *ProxyHandler) qoderNonStreamReadContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(parent, p.qoderNonStreamReadTimeout())
+}
+
+// readUpstreamBodyBounded reads an upstream body, giving up after timeout.
+//
+// The read runs in its own goroutine because a blocking Read is only released by
+// closing the body, not by cancelling a context — so the timeout path closes the body
+// and lets the goroutine unblock rather than leaking it. The result channel is
+// buffered so that goroutine can always finish and exit.
+func (p *ProxyHandler) readUpstreamBodyBounded(parent context.Context, body io.ReadCloser, timeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	type readResult struct {
+		b   []byte
+		err error
+	}
+	done := make(chan readResult, 1)
+	go func() {
+		bb, err := io.ReadAll(body)
+		done <- readResult{bb, err}
+	}()
+
+	select {
+	case res := <-done:
+		return res.b, res.err
+	case <-ctx.Done():
+		// Closing the body is what releases the blocked Read above.
+		body.Close()
+		if parent.Err() != nil {
+			return nil, parent.Err()
+		}
+		return nil, fmt.Errorf("upstream sent no body within %s", timeout)
+	}
+}
+
 // qoderRegion reports the configured upstream region.
 func (p *ProxyHandler) qoderRegion() string {
 	if r := strings.TrimSpace(os.Getenv("LINTASAN_QODER_REGION")); r != "" {
