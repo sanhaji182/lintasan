@@ -226,6 +226,28 @@ type StreamDelta struct {
 	InputTokens  int
 	OutputTokens int
 	FinishReason string
+	// Credits is the charge upstream reports for this turn, in Qoder's own unit.
+	// It is the only authoritative cost signal the API exposes: the vendor states
+	// consumption follows "task complexity" rather than token count, so Credits
+	// cannot be derived from InputTokens/OutputTokens. Measured 2026-09-23, two
+	// turns on the SAME model with the SAME prompt cost 4.617 and 0.449 Credits —
+	// a 10x spread explained by whether the prompt prefix was cached, not by the
+	// token counts and not by the published price_factor.
+	Credits float64
+	// CreditsSeen records that upstream SENT a `credits` figure, whatever its value.
+	// It is tracked separately because a reported 0 and an omitted field are
+	// different facts, and the value alone cannot tell them apart: a frame carrying
+	// credits=0 with billable=false satisfies neither `Credits != 0` nor
+	// `Billable`, so inferring presence from the numbers silently logs a priced
+	// turn as unpriced.
+	CreditsSeen bool
+	// CachedTokens is the part of the prompt served from upstream's prompt cache.
+	// It is the dominant cost variable, so it is carried rather than dropped.
+	CachedTokens int
+	// Billable mirrors upstream's own `billable` flag, which is NOT the same as
+	// Credits > 0: a cached turn has been observed reporting credits=0.450601 with
+	// billable=false.
+	Billable bool
 }
 
 // IsEmpty reports whether the delta carries nothing worth forwarding.
@@ -267,9 +289,24 @@ func ParseStreamFrame(raw []byte) (StreamDelta, *UpstreamError) {
 	// Usage may arrive on the same frame as content, so it is captured before
 	// the content check rather than returned early.
 	var in, out int
+	var credits float64
+	var creditsSeen bool
+	var cached int
+	var billable bool
 	if usage, ok := inner["usage"].(map[string]any); ok {
 		in = int(floatField(usage, "prompt_tokens"))
 		out = int(floatField(usage, "completion_tokens"))
+		// Presence, not value: upstream may legitimately report 0.
+		if _, ok := usage["credits"]; ok {
+			credits = floatField(usage, "credits")
+			creditsSeen = true
+		}
+		if d, ok := usage["prompt_tokens_details"].(map[string]any); ok {
+			cached = int(floatField(d, "cached_tokens"))
+		}
+		// Only when upstream says so; absence stays false rather than being
+		// inferred from whether a charge was reported.
+		billable, _ = usage["billable"].(bool)
 	}
 
 	if choices, ok := inner["choices"].([]any); ok {
@@ -288,6 +325,10 @@ func ParseStreamFrame(raw []byte) (StreamDelta, *UpstreamError) {
 				Reasoning:    strField(delta, "reasoning_content"),
 				InputTokens:  in,
 				OutputTokens: out,
+				Credits:      credits,
+				CreditsSeen:  creditsSeen,
+				CachedTokens: cached,
+				Billable:     billable,
 			}
 			if tc, ok := delta["tool_calls"].([]any); ok && len(tc) > 0 {
 				d.ToolCalls = tc
@@ -301,9 +342,16 @@ func ParseStreamFrame(raw []byte) (StreamDelta, *UpstreamError) {
 		}
 	}
 
-	// A frame carrying only usage is still useful (token accounting).
+	// A frame carrying only usage is still useful (token and credit accounting).
 	if in > 0 || out > 0 {
-		return StreamDelta{InputTokens: in, OutputTokens: out}, nil
+		return StreamDelta{
+			InputTokens:  in,
+			OutputTokens: out,
+			Credits:      credits,
+			CreditsSeen:  creditsSeen,
+			CachedTokens: cached,
+			Billable:     billable,
+		}, nil
 	}
 	return StreamDelta{}, nil
 }
@@ -355,6 +403,18 @@ type StreamOutcome struct {
 	ContentLength int
 	ToolCalls     int
 	HadContent    bool
+	// Credits is the total charge upstream reported for this turn, summed across
+	// usage frames. Upstream is the authority on the price; nothing here derives it
+	// from token counts. Zero means no usage frame carried a charge — which is a
+	// different statement from "this turn was free", so callers should report it as
+	// unreported rather than as 0 credits.
+	Credits float64
+	// CreditsReported distinguishes "upstream said 0" from "upstream said nothing".
+	CreditsReported bool
+	// CachedTokens is the cached part of the prompt, the dominant cost variable.
+	CachedTokens int
+	// Billable mirrors upstream's flag on the last usage frame seen.
+	Billable bool
 }
 
 // StreamHandler receives decoded deltas while a stream is consumed. Returning an
@@ -405,6 +465,18 @@ func ConsumeStream(ctx context.Context, r io.Reader, model string, h StreamHandl
 			outcome.InputTokens = delta.InputTokens
 			outcome.OutputTokens = delta.OutputTokens
 		}
+		// Cost accounting. Upstream reports the charge on its usage frame, so it is
+		// recorded rather than recomputed. Presence is tracked via CreditsSeen: a
+		// reported 0 and an omitted field are different facts, and inferring
+		// presence from the numbers misses the credits=0 / billable=false case.
+		if delta.CreditsSeen {
+			outcome.Credits += delta.Credits
+			outcome.CreditsReported = true
+		}
+		if delta.CachedTokens > 0 {
+			outcome.CachedTokens = delta.CachedTokens
+		}
+		outcome.Billable = delta.Billable
 		if delta.Content != "" || delta.Reasoning != "" {
 			outcome.HadContent = true
 			outcome.ContentLength += len(delta.Content)

@@ -275,6 +275,19 @@ func (d *DB) migrate() error {
 		// "not reported" instead of a literal zero.
 		`ALTER TABLE discovered_models ADD COLUMN max_input_tokens INTEGER DEFAULT NULL`,
 		`ALTER TABLE discovered_models ADD COLUMN max_output_tokens INTEGER DEFAULT NULL`,
+		// Upstream-reported charge, in the PROVIDER's own unit. Qoder reports
+		// `usage.credits` per turn and it is the only authoritative cost signal the
+		// API exposes — the vendor states consumption follows "task complexity"
+		// rather than token count, so it cannot be derived from input_tokens /
+		// output_tokens. Measured 2026-09-23: two turns on the SAME model with the
+		// SAME prompt reported 4.617 and 0.449 credits, a ~10x spread explained by
+		// prompt-prefix caching rather than by tokens or the published price_factor.
+		// NULL means the provider reported no charge (every non-Qoder provider, and
+		// any turn whose usage frame omitted the field) — never 0, which would read
+		// as a free request.
+		`ALTER TABLE request_logs ADD COLUMN credits REAL DEFAULT NULL`,
+		// Cached portion of the prompt, the dominant cost variable for Qoder.
+		`ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER DEFAULT NULL`,
 	}
 
 	for _, m := range migrations {

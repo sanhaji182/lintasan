@@ -172,6 +172,19 @@ func (p *ProxyHandler) qoderUpstream(ctx context.Context, conn *Connection, body
 // lets an operator tell "this provider is misconfigured" apart from "this
 // provider is having a bad minute".
 func (p *ProxyHandler) streamQoderToOpenAI(ctx context.Context, streamBody io.ReadCloser, w http.ResponseWriter, flusher http.Flusher, model string) ([]byte, int, error) {
+	buf, chunks, _, err := p.streamQoderToOpenAICost(ctx, streamBody, w, flusher, model)
+	return buf, chunks, err
+}
+
+// streamQoderToOpenAICost is streamQoderToOpenAI, also returning the upstream's own
+// cost figures for the turn.
+//
+// The charge is read off Qoder's usage frame rather than derived from tokens: the
+// vendor states consumption follows "task complexity", and measurement bears that
+// out — the same model and prompt cost 4.617 credits on a cold prompt prefix and
+// 0.449 with the prefix cached. Token counts cannot reconstruct that; the reported
+// figure can.
+func (p *ProxyHandler) streamQoderToOpenAICost(ctx context.Context, streamBody io.ReadCloser, w http.ResponseWriter, flusher http.Flusher, model string) ([]byte, int, costSample, error) {
 	// Qoder turns own the body's lifetime. The idle watchdog detects a stalled
 	// stream by giving up on a blocking Read, and that Read is only released when
 	// the body is closed — so a stall MUST close it, or the reader goroutine stays
@@ -238,7 +251,7 @@ func (p *ProxyHandler) streamQoderToOpenAI(ctx context.Context, streamBody io.Re
 		if flusher != nil {
 			flusher.Flush()
 		}
-		return streamBuffer, chunks, err
+		return streamBuffer, chunks, qoderCostSample(outcome), err
 	}
 
 	// Terminal frame so a client knows the stream ended deliberately.
@@ -261,7 +274,19 @@ func (p *ProxyHandler) streamQoderToOpenAI(ctx context.Context, streamBody io.Re
 	if flusher != nil {
 		flusher.Flush()
 	}
-	return streamBuffer, chunks, nil
+	return streamBuffer, chunks, qoderCostSample(outcome), nil
+}
+
+// qoderCostSample converts a stream outcome into a loggable charge.
+//
+// `Reported` is carried through so a turn whose usage frame omitted `credits` is
+// logged as NULL rather than as a free turn.
+func qoderCostSample(outcome qoder.StreamOutcome) costSample {
+	return costSample{
+		Credits:      outcome.Credits,
+		CachedTokens: outcome.CachedTokens,
+		Reported:     outcome.CreditsReported,
+	}
 }
 
 // qoderErrorDiagnosis maps a Qoder error onto a client-facing message and type.
@@ -326,6 +351,13 @@ func (p *ProxyHandler) qoderFirstByteTimeout() time.Duration {
 // by consuming the stream to completion and assembling the result. The upstream
 // call is identical either way; only the client-facing shape differs.
 func (p *ProxyHandler) qoderNonStreamResponse(ctx context.Context, streamBody io.ReadCloser, model string) ([]byte, error) {
+	b, _, err := p.qoderNonStreamResponseCost(ctx, streamBody, model)
+	return b, err
+}
+
+// qoderNonStreamResponseCost is qoderNonStreamResponse, also returning the
+// upstream's own cost figures for the turn.
+func (p *ProxyHandler) qoderNonStreamResponseCost(ctx context.Context, streamBody io.ReadCloser, model string) ([]byte, costSample, error) {
 	// Same body-lifetime rule as the streaming path: a stall is detected by
 	// abandoning a blocking Read, and only closing the body releases it.
 	ctx, cancel := context.WithCancel(ctx)
@@ -344,7 +376,7 @@ func (p *ProxyHandler) qoderNonStreamResponse(ctx context.Context, streamBody io
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, qoderCostSample(outcome), err
 	}
 
 	finish := "stop"
@@ -378,5 +410,6 @@ func (p *ProxyHandler) qoderNonStreamResponse(ctx context.Context, streamBody io
 			"total_tokens":      outcome.InputTokens + outcome.OutputTokens,
 		},
 	}
-	return json.Marshal(resp)
+	b, err := json.Marshal(resp)
+	return b, qoderCostSample(outcome), err
 }

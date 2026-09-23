@@ -1053,17 +1053,18 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			flusher, ok := w.(http.Flusher)
 
 			var streamBuffer []byte
+			var qCost costSample
 			if p.isQoder(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 				// Qoder reports refusal, throttle and moderation INSIDE a 200
 				// stream, so the error path has to live here rather than in the
 				// status check above.
 				var qErr error
-				streamBuffer, tokensOut, qErr = p.streamQoderToOpenAI(r.Context(), resp.Body, w, flusher, resolvedModel)
+				streamBuffer, tokensOut, qCost, qErr = p.streamQoderToOpenAICost(r.Context(), resp.Body, w, flusher, resolvedModel)
 				if qErr != nil {
 					// Headers are already flushed with the first chunk, so the
 					// status cannot be revised. The failure is recorded and the
 					// stream ends; the client received a typed SSE error frame.
-					p.logRequest(candidateModel, conn.ID, conn.Name, 200, time.Since(start).Milliseconds(), 0, tokensOut, true, qErr.Error(), taskClass, modeLabel)
+					p.logRequestCost(candidateModel, conn.ID, conn.Name, 200, time.Since(start).Milliseconds(), 0, tokensOut, true, qErr.Error(), taskClass, modeLabel, qCost)
 					return
 				}
 			} else if conn.Format == "commandcode" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -1100,7 +1101,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 				quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
 			}
 
-			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
+			p.logRequestCost(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCost)
 
 			if comboName != "" && resp.StatusCode == 200 {
 				p.cmb.RecordSuccess(comboName)
@@ -1139,15 +1140,17 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		// Qoder: the upstream body is an enveloped frame stream, not an OpenAI
 		// response. It is re-read through the frame parser rather than passed
 		// through, because a passthrough would hand envelope JSON to the client.
+		var qCostNonStream costSample
 		if p.isQoder(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-			assembled, qErr := p.qoderNonStreamResponse(r.Context(), io.NopCloser(bytes.NewReader(b)), resolvedModel)
+			assembled, qCost, qErr := p.qoderNonStreamResponseCost(r.Context(), io.NopCloser(bytes.NewReader(b)), resolvedModel)
 			if qErr != nil {
 				lastErr = qErr.Error()
 				lastStatusCode = http.StatusBadGateway
 				breaker.Failure()
-				p.logRequest(candidateModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+				p.logRequestCost(candidateModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCost)
 				continue
 			}
+			qCostNonStream = qCost
 			b = assembled
 		}
 
@@ -1179,7 +1182,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		w.WriteHeader(resp.StatusCode)
 		w.Write(b)
-		p.logRequest(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
+		p.logRequestCost(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostNonStream)
 
 		if comboName != "" && resp.StatusCode == 200 {
 			p.cmb.RecordSuccess(comboName)
@@ -2201,15 +2204,41 @@ func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
 }
 
 func (p *ProxyHandler) logRequest(model, connID, provider string, status int, latencyMs int64, tokensIn, tokensOut int, cached bool, errMsg, taskClass, mode string) {
+	p.logRequestCost(model, connID, provider, status, latencyMs, tokensIn, tokensOut, cached, errMsg, taskClass, mode, costSample{})
+}
+
+// costSample carries an upstream-reported charge alongside a request log row.
+//
+// Reported is separate from Credits on purpose. A provider that reports 0 credits
+// and one that reports nothing are different facts, and collapsing them writes a
+// free-looking row for a turn whose price is simply unknown.
+type costSample struct {
+	Credits      float64
+	CachedTokens int
+	Reported     bool
+}
+
+// logRequestCost is logRequest plus the provider's own cost figures.
+//
+// The columns stay NULL when nothing was reported, never 0: every non-Qoder
+// provider leaves them NULL, and a stored 0 would read as "this request was free"
+// on the dashboard. Qoder is the provider that populates them, from its usage
+// frame's `credits` and `prompt_tokens_details.cached_tokens`.
+func (p *ProxyHandler) logRequestCost(model, connID, provider string, status int, latencyMs int64, tokensIn, tokensOut int, cached bool, errMsg, taskClass, mode string, cost costSample) {
 	cachedInt := 0
 	if cached {
 		cachedInt = 1
 	}
+	var creditsVal, cachedTokVal any
+	if cost.Reported {
+		creditsVal = cost.Credits
+		cachedTokVal = cost.CachedTokens
+	}
 	id := uuid.New().String()
 	p.db.Conn().Exec(`
-		INSERT INTO request_logs (id, connection_id, provider, model, status, input_tokens, output_tokens, latency_ms, cached, error, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
-	`, id, connID, provider, model, status, tokensIn, tokensOut, latencyMs, cachedInt, errMsg)
+		INSERT INTO request_logs (id, connection_id, provider, model, status, input_tokens, output_tokens, latency_ms, cached, error, created_at, credits, cached_tokens)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?)
+	`, id, connID, provider, model, status, tokensIn, tokensOut, latencyMs, cachedInt, errMsg, creditsVal, cachedTokVal)
 	if p.telemetry != nil {
 		p.telemetry.Observe(provider, taskClass, mode, latencyMs, status, cached)
 	}
