@@ -90,11 +90,42 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 			"message":     "upstream accepted the request but produced no content within the idle window",
 		}
 	}
-	return map[string]any{
+
+	// A model test is a REAL request that consumes the account's credits, so it is
+	// recorded like any other turn. It previously left no trace: not in
+	// request_logs, not in /api/analytics, not in providerCredits — while the
+	// upstream charge landed on the account all the same. An operator clicking
+	// "Test Model" across a pool spent credits they could not see, and the burn-rate
+	// watchdog could not attribute it either.
+	//
+	// The status is 200 because that is what the probe establishes: the model
+	// answered. `credits` is the upstream-reported charge for the probe.
+	cost := costSample{
+		Credits:      outcome.Credits,
+		CachedTokens: outcome.CachedTokens,
+		Reported:     outcome.CreditsReported,
+	}
+	s.proxy.logRequestCost(modelID, conn.ID, conn.Name, resp.StatusCode, latency, outcome.InputTokens, outcome.OutputTokens, false, "", "model-test", "probe", cost)
+
+	return qoderProbeResult(outcome, latency, resp.StatusCode)
+}
+
+// qoderProbeResult builds the success payload for a model probe.
+//
+// Extracted from the handler so the reported-shape rules are testable without a live
+// credential exchange: `credits` is an upstream figure and is OMITTED when upstream
+// reported none, rather than sent as 0, which an operator would read as a free probe.
+func qoderProbeResult(outcome qoder.StreamOutcome, latency int64, httpStatus int) map[string]any {
+	out := map[string]any{
 		"success": true, "status": "ok", "latency_ms": latency,
-		"http_status": resp.StatusCode, "message": "model responds",
+		"http_status": httpStatus, "message": "model responds",
 		"input_tokens": outcome.InputTokens, "output_tokens": outcome.OutputTokens,
 	}
+	if outcome.CreditsReported {
+		out["credits"] = outcome.Credits
+		out["cached_tokens"] = outcome.CachedTokens
+	}
+	return out
 }
 
 // qoderProbeFailure maps a typed Qoder failure onto the model-test status vocabulary
