@@ -1046,78 +1046,133 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		setProviderHeaders(w.Header(), conn.ID, conn.Name)
 
 		if stream {
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-			w.WriteHeader(resp.StatusCode)
-			flusher, ok := w.(http.Flusher)
+			// ================================================================
+			// STREAMING: BUFFER-UNTIL-FIRST-CONTENT (delayed header commit)
+			// ================================================================
+			//
+			// The streaming branch used to call `w.WriteHeader(resp.StatusCode)`
+			// before reading a single upstream frame. That commits the response
+			// status, and every `continue` on the failover path below then becomes
+			// impossible — the candidate loop can only reach them if nothing has
+			// been written yet. The result was a class of failure this codebase
+			// documents in its own comments and did not handle on this path:
+			//
+			//   Qoder reports a refused credential, a busy model and content
+			//   moderation all INSIDE a stream that opened with HTTP 200.
+			//
+			// Status is not the signal for such a provider, so the 4xx/5xx checks
+			// above sail past, the header is flushed, and the in-stream error is
+			// merely logged and returned. The client receives an error frame on a
+			// 200 — never a retry on another account.
+			//
+			// So the commit is deferred until we are CERTAIN this candidate is
+			// serving: response status committed (if not 200) or first real frame
+			// received (200). An in-stream failure before any content can then fall
+			// through to the same `continue` the non-stream path uses, and the
+			// client never learns a failed attempt happened.
+			//
+			// Once bytes ARE committed the request cannot be retried — the status
+			// and any content are already on the wire. Carrying an attempt across
+			// into the next candidate is a behaviour change beyond this fix; the
+			// failure surfaces as a typed error frame exactly as it did before. See
+			// `streamCommit.makeStreamFailure`.
+			commit := &streamCommit{}
+			qCostStream := costSample{}
+			var streamErr error
+
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				commit.FlushHeaders(w, resp.StatusCode)
+			} else {
+				// Non-2xx already took its failover decisions above, so nothing
+				// retries here. The status goes out with an empty body, exactly as
+				// the pre-buffering code did.
+				w.WriteHeader(resp.StatusCode)
+				commit.MarkStatusWritten()
+				commit.MarkBodyWritten()
+				return
+			}
+
+			flusher, _ := w.(http.Flusher)
 
 			var streamBuffer []byte
-			var qCost costSample
-			if p.isQoder(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				// Qoder reports refusal, throttle and moderation INSIDE a 200
-				// stream, so the error path has to live here rather than in the
-				// status check above.
-				var qErr error
-				streamBuffer, tokensOut, qCost, qErr = p.streamQoderToOpenAICost(r.Context(), resp.Body, w, flusher, resolvedModel)
-				if qErr != nil {
-					// Headers are already flushed with the first chunk, so the
-					// status cannot be revised. The failure is recorded and the
-					// stream ends; the client received a typed SSE error frame.
-					p.logRequestCost(candidateModel, conn.ID, conn.Name, 200, time.Since(start).Milliseconds(), 0, tokensOut, true, qErr.Error(), taskClass, modeLabel, qCost)
-					return
-				}
-			} else if conn.Format == "commandcode" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			switch {
+			case p.isQoder(conn):
+				// Qoder's frames are enveloped and its failures are in-stream, so this
+				// is the one provider that must be consumed here rather than piped.
+				streamBuffer, tokensOut, qCostStream, streamErr =
+					p.streamQoderToOpenAICost(r.Context(), resp.Body, w, flusher, resolvedModel)
+			case conn.Format == "commandcode":
+				// CommandCode Alpha speaks NDJSON, not OpenAI SSE, so it needs its own
+				// translator. It deliberately does NOT go through the commit gate: the
+				// translator owns the client writes, so it cannot report a failure that
+				// is still retryable. Dropping this branch would have pushed raw NDJSON
+				// to OpenAI clients — a regression introduced by the buffering change
+				// and caught by reviewing every format branch, not by the tests.
 				streamBuffer, tokensOut = p.pipeCCAlphaStreamToOpenAI(resp.Body, w, flusher, resolvedModel)
-			} else if !ok {
-				b, _ := io.ReadAll(resp.Body)
-				w.Write(b)
-				streamBuffer = b
-			} else {
-				buf := make([]byte, 4096)
-				for {
-					n, er := resp.Body.Read(buf)
-					if n > 0 {
-						w.Write(buf[:n])
-						flusher.Flush()
-						streamBuffer = append(streamBuffer, buf[:n]...)
-					}
-					if er != nil {
-						break
-					}
+				commit.MarkStatusWritten()
+				commit.MarkBodyWritten()
+			default:
+				// Every other provider: pump bytes straight through, committing on
+				// the first frame that carries content. A transport-level failure
+				// still reaches streamErr and is retryable while nothing has been
+				// written, which is strictly more failover than the previous
+				// unconditional write-then-pump.
+				var perr error
+				streamBuffer, perr = pumpStreamToClient(resp.Body, w, flusher, commit)
+				streamErr = perr
+				if perr == nil {
+					tokensOut = len(streamBuffer) / 4
 				}
 			}
 
-			// Approximate stream token counts
-			if tokensOut == 0 {
-				tokensOut = len(streamBuffer) / 4
-			}
-			if tokensIn == 0 {
-				tokensIn = len(body) / 4
-			}
-
-			// Quota recording with actual tokens
-			if resp.StatusCode == 200 {
-				quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
+			if rehandled := p.handleStreamFailure(streamFailure{
+				Err:      streamErr,
+				Commit:   commit,
+				Budget:   commit,
+				Body:     resp.Body,
+				Conn:     conn,
+				Response: resp,
+			}, w, flusher, &streamBuffer, &tokensOut, &qCostStream); rehandled {
+				continue
 			}
 
-			p.logRequestCost(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCost)
-
-			if comboName != "" && resp.StatusCode == 200 {
-				p.cmb.RecordSuccess(comboName)
-				if combo.AutoAliasExists(comboName) {
-					combo.RecordAutoSuccess(comboName, conn.ID)
+			// Committed and successful: the client has the stream. Finish the same
+			// bookkeeping the pre-buffering code did and leave the loop.
+			if commit.Committing() && streamErr == nil {
+				// Approximate token counts when the provider reported none.
+				if tokensOut == 0 {
+					tokensOut = len(streamBuffer) / 4
 				}
+				if tokensIn == 0 {
+					tokensIn = len(body) / 4
+				}
+
+				if resp.StatusCode == 200 {
+					quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
+				}
+
+				p.logRequestCost(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostStream)
+
+				if comboName != "" && resp.StatusCode == 200 {
+					p.cmb.RecordSuccess(comboName)
+					if combo.AutoAliasExists(comboName) {
+						combo.RecordAutoSuccess(comboName, conn.ID)
+					}
+				}
+
+				// Auto-Indexing: embed and store completion if header set
+				p.autoIndex(r, model, messages, string(streamBuffer), tokensIn, tokensOut)
+
+				// Plugin post-response hook (stream already sent, side-effects only)
+				if p.pm != nil {
+					p.pm.ExecuteResponseHook(r.Context(), conn.ID, resolvedModel, streamBuffer)
+				}
+				return
 			}
 
-			// Auto-Indexing: embed and store completion if header set
-			p.autoIndex(r, model, messages, string(streamBuffer), tokensIn, tokensOut)
-
-			// Plugin post-response hook (stream already sent, side-effects only)
-			if p.pm != nil {
-				p.pm.ExecuteResponseHook(r.Context(), conn.ID, resolvedModel, streamBuffer)
-			}
-
+			// Reached only when an attempt failed AFTER committing. The error frame
+			// (or the truncated body) is already on the wire, so there is nothing
+			// left to fall back to.
 			return
 		}
 
