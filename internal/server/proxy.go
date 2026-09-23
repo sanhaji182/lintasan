@@ -1080,18 +1080,27 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			qCostStream := costSample{}
 			var streamErr error
 
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				commit.FlushHeaders(w, resp.StatusCode)
-			} else {
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 				// Non-2xx already took its failover decisions above, so nothing
 				// retries here. The status goes out with an empty body, exactly as
-				// the pre-buffering code did.
+				// the pre-buffering code did. (A streaming request cannot be answered
+				// as a stream after an error status, so there is no header set.)
 				w.WriteHeader(resp.StatusCode)
 				commit.MarkStatusWritten()
 				commit.MarkBodyWritten()
 				return
 			}
 
+			// NOTE: the 2xx status is deliberately NOT written here.
+			//
+			// Sending it is what closes the retry window, and a 2xx is exactly the
+			// case that still has one open — Qoder reports failure INSIDE a 200.
+			// Writing the status eagerly (the first version of this change did) set
+			// statusWritten immediately, made the gate report "not retryable", and
+			// the in-stream refusal was reported instead of retried: the fix looked
+			// present and did nothing. The headers and status are sent by
+			// streamCommit.FlushHeaders, from the first client-visible write, which is
+			// also where the SSE Content-Type is required to be set by then.
 			flusher, _ := w.(http.Flusher)
 
 			var streamBuffer []byte
@@ -1107,12 +1116,20 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			case conn.Format == "commandcode":
 				// CommandCode Alpha speaks NDJSON, not OpenAI SSE, so it needs its own
 				// translator. It deliberately does NOT go through the commit gate: the
-				// translator owns the client writes, so it cannot report a failure that
-				// is still retryable. Dropping this branch would have pushed raw NDJSON
-				// to OpenAI clients — a regression introduced by the buffering change
-				// and caught by reviewing every format branch, not by the tests.
-				streamBuffer, tokensOut = p.pipeCCAlphaStreamToOpenAI(resp.Body, w, flusher, resolvedModel)
+				// translator writes to the client itself and never reports a retryable
+				// failure, so there is nothing to gate. Dropping this branch would have
+				// pushed raw NDJSON to OpenAI clients — a regression introduced by the
+				// buffering change and caught by reviewing every format branch, not by
+				// the tests.
+				//
+				// It also does not set the SSE headers, because it never did: the status
+				// came from the single WriteHeader that used to precede this branch, so
+				// nothing was lost when that moved into the commit gate. Byte-for-byte
+				// behaviour is preserved by sending the status and leaving the header
+				// map alone, exactly as before.
+				w.WriteHeader(resp.StatusCode)
 				commit.MarkStatusWritten()
+				streamBuffer, tokensOut = p.pipeCCAlphaStreamToOpenAI(resp.Body, w, flusher, resolvedModel)
 				commit.MarkBodyWritten()
 			default:
 				// Every other provider: pump bytes straight through, committing on
