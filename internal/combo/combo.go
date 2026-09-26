@@ -151,7 +151,9 @@ func (e *Engine) Resolve(name string) ([]ResolvedEntry, error) {
 		if entry.ConnectionID != "" {
 			connectionIDs = []string{entry.ConnectionID}
 		}
-		if entry.ProviderID != "" {
+		// Exact/legacy connection pins are authoritative. Transitional JSON may
+		// contain both fields; never let provider_id broaden an explicit pin.
+		if entry.ConnectionID == "" && entry.ProviderID != "" {
 			result = append(result, ResolvedEntry{
 				Model: entry.Model, ProviderID: entry.ProviderID, APIKey: k,
 			})

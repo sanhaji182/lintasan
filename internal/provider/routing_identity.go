@@ -15,24 +15,16 @@ func RoutingPoolIdentity(format, baseURL, chatPath, poolID string) string {
 	}
 
 	protocol := strings.ToLower(strings.TrimSpace(format))
-	host := ""
-	basePath := ""
-	if parsed, err := url.Parse(strings.TrimSpace(baseURL)); err == nil {
-		host = strings.ToLower(strings.TrimSuffix(parsed.Hostname(), "."))
-		basePath = strings.Trim(strings.ToLower(parsed.EscapedPath()), "/")
-		if basePath == "v1" {
-			basePath = ""
+	effective := JoinUpstreamPath(baseURL, strings.TrimSpace(chatPath))
+	endpoint := "unknown"
+	if parsed, err := url.Parse(effective); err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		scheme := strings.ToLower(parsed.Scheme)
+		host := strings.ToLower(strings.TrimSuffix(parsed.Host, "."))
+		path := "/" + strings.Trim(strings.ToLower(parsed.EscapedPath()), "/")
+		if path == "/" {
+			path = ""
 		}
+		endpoint = scheme + "://" + host + path
 	}
-	path := "/" + strings.Trim(strings.ToLower(strings.TrimSpace(chatPath)), "/")
-	if path == "/" {
-		path = ""
-	}
-	if host == "" {
-		host = "unknown"
-	}
-	if basePath != "" {
-		host += "/" + basePath
-	}
-	return "provider:" + protocol + ":" + host + ":" + path
+	return "provider:" + protocol + ":" + endpoint
 }

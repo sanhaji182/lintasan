@@ -301,7 +301,7 @@ describe('Routing save boundaries', () => {
     await waitFor(() => expect(screen.getByRole('option', { name: 'Qoder — 2 accounts' })).toBeInTheDocument());
     expect(screen.getAllByRole('option', { name: /Qoder/ })).toHaveLength(1);
 
-    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'provider:qoder:api.qoder.com:/chat/completions' } });
+    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'provider:qoder:https://api.qoder.com/chat/completions' } });
     expect(screen.getByRole('option', { name: 'qoder-only-a' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'qoder-only-b' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'shared-model' })).toBeInTheDocument();
@@ -312,7 +312,7 @@ describe('Routing save boundaries', () => {
     expect(screen.getByText('Qoder · provider pool')).toBeInTheDocument();
     await fireEvent.click(screen.getByRole('button', { name: 'Create Combo' }));
     await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/combos', expect.objectContaining({
-      entries: [{ model: 'shared-model', provider_id: 'provider:qoder:api.qoder.com:/chat/completions' }],
+      entries: [{ model: 'shared-model', provider_id: 'provider:qoder:https://api.qoder.com/chat/completions' }],
     })));
   });
 
@@ -321,7 +321,7 @@ describe('Routing save boundaries', () => {
     await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
     await waitFor(() => expect(screen.getByRole('option', { name: 'Qoder — 2 accounts' })).toBeInTheDocument());
-    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'provider:qoder:api.qoder.com:/chat/completions' } });
+    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'provider:qoder:https://api.qoder.com/chat/completions' } });
     await fireEvent.click(screen.getByRole('button', { name: /Advanced: pin to specific account/i }));
     await fireEvent.change(screen.getByLabelText('Pin to specific account'), { target: { value: 'qoder-b' } });
     await fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'qoder-only-b' } });

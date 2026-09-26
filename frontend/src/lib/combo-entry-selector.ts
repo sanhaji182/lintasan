@@ -35,17 +35,22 @@ function endpointIdentity(connection: ComboConnection): { id: string; provider: 
   if (pool) return { id: `pool:${pool}`, provider: pool };
 
   const format = (connection.format || 'custom').trim().toLowerCase();
-  let host = 'unknown';
-  let basePath = '';
+  let provider = 'unknown';
+  let endpoint = 'unknown';
   try {
-    const parsed = new URL(connection.base_url || '');
-    host = parsed.hostname.toLowerCase().replace(/\.$/, '') || host;
-    basePath = parsed.pathname.toLowerCase().replace(/^\/+|\/+$/g, '');
-    if (basePath === 'v1') basePath = '';
+    let base = (connection.base_url || '').trim().replace(/\/+$/, '');
+    let path = (connection.chat_path || '').trim();
+    if (path && !path.startsWith('/')) path = `/${path}`;
+    const version = base.match(/\/(v\d[^/]*)$/i)?.[1]?.toLowerCase();
+    if (version && path.toLowerCase().startsWith(`/${version}/`)) {
+      path = path.slice(version.length + 1);
+    }
+    const parsed = new URL(`${base}${path}`);
+    provider = parsed.hostname.toLowerCase().replace(/\.$/, '') || provider;
+    const effectivePath = `/${parsed.pathname.toLowerCase().replace(/^\/+|\/+$/g, '')}`.replace(/^\/$/, '');
+    endpoint = `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase().replace(/\.$/, '')}${effectivePath}`;
   } catch { /* retain conservative identity */ }
-  if (basePath) host += `/${basePath}`;
-  const chatPath = `/${(connection.chat_path || '').trim().toLowerCase().replace(/^\/+|\/+$/g, '')}`.replace(/^\/$/, '');
-  return { id: `provider:${format}:${host}:${chatPath}`, provider: host.split('/')[0] };
+  return { id: `provider:${format}:${endpoint}`, provider };
 }
 
 function displayName(connection: ComboConnection, provider: string): string {

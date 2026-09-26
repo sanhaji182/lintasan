@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/sanhaji182/lintasan-go/internal/config"
 	"github.com/sanhaji182/lintasan-go/internal/db"
+	"github.com/sanhaji182/lintasan-go/internal/provider"
 )
 
 // proxy_auth_failover_test.go — the "stuck here and stops" fix. When an
@@ -56,8 +58,12 @@ func addAuthModel(t *testing.T, database *db.DB, connName, model string) {
 
 // doAuthChat drives a non-streaming chat request through the proxy.
 func doAuthChat(t *testing.T, p *ProxyHandler) *httptest.ResponseRecorder {
+	return doAuthChatModel(t, p, "m", false)
+}
+
+func doAuthChatModel(t *testing.T, p *ProxyHandler, model string, stream bool) *httptest.ResponseRecorder {
 	t.Helper()
-	body := strings.NewReader(`{"model":"m","messages":[{"role":"user","content":"hi"}],"stream":false}`)
+	body := strings.NewReader(fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"hi"}],"stream":%t}`, model, stream))
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -102,6 +108,139 @@ func okStubLogged(hits *int, paths *[]string) http.HandlerFunc {
 			},
 			"usage": map[string]int{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
 		})
+	}
+}
+
+func TestPinnedComboAuthFailureDoesNotWiden(t *testing.T) {
+	denied := &authStub{status: 403}
+	srvDenied := httptest.NewServer(denied.handler())
+	defer srvDenied.Close()
+	var outsiderHits int
+	var outsiderPaths []string
+	srvOutsider := httptest.NewServer(okStubLogged(&outsiderHits, &outsiderPaths))
+	defer srvOutsider.Close()
+
+	h, database := newAuthProxy(t)
+	addAuthConnection(t, database, "exact", srvDenied.URL, 100)
+	addAuthConnection(t, database, "outsider", srvOutsider.URL, 0)
+	addAuthModel(t, database, "exact", "m")
+	addAuthModel(t, database, "outsider", "m")
+	if err := h.cmb.LoadFromSettings(`[{"name":"pinned-combo","strategy":"priority","entries":[{"model":"m","connection_id":"conn-exact","provider_id":"pool:wrong"}]}]`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doAuthChatModel(t, h, "pinned-combo", false)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("exact pin widened after auth failure: %s", rec.Body.String())
+	}
+	for _, path := range outsiderPaths {
+		if strings.Contains(path, "/chat/completions") {
+			t.Fatalf("outsider received exact-pin chat request: %v", outsiderPaths)
+		}
+	}
+}
+
+func TestProviderComboAuthFailureStaysWithinPool(t *testing.T) {
+	var deniedHits, poolHits, outsiderHits int
+	var providerPaths []string
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		providerPaths = append(providerPaths, r.Header.Get("Authorization")+" "+r.Method+" "+r.URL.Path)
+		if r.Header.Get("Authorization") == "Bearer key-denied" {
+			deniedHits++
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"message":"key rejected"}}`))
+			return
+		}
+		okStub(&poolHits)(w, r)
+	}))
+	defer providerServer.Close()
+	var outsiderPaths []string
+	srvOutsider := httptest.NewServer(okStubLogged(&outsiderHits, &outsiderPaths))
+	defer srvOutsider.Close()
+
+	h, database := newAuthProxy(t)
+	for _, row := range []struct {
+		id, key  string
+		priority int
+	}{
+		{"pool-a", "key-denied", 100}, {"pool-b", "key-ok", 50},
+	} {
+		_, err := database.Conn().Exec(`INSERT INTO connections (id,name,base_url,api_key,format,chat_path,models_path,auth_header,auth_prefix,is_active,priority) VALUES (?,?,?,?,'openai','/chat/completions','/models','Authorization','Bearer ',1,?)`, "conn-"+row.id, row.id, providerServer.URL, row.key, row.priority)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	addAuthConnection(t, database, "outsider", srvOutsider.URL, 0)
+	for _, name := range []string{"pool-a", "pool-b", "outsider"} {
+		addAuthModel(t, database, name, "m")
+	}
+	providerID := provider.RoutingPoolIdentity("openai", providerServer.URL, "/chat/completions", "")
+	if err := h.cmb.LoadFromSettings(fmt.Sprintf(`[{"name":"provider-combo","strategy":"priority","entries":[{"model":"m","provider_id":%q}]}]`, providerID)); err != nil {
+		t.Fatal(err)
+	}
+	resolved, _, ok := h.resolveCombo("provider-combo")
+	if !ok || len(resolved) != 2 {
+		t.Fatalf("provider combo resolved %d candidates, want 2: %#v", len(resolved), resolved)
+	}
+	if resolved[0].ID != "conn-pool-a" || resolved[1].ID != "conn-pool-b" || resolved[0].APIKey != "key-denied" || resolved[1].APIKey != "key-ok" {
+		t.Fatalf("unexpected provider candidates: %#v", resolved)
+	}
+
+	rec := doAuthChatModel(t, h, "provider-combo", false)
+	if rec.Code != http.StatusOK || deniedHits == 0 || poolHits == 0 {
+		t.Fatalf("same-provider fallback failed: status=%d denied=%d poolHits=%d paths=%v body=%s", rec.Code, deniedHits, poolHits, providerPaths, rec.Body.String())
+	}
+	for _, path := range outsiderPaths {
+		if strings.Contains(path, "/chat/completions") {
+			t.Fatalf("outsider received provider-combo chat request: %v", outsiderPaths)
+		}
+	}
+}
+
+func TestProviderComboStreamFailureStaysWithinPool(t *testing.T) {
+	var refusedHits, poolHits, outsiderHits int
+	providerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if r.Header.Get("Authorization") == "Bearer key-refused" {
+			refusedHits++
+			_, _ = w.Write([]byte(qoderRoleThenRefusal))
+			return
+		}
+		poolHits++
+		_, _ = w.Write([]byte(qoderRoleThenContent))
+	}))
+	defer providerServer.Close()
+	var outsiderPaths []string
+	srvOutsider := httptest.NewServer(okStubLogged(&outsiderHits, &outsiderPaths))
+	defer srvOutsider.Close()
+
+	h, database := newAuthProxy(t)
+	for _, row := range []struct {
+		id, key  string
+		priority int
+	}{{"pool-a", "key-refused", 100}, {"pool-b", "key-ok", 50}} {
+		_, err := database.Conn().Exec(`INSERT INTO connections (id,name,base_url,api_key,format,chat_path,models_path,auth_header,auth_prefix,is_active,priority) VALUES (?,?,?,?,'qoder','/chat/completions','/models','Authorization','Bearer ',1,?)`, "conn-"+row.id, row.id, providerServer.URL, row.key, row.priority)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	addAuthConnection(t, database, "outsider", srvOutsider.URL, 0)
+	for _, name := range []string{"pool-a", "pool-b", "outsider"} {
+		addAuthModel(t, database, name, "m")
+	}
+	providerID := provider.RoutingPoolIdentity("qoder", providerServer.URL, "/chat/completions", "")
+	if err := h.cmb.LoadFromSettings(fmt.Sprintf(`[{"name":"provider-stream","strategy":"priority","entries":[{"model":"m","provider_id":%q}]}]`, providerID)); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doAuthChatModel(t, h, "provider-stream", true)
+	if rec.Code != http.StatusOK || refusedHits == 0 || poolHits == 0 || !strings.Contains(rec.Body.String(), "PONG") {
+		t.Fatalf("same-provider stream fallback failed: status=%d refused=%d pool=%d body=%s", rec.Code, refusedHits, poolHits, rec.Body.String())
+	}
+	for _, path := range outsiderPaths {
+		if strings.Contains(path, "/chat/completions") {
+			t.Fatalf("outsider received stream combo request: %v", outsiderPaths)
+		}
 	}
 }
 

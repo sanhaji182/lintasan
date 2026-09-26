@@ -718,7 +718,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	if p.shouldHedge(stream, directMode, candidates) {
+	if p.shouldHedge(stream, directMode || comboName != "", candidates) {
 		if hedgeConn, hedgeResp, hedgeErr := p.doHedgedUpstream(r, candidates, body); hedgeErr == nil && hedgeResp != nil {
 			defer hedgeResp.Body.Close()
 			w.Header().Set("X-Lintasan-Hedge", "hit")
@@ -985,8 +985,10 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 				for _, c := range candidates {
 					tried = append(tried, c.ID)
 				}
-				if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
-					candidates = append(candidates, alternates...)
+				if comboName == "" {
+					if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
+						candidates = append(candidates, alternates...)
+					}
 				}
 				continue
 			}
@@ -1176,8 +1178,10 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 					for _, c := range candidates {
 						tried = append(tried, c.ID)
 					}
-					if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
-						candidates = append(candidates, alternates...)
+					if comboName == "" {
+						if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
+							candidates = append(candidates, alternates...)
+						}
 					}
 				}
 				continue

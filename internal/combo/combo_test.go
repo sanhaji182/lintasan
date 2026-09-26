@@ -410,6 +410,21 @@ func TestResolveSupportsCanonicalPinnedConnectionID(t *testing.T) {
 	}
 }
 
+func TestResolveConnectionIDWinsWhenProviderIDAlsoPresent(t *testing.T) {
+	e := New()
+	jsonStr := `[{"name":"transitional","strategy":"priority","entries":[{"model":"shared","connection_id":"conn-exact","provider_id":"provider:qoder:https://api.qoder.com/chat/completions"}]}]`
+	if err := e.LoadFromSettings(jsonStr); err != nil {
+		t.Fatalf("LoadFromSettings: %v", err)
+	}
+	resolved, err := e.Resolve("transitional")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(resolved) != 1 || resolved[0].ConnectionID != "conn-exact" || resolved[0].ProviderID != "" {
+		t.Fatalf("exact connection was not authoritative: %+v", resolved)
+	}
+}
+
 func TestJSONRoundTrip(t *testing.T) {
 	original := `[{"name":"test","strategy":"priority","sticky_limit":5,"entries":[{"model":"gpt-4","connection_ids":["c1","c2"],"api_keys":["sk-1"]}]}]`
 	e := New()

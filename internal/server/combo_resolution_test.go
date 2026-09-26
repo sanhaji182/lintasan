@@ -109,7 +109,7 @@ func TestProviderComboEntryResolvesOnlyItsProviderPool(t *testing.T) {
 		}
 	}
 
-	comboJSON := `[{"name":"provider-combo","strategy":"priority","entries":[{"model":"shared-model","provider_id":"provider:qoder:api.qoder.com:/chat/completions"}]}]`
+	comboJSON := `[{"name":"provider-combo","strategy":"priority","entries":[{"model":"shared-model","provider_id":"provider:qoder:https://api.qoder.com/chat/completions"}]}]`
 	if err := s.proxy.cmb.LoadFromSettings(comboJSON); err != nil {
 		t.Fatal(err)
 	}
