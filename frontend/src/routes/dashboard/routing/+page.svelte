@@ -67,6 +67,7 @@
   let comboDiscoveredModels = $state<any[]>([]);
   let comboCatalogLoading = $state(false);
   let comboCatalogError = $state('');
+  let comboProviderSearch = $state('');
   let selectedComboConnection = $state('');
   let selectedComboModel = $state('');
   let newComboEntries = $state<Array<{ model: string; connectionId: string }>>([]);
@@ -260,16 +261,23 @@
   }
 
   function addPinnedComboEntry() {
-    if (!selectedComboConnection || !selectedComboModel) return;
+    if (!selectedProvider || !selectedComboModel || !selectedConnectionModels.includes(selectedComboModel)) return;
     newComboEntries = [...newComboEntries, { model: selectedComboModel, connectionId: selectedComboConnection }];
     selectedComboModel = '';
   }
 
   function addAdvancedComboEntry() {
     const model = advancedModel.trim();
-    if (!model || !selectedComboConnection) return;
+    if (!model || !selectedProvider) return;
     newComboEntries = [...newComboEntries, { model, connectionId: selectedComboConnection }];
     advancedModel = '';
+  }
+
+  function updateComboProviderSearch(value: string) {
+    comboProviderSearch = value;
+    const provider = comboProviders.find(option => option.id === value);
+    selectedComboConnection = provider?.id || '';
+    selectedComboModel = '';
   }
 
   function removeComboEntry(index: number) {
@@ -277,7 +285,7 @@
   }
 
   async function syncComboModels() {
-    if (!selectedComboConnection) return;
+    if (!selectedProvider) return;
     syncingConnection = selectedComboConnection;
     comboCatalogError = '';
     try {
@@ -321,6 +329,7 @@
       newComboName = '';
       newComboDescription = '';
       newComboEntries = [];
+      comboProviderSearch = '';
       selectedComboConnection = '';
       selectedComboModel = '';
       advancedModel = '';
@@ -770,7 +779,7 @@
               <div class="selector-steps">
                 <label class="selector-step">
                   <span><b>1</b> Provider / Connection</span>
-                  <input class="input-field provider-search" list="combo-provider-options" placeholder="Search provider or connection…" bind:value={selectedComboConnection} oninput={() => selectedComboModel = ''} />
+                  <input class="input-field provider-search" list="combo-provider-options" placeholder="Search provider or connection…" value={comboProviderSearch} oninput={(event) => updateComboProviderSearch((event.currentTarget as HTMLInputElement).value)} />
                   <datalist id="combo-provider-options">
                     {#each comboProviders as provider}<option value={provider.id}>{provider.provider} — {provider.name}</option>{/each}
                   </datalist>
@@ -778,12 +787,12 @@
                 </label>
                 <label class="selector-step">
                   <span><b>2</b> Model</span>
-                  <input class="input-field" list="combo-model-options" placeholder={selectedComboConnection ? 'Search discovered models…' : 'Choose a provider first'} bind:value={selectedComboModel} disabled={!selectedComboConnection || selectedConnectionModels.length === 0} />
+                  <input class="input-field" list="combo-model-options" placeholder={selectedProvider ? 'Search discovered models…' : 'Choose a provider first'} bind:value={selectedComboModel} disabled={!selectedProvider || selectedConnectionModels.length === 0} />
                   <datalist id="combo-model-options">{#each selectedConnectionModels as model}<option value={model}></option>{/each}</datalist>
-                  {#if selectedComboConnection && selectedConnectionModels.length === 0}<small>No active discovered models for this connection.</small>{/if}
+                  {#if selectedProvider && selectedConnectionModels.length === 0}<small>No active discovered models for this connection.</small>{/if}
                 </label>
                 <div class="entry-actions">
-                  <button type="button" class="btn-primary" onclick={addPinnedComboEntry} disabled={!selectedComboConnection || !selectedConnectionModels.includes(selectedComboModel)}>Add entry</button>
+                  <button type="button" class="btn-primary" onclick={addPinnedComboEntry} disabled={!selectedProvider || !selectedConnectionModels.includes(selectedComboModel)}>Add entry</button>
                   <button type="button" class="btn-secondary" onclick={syncComboModels} disabled={!selectedProvider?.canSync || Boolean(syncingConnection)}><RotateCw size={13} /> {syncingConnection ? 'Syncing…' : 'Sync Models'}</button>
                 </div>
               </div>
@@ -791,8 +800,8 @@
               <button type="button" class="advanced-toggle" onclick={() => showAdvancedModelInput = !showAdvancedModelInput}>Advanced: manually enter a model ID</button>
               {#if showAdvancedModelInput}
                 <div class="advanced-row">
-                  <input class="input-field" placeholder="Exact model ID" bind:value={advancedModel} disabled={!selectedComboConnection} />
-                  <button type="button" class="btn-secondary" onclick={addAdvancedComboEntry} disabled={!selectedComboConnection || !advancedModel.trim()}>Add manual entry</button>
+                  <input class="input-field" placeholder="Exact model ID" bind:value={advancedModel} disabled={!selectedProvider} />
+                  <button type="button" class="btn-secondary" onclick={addAdvancedComboEntry} disabled={!selectedProvider || !advancedModel.trim()}>Add manual entry</button>
                   <small>Compatibility fallback only. The entry remains pinned to the selected connection.</small>
                 </div>
               {/if}
