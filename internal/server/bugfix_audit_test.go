@@ -366,6 +366,28 @@ func TestHandleAudit_SurvivesEmptyTable(t *testing.T) {
 	}
 }
 
+func TestHandleModelsDiscoveredIncludesConnectionIdentity(t *testing.T) {
+	s := newRESTTestServer(t)
+	_, err := s.db.Conn().Exec(`INSERT INTO discovered_models (id, connection_id, model_id, model_name, owned_by, is_active) VALUES (?, ?, ?, ?, ?, ?)`, "model-row", "conn-a", "shared-model", "Shared", "test", 1)
+	if err != nil {
+		t.Fatalf("seed discovered model: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	s.handleModelsDiscovered(rec, httptest.NewRequest("GET", "/api/models/discovered", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("handleModelsDiscovered: got %d, want 200", rec.Code)
+	}
+	var response struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Data) != 1 || response.Data[0]["connection_id"] != "conn-a" {
+		t.Fatalf("connection provenance missing: %#v", response.Data)
+	}
+}
+
 // TestHandleCacheAction_Survives verifies cache clear action doesn't crash.
 func TestHandleCacheAction_Survives(t *testing.T) {
 	s := newRESTTestServer(t)

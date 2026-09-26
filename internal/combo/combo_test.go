@@ -380,6 +380,21 @@ func TestResolve_EmptyConnectionIDs(t *testing.T) {
 	}
 }
 
+func TestResolveSupportsCanonicalPinnedConnectionID(t *testing.T) {
+	e := New()
+	jsonStr := `[{"name":"pinned","strategy":"priority","entries":[{"model":"shared","connection_id":"conn-a"},{"model":"shared","connection_id":"conn-b"}]}]`
+	if err := e.LoadFromSettings(jsonStr); err != nil {
+		t.Fatalf("LoadFromSettings: %v", err)
+	}
+	resolved, err := e.Resolve("pinned")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(resolved) != 2 || resolved[0].ConnectionID != "conn-a" || resolved[1].ConnectionID != "conn-b" {
+		t.Fatalf("canonical pinned entries not preserved: %+v", resolved)
+	}
+}
+
 func TestJSONRoundTrip(t *testing.T) {
 	original := `[{"name":"test","strategy":"priority","sticky_limit":5,"entries":[{"model":"gpt-4","connection_ids":["c1","c2"],"api_keys":["sk-1"]}]}]`
 	e := New()

@@ -11,6 +11,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
   import { routingDirtyState, buildPolicyPayload, buildQuotaPayload } from '$lib/workflow-consolidation';
+  import { comboProviderOptions, comboModelsForConnection, buildPinnedComboEntries } from '$lib/combo-entry-selector';
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
@@ -25,7 +26,7 @@
     models?: string[];
     description?: string;
     order: number;
-    entries?: Array<{ model: string; connection_ids?: string[] }>;
+    entries?: Array<{ model: string; connection_id?: string; connection_ids?: string[] }>;
   }
 
   interface Alias {
@@ -62,8 +63,21 @@
   let newComboName = $state('');
   let newComboStrategy = $state('priority');
   let newComboDescription = $state('');
-  let newComboModelsText = $state('');
+  let comboConnections = $state<any[]>([]);
+  let comboDiscoveredModels = $state<any[]>([]);
+  let comboCatalogLoading = $state(false);
+  let comboCatalogError = $state('');
+  let comboProviderSearch = $state('');
+  let selectedComboConnection = $state('');
+  let selectedComboModel = $state('');
+  let newComboEntries = $state<Array<{ model: string; connectionId: string }>>([]);
+  let showAdvancedModelInput = $state(false);
+  let advancedModel = $state('');
+  let syncingConnection = $state('');
   let comboCreating = $state(false);
+  const comboProviders = $derived(comboProviderOptions(comboConnections));
+  const selectedProvider = $derived(comboProviders.find(option => option.id === selectedComboConnection));
+  const selectedConnectionModels = $derived(comboModelsForConnection(comboDiscoveredModels, selectedComboConnection));
 
   // Smart Routing Intelligence config (ML routing, cost, quota)
   interface SmartConfig {
@@ -227,19 +241,76 @@
     }
   }
 
+  async function loadComboCatalog() {
+    comboCatalogLoading = true;
+    comboCatalogError = '';
+    try {
+      const [connectionsResponse, modelsResponse] = await Promise.all([
+        api.get<any>('/api/connections'),
+        api.get<any>('/api/models/discovered'),
+      ]);
+      comboConnections = Array.isArray(connectionsResponse?.data) ? connectionsResponse.data : [];
+      comboDiscoveredModels = Array.isArray(modelsResponse?.data) ? modelsResponse.data : [];
+    } catch (e: any) {
+      comboConnections = [];
+      comboDiscoveredModels = [];
+      comboCatalogError = e.message || 'Provider catalog could not be loaded.';
+    } finally {
+      comboCatalogLoading = false;
+    }
+  }
+
+  function addPinnedComboEntry() {
+    if (!selectedProvider || !selectedComboModel || !selectedConnectionModels.includes(selectedComboModel)) return;
+    newComboEntries = [...newComboEntries, { model: selectedComboModel, connectionId: selectedComboConnection }];
+    selectedComboModel = '';
+  }
+
+  function addAdvancedComboEntry() {
+    const model = advancedModel.trim();
+    if (!model || !selectedProvider) return;
+    newComboEntries = [...newComboEntries, { model, connectionId: selectedComboConnection }];
+    advancedModel = '';
+  }
+
+  function updateComboProviderSearch(value: string) {
+    comboProviderSearch = value;
+    const provider = comboProviders.find(option => option.id === value);
+    selectedComboConnection = provider?.id || '';
+    selectedComboModel = '';
+  }
+
+  function removeComboEntry(index: number) {
+    newComboEntries = newComboEntries.filter((_, entryIndex) => entryIndex !== index);
+  }
+
+  async function syncComboModels() {
+    if (!selectedProvider) return;
+    syncingConnection = selectedComboConnection;
+    comboCatalogError = '';
+    try {
+      await api.post(`/api/models/sync/${encodeURIComponent(selectedComboConnection)}`, {});
+      const modelsResponse = await api.get<any>('/api/models/discovered');
+      comboDiscoveredModels = Array.isArray(modelsResponse?.data) ? modelsResponse.data : [];
+      showToast(`Models synced for ${selectedProvider?.name || selectedComboConnection}`, 'success');
+    } catch (e: any) {
+      comboCatalogError = e.message || 'Model sync failed.';
+      showToast(comboCatalogError, 'error');
+    } finally {
+      syncingConnection = '';
+    }
+  }
+
   async function createCombo() {
     const name = newComboName.trim();
     if (!name) {
       showToast('Combo name is required', 'error');
       return;
     }
-    const rawModels = newComboModelsText
-      .split(/[\n,]+/)
-      .map(m => m.trim())
-      .filter(Boolean);
+    const entries = buildPinnedComboEntries(newComboEntries);
 
-    if (rawModels.length === 0) {
-      showToast('At least one model is required in the combo', 'error');
+    if (entries.length === 0) {
+      showToast('At least one pinned provider and model entry is required', 'error');
       return;
     }
 
@@ -249,15 +320,20 @@
         name,
         strategy: newComboStrategy,
         description: newComboDescription.trim(),
-        models: rawModels,
-        entries: rawModels.map(m => ({ model: m }))
+        models: entries.map(entry => entry.model),
+        entries,
       };
       await api.post('/api/combos', payload);
       showToast(`Combo "${name}" created successfully`, 'success');
       showComboForm = false;
       newComboName = '';
       newComboDescription = '';
-      newComboModelsText = '';
+      newComboEntries = [];
+      comboProviderSearch = '';
+      selectedComboConnection = '';
+      selectedComboModel = '';
+      advancedModel = '';
+      showAdvancedModelInput = false;
       await loadCombos();
     } catch (e: any) {
       showToast(e.message || 'Failed to create combo', 'error');
@@ -329,6 +405,7 @@
     savedPolicy = policyFingerprint;
     savedQuotas = quotasFingerprint;
     loading = false;
+    void loadComboCatalog();
   });
 
   function updateStrategy(comboId: string, strategy: string) {
@@ -686,17 +763,58 @@
               bind:value={newComboDescription}
             />
           </div>
-          <div>
-            <label for="new-combo-models" style="display: block; font-size: 11px; font-weight: 500; color: var(--color-fg-3); margin-bottom: 4px;">
-              Models in failover order (comma or newline separated, e.g. Qwen/Qwen3.8-Flash, deepseek/deepseek-v4-flash):
-            </label>
-            <textarea
-              id="new-combo-models"
-              class="input-field"
-              style="width: 100%; min-height: 60px; font-family: var(--font-mono); font-size: 12px; resize: vertical;"
-              placeholder="~deepseek/deepseek-flash-latest, deepseek/deepseek-v4-flash, Qwen/Qwen3.8-Flash"
-              bind:value={newComboModelsText}
-            ></textarea>
+          <div class="combo-entry-builder">
+            <div class="combo-entry-heading">
+              <div><strong>Failover entries</strong><span>Each entry is pinned to the exact connection you select.</span></div>
+              <span class="entry-count">{newComboEntries.length} configured</span>
+            </div>
+
+            {#if comboCatalogLoading}
+              <div class="catalog-state"><Spinner /> Loading provider catalog…</div>
+            {:else if comboCatalogError}
+              <div class="catalog-state error" role="alert">{comboCatalogError}<button type="button" class="btn-secondary" onclick={loadComboCatalog}>Retry</button></div>
+            {:else if comboProviders.length === 0}
+              <div class="catalog-state">No active provider connections are available. Add or enable a connection first.</div>
+            {:else}
+              <div class="selector-steps">
+                <label class="selector-step">
+                  <span><b>1</b> Provider / Connection</span>
+                  <input class="input-field provider-search" list="combo-provider-options" placeholder="Search provider or connection…" value={comboProviderSearch} oninput={(event) => updateComboProviderSearch((event.currentTarget as HTMLInputElement).value)} />
+                  <datalist id="combo-provider-options">
+                    {#each comboProviders as provider}<option value={provider.id}>{provider.provider} — {provider.name}</option>{/each}
+                  </datalist>
+                  {#if selectedProvider}<small>{selectedProvider.provider} · {selectedProvider.name} · <code>{selectedProvider.id}</code></small>{/if}
+                </label>
+                <label class="selector-step">
+                  <span><b>2</b> Model</span>
+                  <input class="input-field" list="combo-model-options" placeholder={selectedProvider ? 'Search discovered models…' : 'Choose a provider first'} bind:value={selectedComboModel} disabled={!selectedProvider || selectedConnectionModels.length === 0} />
+                  <datalist id="combo-model-options">{#each selectedConnectionModels as model}<option value={model}></option>{/each}</datalist>
+                  {#if selectedProvider && selectedConnectionModels.length === 0}<small>No active discovered models for this connection.</small>{/if}
+                </label>
+                <div class="entry-actions">
+                  <button type="button" class="btn-primary" onclick={addPinnedComboEntry} disabled={!selectedProvider || !selectedConnectionModels.includes(selectedComboModel)}>Add entry</button>
+                  <button type="button" class="btn-secondary" onclick={syncComboModels} disabled={!selectedProvider?.canSync || Boolean(syncingConnection)}><RotateCw size={13} /> {syncingConnection ? 'Syncing…' : 'Sync Models'}</button>
+                </div>
+              </div>
+
+              <button type="button" class="advanced-toggle" onclick={() => showAdvancedModelInput = !showAdvancedModelInput}>Advanced: manually enter a model ID</button>
+              {#if showAdvancedModelInput}
+                <div class="advanced-row">
+                  <input class="input-field" placeholder="Exact model ID" bind:value={advancedModel} disabled={!selectedProvider} />
+                  <button type="button" class="btn-secondary" onclick={addAdvancedComboEntry} disabled={!selectedProvider || !advancedModel.trim()}>Add manual entry</button>
+                  <small>Compatibility fallback only. The entry remains pinned to the selected connection.</small>
+                </div>
+              {/if}
+            {/if}
+
+            {#if newComboEntries.length > 0}
+              <ol class="draft-chain">
+                {#each newComboEntries as entry, index}
+                  {@const provider = comboProviders.find(option => option.id === entry.connectionId)}
+                  <li><span class="chain-step-num">{index + 1}</span><div><code>{entry.model}</code><small>{provider?.provider || 'Connection'} · {provider?.name || entry.connectionId}</small></div><button type="button" class="btn-icon" aria-label={`Remove ${entry.model} from combo`} onclick={() => removeComboEntry(index)}><X size={14} /></button></li>
+                {/each}
+              </ol>
+            {/if}
           </div>
           <div class="flex items-center gap-2">
             <button class="btn-primary" onclick={createCombo} disabled={comboCreating}>
@@ -936,6 +1054,29 @@
 
 <style>
   .routing-section-nav { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
+  .combo-entry-builder { padding:14px; border:1px solid var(--color-border); border-radius:10px; background:var(--color-bg-body); }
+  .combo-entry-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
+  .combo-entry-heading strong,.combo-entry-heading span { display:block; }
+  .combo-entry-heading strong { font-size:13px; color:var(--color-fg-0); }
+  .combo-entry-heading span,.selector-step small,.advanced-row small,.draft-chain small { font-size:10px; color:var(--color-fg-3); margin-top:2px; }
+  .entry-count { padding:3px 8px; border-radius:999px; background:var(--color-primary-light); color:var(--color-primary) !important; white-space:nowrap; }
+  .selector-steps { display:grid; grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) auto; gap:10px; align-items:end; }
+  .selector-step { display:flex; flex-direction:column; gap:5px; min-width:0; }
+  .selector-step>span { font-size:11px; font-weight:650; color:var(--color-fg-2); }
+  .selector-step b { display:inline-grid; place-items:center; width:18px; height:18px; border-radius:50%; background:var(--color-primary); color:white; margin-right:4px; }
+  .entry-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .entry-actions button { display:inline-flex; align-items:center; gap:5px; }
+  .catalog-state { display:flex; align-items:center; gap:9px; padding:14px; border:1px dashed var(--color-border); border-radius:8px; font-size:12px; color:var(--color-fg-2); }
+  .catalog-state.error { border-color:var(--color-error); color:var(--color-error); background:var(--color-error-light); }
+  .catalog-state button { margin-left:auto; }
+  .advanced-toggle { margin-top:10px; border:0; background:transparent; color:var(--color-primary); font-size:11px; cursor:pointer; padding:3px 0; }
+  .advanced-row { display:grid; grid-template-columns:minmax(220px,1fr) auto; gap:8px; align-items:center; margin-top:7px; }
+  .advanced-row small { grid-column:1/-1; }
+  .draft-chain { list-style:none; margin:12px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
+  .draft-chain li { display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg-card); }
+  .draft-chain li>div { flex:1; min-width:0; display:flex; flex-direction:column; }
+  .draft-chain code { font-size:11px; overflow:hidden; text-overflow:ellipsis; }
+  @media (max-width: 760px) { .selector-steps { grid-template-columns:1fr; } .entry-actions { justify-content:flex-start; } }
   .routing-section-nav button { text-align:left; border:1px solid var(--color-border); background:var(--color-bg-card); border-radius:10px; padding:11px 13px; cursor:pointer; color:var(--color-fg-1); }
   .routing-section-nav button.active { border-color:var(--color-primary); background:var(--color-primary-light); color:var(--color-primary); }
   .routing-section-nav span { display:block; font-size:13px; font-weight:700; }
