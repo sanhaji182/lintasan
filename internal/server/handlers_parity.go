@@ -944,22 +944,22 @@ func (s *Server) handleModelsDiscovered(w http.ResponseWriter, r *http.Request) 
 	var err error
 	if connID != "" {
 		rows, err = s.db.Conn().Query(
-			"SELECT id, model_id, model_name, owned_by, is_active, discovered_at FROM discovered_models WHERE connection_id=? ORDER BY model_id", connID)
+			"SELECT id, connection_id, model_id, model_name, owned_by, is_active, discovered_at FROM discovered_models WHERE connection_id=? ORDER BY model_id", connID)
 	} else {
 		rows, err = s.db.Conn().Query(
-			"SELECT id, model_id, model_name, owned_by, is_active, discovered_at FROM discovered_models ORDER BY model_id")
+			"SELECT id, connection_id, model_id, model_name, owned_by, is_active, discovered_at FROM discovered_models ORDER BY connection_id, model_id")
 	}
 	out := []map[string]any{}
 	if err == nil && rows != nil {
 		defer rows.Close()
 		for rows.Next() {
-			var id, mid, name, owner, dt string
+			var id, connectionID, mid, name, owner, dt string
 			var active int
-			if err := rows.Scan(&id, &mid, &name, &owner, &active, &dt); err != nil {
+			if err := rows.Scan(&id, &connectionID, &mid, &name, &owner, &active, &dt); err != nil {
 				continue
 			}
 			out = append(out, map[string]any{
-				"id": id, "model_id": mid, "model_name": name,
+				"id": id, "connection_id": connectionID, "model_id": mid, "model_name": name,
 				"owned_by": owner, "is_active": active, "discovered_at": dt,
 			})
 		}

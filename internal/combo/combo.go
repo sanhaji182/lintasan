@@ -17,7 +17,8 @@ const (
 // Entry describes one model + connections + API keys block inside a combo.
 type Entry struct {
 	Model         string   `json:"model"`
-	ConnectionIDs []string `json:"connection_ids"`
+	ConnectionID  string   `json:"connection_id,omitempty"`
+	ConnectionIDs []string `json:"connection_ids,omitempty"`
 	APIKeys       []string `json:"api_keys,omitempty"`
 }
 
@@ -48,11 +49,11 @@ type ResolvedEntry struct {
 
 // Engine holds combo definitions and runtime state.
 type Engine struct {
-	mu       sync.RWMutex
-	combos   map[string]*Combo       // name → combo
-	sticky   map[string]*StickyState // comboName → sticky state
-	rrCount  map[string]int          // comboName → next round-robin start index
-	keyIdx   map[string]int          // "comboName:entryIdx" → next API key index
+	mu      sync.RWMutex
+	combos  map[string]*Combo       // name → combo
+	sticky  map[string]*StickyState // comboName → sticky state
+	rrCount map[string]int          // comboName → next round-robin start index
+	keyIdx  map[string]int          // "comboName:entryIdx" → next API key index
 }
 
 // New creates a ready-to-use Engine.
@@ -144,7 +145,11 @@ func (e *Engine) Resolve(name string) ([]ResolvedEntry, error) {
 	var result []ResolvedEntry
 	for entryIdx, entry := range ordered {
 		k := e.rotateKey(name, entryIdx, entry)
-		for _, cid := range entry.ConnectionIDs {
+		connectionIDs := entry.ConnectionIDs
+		if entry.ConnectionID != "" {
+			connectionIDs = []string{entry.ConnectionID}
+		}
+		for _, cid := range connectionIDs {
 			if cid != "" {
 				result = append(result, ResolvedEntry{
 					Model:        entry.Model,
@@ -155,7 +160,7 @@ func (e *Engine) Resolve(name string) ([]ResolvedEntry, error) {
 		}
 		// If entry has no specific connection IDs, emit candidate with empty ConnectionID
 		// so resolver can match any active connection serving this model.
-		if len(entry.ConnectionIDs) == 0 {
+		if len(connectionIDs) == 0 {
 			result = append(result, ResolvedEntry{
 				Model:  entry.Model,
 				APIKey: k,
