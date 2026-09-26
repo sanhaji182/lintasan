@@ -66,6 +66,47 @@ test('unknown custom providers fall back truthfully to configured connection nam
   assert.equal(option.provider, 'llm.internal.example');
 });
 
+test('shared-host providers match exact normalized endpoints independent of catalogue order', () => {
+  const sharedHostCatalog = [
+    { name: 'GLM China', domain: 'open.bigmodel.cn', base_url: 'https://open.bigmodel.cn/api/coding/paas/v4' },
+    { name: 'Zhipu', domain: 'open.bigmodel.cn', base_url: 'https://open.bigmodel.cn/api/paas/v4/' },
+  ];
+  const inputs = [
+    { id: 'zhipu', name: 'Zhipu account', format: 'openai', base_url: 'https://OPEN.bigmodel.cn/api/paas/v4', is_active: 1 },
+    { id: 'glm-cn', name: 'GLM account', format: 'openai', base_url: 'https://open.bigmodel.cn/api/coding/paas/v4/', is_active: 1 },
+  ];
+
+  for (const catalog of [sharedHostCatalog, [...sharedHostCatalog].reverse()]) {
+    const options = comboProviderOptions(inputs, catalog);
+    assert.equal(options.find(option => option.connectionIds.includes('zhipu'))?.name, 'Zhipu');
+    assert.equal(options.find(option => option.connectionIds.includes('glm-cn'))?.name, 'GLM China');
+  }
+});
+
+test('unknown path on a shared preset host falls back to the configured connection name', () => {
+  const [option] = comboProviderOptions([
+    { id: 'custom-bigmodel', name: 'Internal BigModel Proxy', format: 'openai', base_url: 'https://open.bigmodel.cn/custom/v1', is_active: 1 },
+  ], [
+    { name: 'Zhipu', domain: 'open.bigmodel.cn', base_url: 'https://open.bigmodel.cn/api/paas/v4' },
+    { name: 'GLM China', domain: 'open.bigmodel.cn', base_url: 'https://open.bigmodel.cn/api/coding/paas/v4' },
+  ]);
+  assert.equal(option.name, 'Internal BigModel Proxy');
+});
+
+test('unique provider domain may identify a root endpoint unambiguously', () => {
+  const [option] = comboProviderOptions([
+    { id: 'qoder-root', name: 'Personal', format: 'qoder', base_url: 'https://api.qoder.com', is_active: 1 },
+  ], providerCatalog);
+  assert.equal(option.name, 'Qoder');
+});
+
+test('custom path on a known unique provider host keeps its configured name', () => {
+  const [option] = comboProviderOptions([
+    { id: 'qoder-custom', name: 'Qoder Compatible Proxy', format: 'openai', base_url: 'https://api.qoder.com/custom/v1', is_active: 1 },
+  ], providerCatalog);
+  assert.equal(option.name, 'Qoder Compatible Proxy');
+});
+
 test('provider model list is the active union for that provider only', () => {
   const qoder = comboProviderOptions(connections, providerCatalog)[0];
   assert.deepEqual(comboModelsForProvider(models, qoder), ['only-a', 'only-b', 'shared']);

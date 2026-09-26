@@ -61,11 +61,32 @@ function endpointIdentity(connection: ComboConnection): { id: string; provider: 
   return { id: `provider:${format}:${endpoint}`, provider };
 }
 
-function normalizedHost(value?: string): string {
+function normalizedEndpoint(value?: string): string {
   const raw = (value || '').trim();
   if (!raw) return '';
-  try { return new URL(raw.includes('://') ? raw : `https://${raw}`).hostname.toLowerCase().replace(/^www\./, ''); }
-  catch { return raw.toLowerCase().replace(/^www\./, '').split('/')[0]; }
+  try {
+    const parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return `${parsed.protocol.toLowerCase()}//${parsed.host.toLowerCase().replace(/\.$/, '')}${path}`;
+  } catch {
+    return raw.replace(/\/+$/, '');
+  }
+}
+
+function normalizedHost(value?: string): string {
+  const endpoint = normalizedEndpoint(value);
+  if (!endpoint) return '';
+  try { return new URL(endpoint).hostname.toLowerCase().replace(/^www\./, ''); }
+  catch { return endpoint.toLowerCase().replace(/^www\./, '').split('/')[0]; }
+}
+
+function uniqueCatalogName(entries: ProviderCatalogEntry[]): string {
+  const names = new Map<string, string>();
+  for (const entry of entries) {
+    const name = entry.name?.trim();
+    if (name) names.set(name.toLowerCase(), name);
+  }
+  return names.size === 1 ? [...names.values()][0] : '';
 }
 
 /** Resolve the primary human-facing label from the shared provider catalogue. */
@@ -73,14 +94,32 @@ export function canonicalProviderName(
   connection: ComboConnection,
   catalog: ProviderCatalogEntry[] = [],
 ): string {
+  const endpoint = normalizedEndpoint(connection.base_url);
+  const exactName = uniqueCatalogName(catalog.filter(entry => {
+    const catalogEndpoint = normalizedEndpoint(entry.base_url);
+    return Boolean(endpoint && catalogEndpoint && endpoint === catalogEndpoint);
+  }));
+  if (exactName) return exactName;
+
   const oauthProvider = connection.oauth_provider?.trim().toLowerCase();
+  const oauthName = uniqueCatalogName(catalog.filter(entry =>
+    Boolean(oauthProvider && entry.oauth_provider?.trim().toLowerCase() === oauthProvider),
+  ));
+  if (oauthName) return oauthName;
+
   const host = normalizedHost(connection.base_url);
-  const match = catalog.find(entry => {
-    if (oauthProvider && entry.oauth_provider?.trim().toLowerCase() === oauthProvider) return true;
-    const catalogHost = normalizedHost(entry.base_url || entry.domain);
-    return Boolean(host && catalogHost && (host === catalogHost || host.endsWith(`.${catalogHost}`) || catalogHost.endsWith(`.${host}`)));
-  });
-  return match?.name?.trim() || connection.name?.trim() || host || connection.id;
+  let isRootEndpoint = false;
+  try { isRootEndpoint = new URL(endpoint).pathname.replace(/\/+$/, '') === ''; }
+  catch { /* malformed endpoints do not qualify for host inference */ }
+  if (host && isRootEndpoint) {
+    const hostName = uniqueCatalogName(catalog.filter(entry => {
+      const catalogHost = normalizedHost(entry.base_url || entry.domain);
+      return Boolean(catalogHost && (host === catalogHost || host.endsWith(`.${catalogHost}`) || catalogHost.endsWith(`.${host}`)));
+    }));
+    if (hostName) return hostName;
+  }
+
+  return connection.name?.trim() || host || connection.id;
 }
 
 export function comboProviderOptions(connections: ComboConnection[], catalog: ProviderCatalogEntry[] = []): ComboProviderOption[] {
