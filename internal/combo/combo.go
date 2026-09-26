@@ -18,6 +18,7 @@ const (
 type Entry struct {
 	Model         string   `json:"model"`
 	ConnectionID  string   `json:"connection_id,omitempty"`
+	ProviderID    string   `json:"provider_id,omitempty"`
 	ConnectionIDs []string `json:"connection_ids,omitempty"`
 	APIKeys       []string `json:"api_keys,omitempty"`
 }
@@ -44,6 +45,7 @@ type StickyState struct {
 type ResolvedEntry struct {
 	Model        string
 	ConnectionID string
+	ProviderID   string
 	APIKey       string
 }
 
@@ -148,6 +150,12 @@ func (e *Engine) Resolve(name string) ([]ResolvedEntry, error) {
 		connectionIDs := entry.ConnectionIDs
 		if entry.ConnectionID != "" {
 			connectionIDs = []string{entry.ConnectionID}
+		}
+		if entry.ProviderID != "" {
+			result = append(result, ResolvedEntry{
+				Model: entry.Model, ProviderID: entry.ProviderID, APIKey: k,
+			})
+			continue
 		}
 		for _, cid := range connectionIDs {
 			if cid != "" {

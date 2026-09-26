@@ -380,6 +380,21 @@ func TestResolve_EmptyConnectionIDs(t *testing.T) {
 	}
 }
 
+func TestResolveSupportsProviderIdentity(t *testing.T) {
+	e := New()
+	jsonStr := `[{"name":"pooled","strategy":"priority","entries":[{"model":"shared","provider_id":"provider:qoder:api.qoder.com:/chat/completions"}]}]`
+	if err := e.LoadFromSettings(jsonStr); err != nil {
+		t.Fatalf("LoadFromSettings: %v", err)
+	}
+	resolved, err := e.Resolve("pooled")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(resolved) != 1 || resolved[0].ProviderID != "provider:qoder:api.qoder.com:/chat/completions" || resolved[0].ConnectionID != "" {
+		t.Fatalf("provider identity not preserved: %+v", resolved)
+	}
+}
+
 func TestResolveSupportsCanonicalPinnedConnectionID(t *testing.T) {
 	e := New()
 	jsonStr := `[{"name":"pinned","strategy":"priority","entries":[{"model":"shared","connection_id":"conn-a"},{"model":"shared","connection_id":"conn-b"}]}]`

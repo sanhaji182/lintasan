@@ -11,7 +11,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
   import { routingDirtyState, buildPolicyPayload, buildQuotaPayload } from '$lib/workflow-consolidation';
-  import { comboProviderOptions, comboModelsForConnection, buildPinnedComboEntries } from '$lib/combo-entry-selector';
+  import { comboProviderOptions, comboModelsForProvider, buildComboEntries } from '$lib/combo-entry-selector';
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
@@ -67,17 +67,17 @@
   let comboDiscoveredModels = $state<any[]>([]);
   let comboCatalogLoading = $state(false);
   let comboCatalogError = $state('');
-  let comboProviderSearch = $state('');
-  let selectedComboConnection = $state('');
+  let selectedComboProvider = $state('');
+  let pinnedComboConnection = $state('');
   let selectedComboModel = $state('');
-  let newComboEntries = $state<Array<{ model: string; connectionId: string }>>([]);
+  let newComboEntries = $state<Array<{ model: string; providerId: string; connectionId?: string }>>([]);
   let showAdvancedModelInput = $state(false);
   let advancedModel = $state('');
   let syncingConnection = $state('');
   let comboCreating = $state(false);
   const comboProviders = $derived(comboProviderOptions(comboConnections));
-  const selectedProvider = $derived(comboProviders.find(option => option.id === selectedComboConnection));
-  const selectedConnectionModels = $derived(comboModelsForConnection(comboDiscoveredModels, selectedComboConnection));
+  const selectedProvider = $derived(comboProviders.find(option => option.id === selectedComboProvider));
+  const selectedProviderModels = $derived(comboModelsForProvider(comboDiscoveredModels, selectedProvider));
 
   // Smart Routing Intelligence config (ML routing, cost, quota)
   interface SmartConfig {
@@ -261,23 +261,23 @@
   }
 
   function addPinnedComboEntry() {
-    if (!selectedProvider || !selectedComboModel || !selectedConnectionModels.includes(selectedComboModel)) return;
-    newComboEntries = [...newComboEntries, { model: selectedComboModel, connectionId: selectedComboConnection }];
+    if (!selectedProvider || !selectedComboModel || !selectedProviderModels.includes(selectedComboModel)) return;
+    newComboEntries = [...newComboEntries, {
+      model: selectedComboModel,
+      providerId: selectedProvider.id,
+      ...(pinnedComboConnection ? { connectionId: pinnedComboConnection } : {}),
+    }];
     selectedComboModel = '';
   }
 
   function addAdvancedComboEntry() {
     const model = advancedModel.trim();
     if (!model || !selectedProvider) return;
-    newComboEntries = [...newComboEntries, { model, connectionId: selectedComboConnection }];
+    newComboEntries = [...newComboEntries, {
+      model, providerId: selectedProvider.id,
+      ...(pinnedComboConnection ? { connectionId: pinnedComboConnection } : {}),
+    }];
     advancedModel = '';
-  }
-
-  function updateComboProviderSearch(value: string) {
-    comboProviderSearch = value;
-    const provider = comboProviders.find(option => option.id === value);
-    selectedComboConnection = provider?.id || '';
-    selectedComboModel = '';
   }
 
   function removeComboEntry(index: number) {
@@ -285,14 +285,15 @@
   }
 
   async function syncComboModels() {
-    if (!selectedProvider) return;
-    syncingConnection = selectedComboConnection;
+    const connectionID = pinnedComboConnection || selectedProvider?.connectionIds[0];
+    if (!connectionID) return;
+    syncingConnection = connectionID;
     comboCatalogError = '';
     try {
-      await api.post(`/api/models/sync/${encodeURIComponent(selectedComboConnection)}`, {});
+      await api.post(`/api/models/sync/${encodeURIComponent(connectionID)}`, {});
       const modelsResponse = await api.get<any>('/api/models/discovered');
       comboDiscoveredModels = Array.isArray(modelsResponse?.data) ? modelsResponse.data : [];
-      showToast(`Models synced for ${selectedProvider?.name || selectedComboConnection}`, 'success');
+      showToast(`Models synced for ${selectedProvider?.name || connectionID}`, 'success');
     } catch (e: any) {
       comboCatalogError = e.message || 'Model sync failed.';
       showToast(comboCatalogError, 'error');
@@ -307,10 +308,10 @@
       showToast('Combo name is required', 'error');
       return;
     }
-    const entries = buildPinnedComboEntries(newComboEntries);
+    const entries = buildComboEntries(newComboEntries);
 
     if (entries.length === 0) {
-      showToast('At least one pinned provider and model entry is required', 'error');
+      showToast('At least one provider and model entry is required', 'error');
       return;
     }
 
@@ -329,8 +330,8 @@
       newComboName = '';
       newComboDescription = '';
       newComboEntries = [];
-      comboProviderSearch = '';
-      selectedComboConnection = '';
+      selectedComboProvider = '';
+      pinnedComboConnection = '';
       selectedComboModel = '';
       advancedModel = '';
       showAdvancedModelInput = false;
@@ -765,7 +766,7 @@
           </div>
           <div class="combo-entry-builder">
             <div class="combo-entry-heading">
-              <div><strong>Failover entries</strong><span>Each entry is pinned to the exact connection you select.</span></div>
+              <div><strong>Failover entries</strong><span>Each entry targets a provider pool unless you explicitly pin an account.</span></div>
               <span class="entry-count">{newComboEntries.length} configured</span>
             </div>
 
@@ -778,31 +779,37 @@
             {:else}
               <div class="selector-steps">
                 <label class="selector-step">
-                  <span><b>1</b> Provider / Connection</span>
-                  <input class="input-field provider-search" list="combo-provider-options" placeholder="Search provider or connection…" value={comboProviderSearch} oninput={(event) => updateComboProviderSearch((event.currentTarget as HTMLInputElement).value)} />
-                  <datalist id="combo-provider-options">
-                    {#each comboProviders as provider}<option value={provider.id}>{provider.provider} — {provider.name}</option>{/each}
-                  </datalist>
-                  {#if selectedProvider}<small>{selectedProvider.provider} · {selectedProvider.name} · <code>{selectedProvider.id}</code></small>{/if}
+                  <span><b>1</b> Provider</span>
+                  <select class="input-field provider-search" aria-label="Provider" bind:value={selectedComboProvider} onchange={() => { selectedComboModel = ''; pinnedComboConnection = ''; }}>
+                    <option value="">Choose a provider…</option>
+                    {#each comboProviders as provider}<option value={provider.id}>{provider.name} — {provider.accounts.length} account{provider.accounts.length === 1 ? '' : 's'}</option>{/each}
+                  </select>
+                  {#if selectedProvider}<small>{selectedProvider.provider} · <code>{selectedProvider.id}</code></small>{/if}
                 </label>
                 <label class="selector-step">
                   <span><b>2</b> Model</span>
-                  <input class="input-field" list="combo-model-options" placeholder={selectedProvider ? 'Search discovered models…' : 'Choose a provider first'} bind:value={selectedComboModel} disabled={!selectedProvider || selectedConnectionModels.length === 0} />
-                  <datalist id="combo-model-options">{#each selectedConnectionModels as model}<option value={model}></option>{/each}</datalist>
-                  {#if selectedProvider && selectedConnectionModels.length === 0}<small>No active discovered models for this connection.</small>{/if}
+                  <select class="input-field" aria-label="Model" bind:value={selectedComboModel} disabled={!selectedProvider || selectedProviderModels.length === 0}>
+                    <option value="">{selectedProvider ? 'Choose a discovered model…' : 'Choose a provider first'}</option>
+                    {#each selectedProviderModels as model}<option value={model}>{model}</option>{/each}
+                  </select>
+                  {#if selectedProvider && selectedProviderModels.length === 0}<small>No active discovered models for this provider.</small>{/if}
                 </label>
                 <div class="entry-actions">
-                  <button type="button" class="btn-primary" onclick={addPinnedComboEntry} disabled={!selectedProvider || !selectedConnectionModels.includes(selectedComboModel)}>Add entry</button>
+                  <button type="button" class="btn-primary" onclick={addPinnedComboEntry} disabled={!selectedProvider || !selectedProviderModels.includes(selectedComboModel)}>Add entry</button>
                   <button type="button" class="btn-secondary" onclick={syncComboModels} disabled={!selectedProvider?.canSync || Boolean(syncingConnection)}><RotateCw size={13} /> {syncingConnection ? 'Syncing…' : 'Sync Models'}</button>
                 </div>
               </div>
 
-              <button type="button" class="advanced-toggle" onclick={() => showAdvancedModelInput = !showAdvancedModelInput}>Advanced: manually enter a model ID</button>
+              <button type="button" class="advanced-toggle" onclick={() => showAdvancedModelInput = !showAdvancedModelInput}>Advanced: pin to specific account or enter a model ID</button>
               {#if showAdvancedModelInput}
                 <div class="advanced-row">
-                  <input class="input-field" placeholder="Exact model ID" bind:value={advancedModel} disabled={!selectedProvider} />
+                  <select class="input-field" aria-label="Pin to specific account" bind:value={pinnedComboConnection} disabled={!selectedProvider}>
+                    <option value="">Any healthy account in provider</option>
+                    {#each selectedProvider?.accounts || [] as account}<option value={account.id}>{account.name} — {account.id}</option>{/each}
+                  </select>
+                  <input class="input-field" placeholder="Exact model ID (optional)" bind:value={advancedModel} disabled={!selectedProvider} />
                   <button type="button" class="btn-secondary" onclick={addAdvancedComboEntry} disabled={!selectedProvider || !advancedModel.trim()}>Add manual entry</button>
-                  <small>Compatibility fallback only. The entry remains pinned to the selected connection.</small>
+                  <small>Pinning stores the exact account ID. Without a pin, runtime may use any active account in this provider.</small>
                 </div>
               {/if}
             {/if}
@@ -810,8 +817,9 @@
             {#if newComboEntries.length > 0}
               <ol class="draft-chain">
                 {#each newComboEntries as entry, index}
-                  {@const provider = comboProviders.find(option => option.id === entry.connectionId)}
-                  <li><span class="chain-step-num">{index + 1}</span><div><code>{entry.model}</code><small>{provider?.provider || 'Connection'} · {provider?.name || entry.connectionId}</small></div><button type="button" class="btn-icon" aria-label={`Remove ${entry.model} from combo`} onclick={() => removeComboEntry(index)}><X size={14} /></button></li>
+                  {@const provider = comboProviders.find(option => option.id === entry.providerId)}
+                  {@const account = provider?.accounts.find(option => option.id === entry.connectionId)}
+                  <li><span class="chain-step-num">{index + 1}</span><div><code>{entry.model}</code><small>{provider?.name || entry.providerId}{account ? ` · pinned: ${account.name}` : ' · provider pool'}</small></div><button type="button" class="btn-icon" aria-label={`Remove ${entry.model} from combo`} onclick={() => removeComboEntry(index)}><X size={14} /></button></li>
                 {/each}
               </ol>
             {/if}

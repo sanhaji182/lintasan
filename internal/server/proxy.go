@@ -2142,7 +2142,9 @@ func (p *ProxyHandler) resolveCombo(name string) ([]*Connection, string, bool) {
 	var out []*Connection
 	for _, entry := range resolved {
 		var conns []*Connection
-		if entry.ConnectionID != "" {
+		if entry.ProviderID != "" {
+			conns = p.connectionsForModelAndProvider(entry.Model, entry.ProviderID)
+		} else if entry.ConnectionID != "" {
 			conns = p.connectionsForModelAndIDs(entry.Model, []string{entry.ConnectionID})
 		} else {
 			conns = p.connectionsForModelAndIDs(entry.Model, nil)
@@ -2170,6 +2172,32 @@ func stringSlice(v any) []string {
 		if s, ok := x.(string); ok {
 			out = append(out, s)
 		}
+	}
+	return out
+}
+
+func (p *ProxyHandler) connectionsForModelAndProvider(model, providerID string) []*Connection {
+	rows, err := p.db.Conn().Query(`SELECT c.id, c.name, c.base_url, c.api_key,
+		COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header,
+		c.auth_prefix, c.is_active, c.priority, COALESCE(c.pool_id,'')
+		FROM discovered_models m JOIN connections c ON m.connection_id=c.id
+		WHERE m.model_id=? AND m.is_active=1 AND c.is_active=1 ORDER BY c.priority DESC`, model)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []*Connection
+	for rows.Next() {
+		var c Connection
+		if rows.Scan(&c.ID, &c.Name, &c.BaseURL, &c.APIKey, &c.OAuthProvider, &c.Format, &c.ChatPath, &c.AuthHeader, &c.AuthPrefix, &c.IsActive, &c.Priority, &c.PoolID) != nil {
+			continue
+		}
+		if provider.RoutingPoolIdentity(c.Format, c.BaseURL, c.ChatPath, c.PoolID) != providerID {
+			continue
+		}
+		p.applyConnectionAuth(&c)
+		c.TargetModel = model
+		out = append(out, &c)
 	}
 	return out
 }

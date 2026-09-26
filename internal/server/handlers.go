@@ -12,12 +12,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/sanhaji182/lintasan-go/internal/combo"
 	"github.com/sanhaji182/lintasan-go/internal/models"
+	"github.com/sanhaji182/lintasan-go/internal/provider"
 )
 
 // Models endpoint - OpenAI compatible
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.db.Conn().Query(`
-		SELECT m.model_id, c.id as connection_id, c.name as connection_name, m.owned_by
+		SELECT m.model_id, c.id as connection_id, c.name as connection_name, m.owned_by,
+		       c.format, c.base_url, c.chat_path, COALESCE(c.pool_id,'')
 		FROM discovered_models m
 		JOIN connections c ON m.connection_id = c.id
 		WHERE m.is_active = 1 AND c.is_active = 1
@@ -35,6 +37,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		CatalogEligibility  string `json:"catalog_eligibility,omitempty"`
 		CatalogRevision     string `json:"catalog_revision,omitempty"`
 		ProviderKind        string `json:"provider_kind,omitempty"`
+		ProviderID          string `json:"provider_id,omitempty"`
 		ConnectionID        string `json:"connection_id,omitempty"`
 		Source              string `json:"source"`
 		SupportsStreaming   *bool  `json:"supports_streaming,omitempty"`
@@ -46,9 +49,9 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
-			var modelID, connectionID, connName string
+			var modelID, connectionID, connName, format, baseURL, chatPath, poolID string
 			var ownedBy sql.NullString
-			if err := rows.Scan(&modelID, &connectionID, &connName, &ownedBy); err != nil {
+			if err := rows.Scan(&modelID, &connectionID, &connName, &ownedBy, &format, &baseURL, &chatPath, &poolID); err != nil {
 				continue
 			}
 			owner := connName
@@ -60,6 +63,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 				Object:       "model",
 				Created:      time.Now().Unix(),
 				OwnedBy:      owner,
+				ProviderID:   provider.RoutingPoolIdentity(format, baseURL, chatPath, poolID),
 				ConnectionID: connectionID,
 				Source:       "discovered",
 			})

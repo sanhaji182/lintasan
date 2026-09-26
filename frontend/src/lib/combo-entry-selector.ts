@@ -3,6 +3,8 @@ export interface ComboConnection {
   name?: string;
   format?: string;
   base_url?: string;
+  chat_path?: string;
+  pool_id?: string;
   is_active?: number | boolean;
 }
 
@@ -12,38 +14,92 @@ export interface DiscoveredComboModel {
   is_active?: number | boolean;
 }
 
+export interface ComboProviderOption {
+  id: string;
+  name: string;
+  provider: string;
+  connectionIds: string[];
+  accounts: Array<{ id: string; name: string }>;
+  searchText: string;
+  canSync: boolean;
+}
+
 export interface DraftComboEntry {
   model: string;
-  connectionId: string;
+  providerId: string;
+  connectionId?: string;
 }
 
-export function comboProviderOptions(connections: ComboConnection[]) {
-  return connections
-    .filter(connection => connection.is_active === 1 || connection.is_active === true)
-    .map(connection => {
-      let provider = connection.format || 'custom';
-      try { provider = new URL(connection.base_url || '').hostname || provider; } catch { /* use format */ }
-      const name = connection.name || connection.id;
-      return {
-        id: connection.id,
-        name,
-        provider,
-        searchText: `${provider} ${name} ${connection.id} ${connection.format || ''}`.trim(),
-        canSync: Boolean(connection.base_url),
-      };
+function endpointIdentity(connection: ComboConnection): { id: string; provider: string } {
+  const pool = connection.pool_id?.trim();
+  if (pool) return { id: `pool:${pool}`, provider: pool };
+
+  const format = (connection.format || 'custom').trim().toLowerCase();
+  let host = 'unknown';
+  let basePath = '';
+  try {
+    const parsed = new URL(connection.base_url || '');
+    host = parsed.hostname.toLowerCase().replace(/\.$/, '') || host;
+    basePath = parsed.pathname.toLowerCase().replace(/^\/+|\/+$/g, '');
+    if (basePath === 'v1') basePath = '';
+  } catch { /* retain conservative identity */ }
+  if (basePath) host += `/${basePath}`;
+  const chatPath = `/${(connection.chat_path || '').trim().toLowerCase().replace(/^\/+|\/+$/g, '')}`.replace(/^\/$/, '');
+  return { id: `provider:${format}:${host}:${chatPath}`, provider: host.split('/')[0] };
+}
+
+function displayName(connection: ComboConnection, provider: string): string {
+  const format = (connection.format || '').trim();
+  if (format) return format.charAt(0).toUpperCase() + format.slice(1);
+  return provider || connection.name || connection.id;
+}
+
+export function comboProviderOptions(connections: ComboConnection[]): ComboProviderOption[] {
+  const groups = new Map<string, ComboProviderOption>();
+  for (const connection of connections) {
+    if (connection.is_active !== 1 && connection.is_active !== true) continue;
+    const identity = endpointIdentity(connection);
+    const account = { id: connection.id, name: connection.name || connection.id };
+    const existing = groups.get(identity.id);
+    if (existing) {
+      existing.connectionIds.push(connection.id);
+      existing.accounts.push(account);
+      existing.canSync ||= Boolean(connection.base_url);
+      existing.searchText += ` ${connection.id} ${account.name}`;
+      continue;
+    }
+    const name = displayName(connection, identity.provider);
+    groups.set(identity.id, {
+      id: identity.id,
+      name,
+      provider: identity.provider,
+      connectionIds: [connection.id],
+      accounts: [account],
+      searchText: `${identity.provider} ${name} ${connection.id} ${account.name} ${connection.format || ''}`.trim(),
+      canSync: Boolean(connection.base_url),
     });
+  }
+  return [...groups.values()];
 }
 
-export function comboModelsForConnection(models: DiscoveredComboModel[], connectionId: string): string[] {
+export function comboModelsForProvider(models: DiscoveredComboModel[], provider?: ComboProviderOption): string[] {
+  if (!provider) return [];
+  const ids = new Set(provider.connectionIds);
   return [...new Set(models
-    .filter(model => model.connection_id === connectionId && (model.is_active === 1 || model.is_active === true))
+    .filter(model => model.connection_id && ids.has(model.connection_id) && (model.is_active === 1 || model.is_active === true))
     .map(model => model.model_id.trim())
     .filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));
 }
 
-export function buildPinnedComboEntries(entries: DraftComboEntry[]) {
+export function buildComboEntries(entries: DraftComboEntry[]) {
   return entries
-    .map(entry => ({ model: entry.model.trim(), connection_id: entry.connectionId.trim() }))
-    .filter(entry => entry.model && entry.connection_id);
+    .map(entry => {
+      const model = entry.model.trim();
+      const connectionID = entry.connectionId?.trim();
+      return connectionID
+        ? { model, connection_id: connectionID }
+        : { model, provider_id: entry.providerId.trim() };
+    })
+    .filter(entry => entry.model && ('connection_id' in entry ? entry.connection_id : entry.provider_id));
 }

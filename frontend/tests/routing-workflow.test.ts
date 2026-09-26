@@ -60,7 +60,7 @@ describe('Routing save boundaries', () => {
       mock.mockClear();
       mock.mockReset();
     }
-    mocks.get.mockImplementation(async (path: string) => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
       if (path === '/api/combos') return { data: [{ id: 'primary', name: 'Primary', strategy: 'priority', entries: [], order: 0 }] };
       if (path === '/api/aliases') return { data: { automatic: { model: 'target-model' } } };
       if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
@@ -74,6 +74,17 @@ describe('Routing save boundaries', () => {
         quota_limits: {},
       } };
       if (path === '/v1/models') return { data: [{ id: 'target-model' }] };
+      if (path === '/api/connections') return { data: [
+        { id: 'qoder-a', name: 'Qoder Alice', format: 'qoder', base_url: 'https://api.qoder.com', chat_path: '/chat/completions', is_active: 1 },
+        { id: 'qoder-b', name: 'Qoder Bob', format: 'qoder', base_url: 'https://api.qoder.com/', chat_path: '/chat/completions', is_active: 1 },
+        { id: 'other', name: 'Other', format: 'openai', base_url: 'https://other.example/v1', chat_path: '/v1/chat/completions', is_active: 1 },
+      ] };
+      if (path === '/api/models/discovered') return { data: [
+        { model_id: 'qoder-only-a', connection_id: 'qoder-a', is_active: 1 },
+        { model_id: 'qoder-only-b', connection_id: 'qoder-b', is_active: 1 },
+        { model_id: 'shared-model', connection_id: 'qoder-a', is_active: 1 },
+        { model_id: 'shared-model', connection_id: 'other', is_active: 1 },
+      ] };
       return { data: [] };
     });
     mocks.post.mockImplementation(async (path: string, body: unknown) => path === '/api/routing/aliases'
@@ -283,65 +294,38 @@ describe('Routing save boundaries', () => {
     expect(screen.queryByText(/unsaved scope/i)).not.toBeInTheDocument();
   });
 
-  it('creates a combo with the exact selected connection when model names overlap', async () => {
-    mocks.get.mockImplementation(async (path: string) => {
-      if (path === '/api/combos') return { data: [] };
-      if (path === '/api/connections') return { data: [
-        { id: 'provider-a', name: 'Provider A', format: 'openai', base_url: 'https://a.example/v1', is_active: 1 },
-        { id: 'provider-b', name: 'Provider B', format: 'openai', base_url: 'https://b.example/v1', is_active: 1 },
-      ] };
-      if (path === '/api/models/discovered') return { data: [
-        { model_id: 'shared-model', connection_id: 'provider-a', is_active: 1 },
-        { model_id: 'shared-model', connection_id: 'provider-b', is_active: 1 },
-      ] };
-      if (path === '/api/aliases') return { data: {} };
-      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
-      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
-      return { data: [] };
-    });
-
+  it('renders one provider for two accounts, unions models, and persists provider identity', async () => {
     await renderPage();
-    await waitFor(() => expect(mocks.get).toHaveBeenCalledWith('/api/models/discovered'));
     await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
-    await fireEvent.input(screen.getByPlaceholderText(/Combo name/i), { target: { value: 'pinned-shared' } });
-    await fireEvent.input(screen.getByPlaceholderText(/Search provider or connection/i), { target: { value: 'provider-b' } });
-    await fireEvent.input(screen.getByPlaceholderText(/Search discovered models/i), { target: { value: 'shared-model' } });
-    await fireEvent.click(screen.getByRole('button', { name: /^Add entry$/i }));
-    await fireEvent.click(screen.getByRole('button', { name: /^Create Combo$/i }));
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Qoder — 2 accounts' })).toBeInTheDocument());
+    expect(screen.getAllByRole('option', { name: /Qoder/ })).toHaveLength(1);
 
-    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/combos', {
-      name: 'pinned-shared',
-      strategy: 'priority',
-      description: '',
-      models: ['shared-model'],
-      entries: [{ model: 'shared-model', connection_id: 'provider-b' }],
-    }));
+    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'provider:qoder:api.qoder.com:/chat/completions' } });
+    expect(screen.getByRole('option', { name: 'qoder-only-a' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'qoder-only-b' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'shared-model' })).toBeInTheDocument();
+
+    await fireEvent.input(screen.getByPlaceholderText(/Combo name/i), { target: { value: 'qoder-pool' } });
+    await fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'shared-model' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add entry' }));
+    expect(screen.getByText('Qoder · provider pool')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create Combo' }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/combos', expect.objectContaining({
+      entries: [{ model: 'shared-model', provider_id: 'provider:qoder:api.qoder.com:/chat/completions' }],
+    })));
   });
 
-  it('does not accept arbitrary provider text for an advanced combo entry', async () => {
-    mocks.get.mockImplementation(async (path: string) => {
-      if (path === '/api/combos') return { data: [] };
-      if (path === '/api/connections') return { data: [
-        { id: 'known-provider', name: 'Known Provider', format: 'openai', base_url: 'https://known.example/v1', is_active: 1 },
-      ] };
-      if (path === '/api/models/discovered') return { data: [] };
-      if (path === '/api/aliases') return { data: {} };
-      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
-      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
-      return { data: [] };
-    });
-
+  it('advanced account pin persists the exact connection id', async () => {
     await renderPage();
-    await waitFor(() => expect(mocks.get).toHaveBeenCalledWith('/api/connections'));
     await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
-    await fireEvent.input(screen.getByPlaceholderText(/Search provider or connection/i), { target: { value: 'nonexistent-provider' } });
-    await fireEvent.click(screen.getByRole('button', { name: /Advanced: manually enter/i }));
-    await fireEvent.input(screen.getByPlaceholderText(/Exact model ID/i), { target: { value: 'manual-model' } });
-
-    expect(screen.getByRole('button', { name: /Add manual entry/i })).toBeDisabled();
-    await fireEvent.click(screen.getByRole('button', { name: /^Create Combo$/i }));
-    expect(mocks.post).not.toHaveBeenCalledWith('/api/combos', expect.anything());
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Qoder — 2 accounts' })).toBeInTheDocument());
+    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'provider:qoder:api.qoder.com:/chat/completions' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Advanced: pin to specific account/i }));
+    await fireEvent.change(screen.getByLabelText('Pin to specific account'), { target: { value: 'qoder-b' } });
+    await fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'qoder-only-b' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add entry' }));
+    expect(screen.getByText(/pinned: Qoder Bob/i)).toBeInTheDocument();
   });
 });

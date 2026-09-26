@@ -92,6 +92,64 @@ func TestComboWithoutConnectionIDsResolvesAndWorks(t *testing.T) {
 	}
 }
 
+func TestProviderComboEntryResolvesOnlyItsProviderPool(t *testing.T) {
+	s := newRESTTestServer(t)
+	for _, row := range []struct{ id, name, baseURL, format, chatPath, model string }{
+		{"qoder-a", "Qoder Alice", "https://api.qoder.com", "qoder", "/chat/completions", "shared-model"},
+		{"qoder-b", "Qoder Bob", "https://api.qoder.com/", "qoder", "/chat/completions", "shared-model"},
+		{"other-a", "Other", "https://other.example/v1", "openai", "/v1/chat/completions", "shared-model"},
+	} {
+		_, err := s.db.Conn().Exec(`INSERT INTO connections(id,name,base_url,api_key,format,chat_path,is_active,priority,provider_kind) VALUES(?,?,?,?,?,?,1,10,'llm')`, row.id, row.name, row.baseURL, "key", row.format, row.chatPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = s.db.Conn().Exec(`INSERT INTO discovered_models(id,connection_id,model_id,is_active) VALUES(?,?,?,1)`, "model-"+row.id, row.id, row.model)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	comboJSON := `[{"name":"provider-combo","strategy":"priority","entries":[{"model":"shared-model","provider_id":"provider:qoder:api.qoder.com:/chat/completions"}]}]`
+	if err := s.proxy.cmb.LoadFromSettings(comboJSON); err != nil {
+		t.Fatal(err)
+	}
+	got, model, ok := s.proxy.resolveCombo("provider-combo")
+	if !ok || model != "shared-model" {
+		t.Fatalf("resolveCombo() = (%v,%q,%v)", got, model, ok)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d candidates, want two Qoder accounts: %#v", len(got), got)
+	}
+	for _, conn := range got {
+		if conn.ID == "other-a" {
+			t.Fatal("provider-level entry leaked to another provider")
+		}
+	}
+}
+
+func TestLegacyAccountPinnedComboRemainsExact(t *testing.T) {
+	s := newRESTTestServer(t)
+	for _, id := range []string{"qoder-a", "qoder-b"} {
+		_, err := s.db.Conn().Exec(`INSERT INTO connections(id,name,base_url,api_key,format,chat_path,is_active,priority,provider_kind) VALUES(?,?,?,'key','qoder','/chat/completions',1,10,'llm')`, id, id, "https://api.qoder.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = s.db.Conn().Exec(`INSERT INTO discovered_models(id,connection_id,model_id,is_active) VALUES(?,?,?,1)`, "model-"+id, id, "shared-model")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	comboJSON := `[{"name":"pinned","strategy":"priority","entries":[{"model":"shared-model","connection_id":"qoder-b"}]}]`
+	if err := s.proxy.cmb.LoadFromSettings(comboJSON); err != nil {
+		t.Fatal(err)
+	}
+	got, _, ok := s.proxy.resolveCombo("pinned")
+	if !ok || len(got) != 1 || got[0].ID != "qoder-b" {
+		t.Fatalf("legacy pin broadened: %#v, ok=%v", got, ok)
+	}
+}
+
 func TestModelsEndpointIncludesCombos(t *testing.T) {
 	s := newRESTTestServer(t)
 	s.setJSONSetting("combos", []any{
