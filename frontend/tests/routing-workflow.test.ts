@@ -79,6 +79,9 @@ describe('Routing save boundaries', () => {
         { id: 'qoder-b', name: 'Qoder Bob', format: 'qoder', base_url: 'https://api.qoder.com/', chat_path: '/chat/completions', is_active: 1 },
         { id: 'other', name: 'Other', format: 'openai', base_url: 'https://other.example/v1', chat_path: '/v1/chat/completions', is_active: 1 },
       ] };
+      if (path === '/api/presets') return { data: [
+        { name: 'Qoder', domain: 'qoder.com', base_url: 'https://api.qoder.com/v1' },
+      ] };
       if (path === '/api/models/discovered') return { data: [
         { model_id: 'qoder-only-a', connection_id: 'qoder-a', is_active: 1 },
         { model_id: 'qoder-only-b', connection_id: 'qoder-b', is_active: 1 },
@@ -327,5 +330,23 @@ describe('Routing save boundaries', () => {
     await fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'qoder-only-b' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add entry' }));
     expect(screen.getByText(/pinned: Qoder Bob/i)).toBeInTheDocument();
+  });
+
+  it('uses the canonical provider name on existing combo rows', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/combos') return { data: [{ id: 'existing', name: 'Existing', strategy: 'priority', models: ['shared-model'], entries: [{ model: 'shared-model', connection_id: 'qoder-b' }], order: 0 }] };
+      if (path === '/api/connections') return { data: [
+        { id: 'qoder-b', name: 'Qoder Bob', format: 'qoder', base_url: 'https://api.qoder.com', chat_path: '/chat/completions', is_active: 1 },
+      ] };
+      if (path === '/api/presets') return { data: [{ name: 'Qoder', domain: 'qoder.com', base_url: 'https://api.qoder.com/v1' }] };
+      if (path === '/api/models/discovered') return { data: [{ model_id: 'shared-model', connection_id: 'qoder-b', is_active: 1 }] };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await waitFor(() => expect(screen.getByText('Qoder · shared-model')).toBeInTheDocument());
+    expect(screen.getByText('Qoder Bob')).toBeInTheDocument();
   });
 });

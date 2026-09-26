@@ -6,6 +6,14 @@ export interface ComboConnection {
   chat_path?: string;
   pool_id?: string;
   is_active?: number | boolean;
+  oauth_provider?: string;
+}
+
+export interface ProviderCatalogEntry {
+  name: string;
+  domain?: string;
+  base_url?: string;
+  oauth_provider?: string;
 }
 
 export interface DiscoveredComboModel {
@@ -53,13 +61,29 @@ function endpointIdentity(connection: ComboConnection): { id: string; provider: 
   return { id: `provider:${format}:${endpoint}`, provider };
 }
 
-function displayName(connection: ComboConnection, provider: string): string {
-  const format = (connection.format || '').trim();
-  if (format) return format.charAt(0).toUpperCase() + format.slice(1);
-  return provider || connection.name || connection.id;
+function normalizedHost(value?: string): string {
+  const raw = (value || '').trim();
+  if (!raw) return '';
+  try { return new URL(raw.includes('://') ? raw : `https://${raw}`).hostname.toLowerCase().replace(/^www\./, ''); }
+  catch { return raw.toLowerCase().replace(/^www\./, '').split('/')[0]; }
 }
 
-export function comboProviderOptions(connections: ComboConnection[]): ComboProviderOption[] {
+/** Resolve the primary human-facing label from the shared provider catalogue. */
+export function canonicalProviderName(
+  connection: ComboConnection,
+  catalog: ProviderCatalogEntry[] = [],
+): string {
+  const oauthProvider = connection.oauth_provider?.trim().toLowerCase();
+  const host = normalizedHost(connection.base_url);
+  const match = catalog.find(entry => {
+    if (oauthProvider && entry.oauth_provider?.trim().toLowerCase() === oauthProvider) return true;
+    const catalogHost = normalizedHost(entry.base_url || entry.domain);
+    return Boolean(host && catalogHost && (host === catalogHost || host.endsWith(`.${catalogHost}`) || catalogHost.endsWith(`.${host}`)));
+  });
+  return match?.name?.trim() || connection.name?.trim() || host || connection.id;
+}
+
+export function comboProviderOptions(connections: ComboConnection[], catalog: ProviderCatalogEntry[] = []): ComboProviderOption[] {
   const groups = new Map<string, ComboProviderOption>();
   for (const connection of connections) {
     if (connection.is_active !== 1 && connection.is_active !== true) continue;
@@ -73,7 +97,7 @@ export function comboProviderOptions(connections: ComboConnection[]): ComboProvi
       existing.searchText += ` ${connection.id} ${account.name}`;
       continue;
     }
-    const name = displayName(connection, identity.provider);
+    const name = canonicalProviderName(connection, catalog);
     groups.set(identity.id, {
       id: identity.id,
       name,
@@ -95,6 +119,15 @@ export function comboModelsForProvider(models: DiscoveredComboModel[], provider?
     .map(model => model.model_id.trim())
     .filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));
+}
+
+export function comboProviderForEntry(
+  entry: { connection_id?: string; connection_ids?: string[]; provider_id?: string },
+  providers: ComboProviderOption[],
+): ComboProviderOption | undefined {
+  const ids = new Set([entry.connection_id, ...(entry.connection_ids || [])].filter((id): id is string => Boolean(id)));
+  return providers.find(provider => provider.id === entry.provider_id
+    || provider.connectionIds.some(id => ids.has(id)));
 }
 
 export function buildComboEntries(entries: DraftComboEntry[]) {

@@ -11,7 +11,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
   import { routingDirtyState, buildPolicyPayload, buildQuotaPayload } from '$lib/workflow-consolidation';
-  import { comboProviderOptions, comboModelsForProvider, buildComboEntries } from '$lib/combo-entry-selector';
+  import { comboProviderOptions, comboModelsForProvider, comboProviderForEntry, buildComboEntries } from '$lib/combo-entry-selector';
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
@@ -26,7 +26,7 @@
     models?: string[];
     description?: string;
     order: number;
-    entries?: Array<{ model: string; connection_id?: string; connection_ids?: string[] }>;
+    entries?: Array<{ model: string; provider_id?: string; connection_id?: string; connection_ids?: string[] }>;
   }
 
   interface Alias {
@@ -65,6 +65,7 @@
   let newComboDescription = $state('');
   let comboConnections = $state<any[]>([]);
   let comboDiscoveredModels = $state<any[]>([]);
+  let comboProviderCatalog = $state<any[]>([]);
   let comboCatalogLoading = $state(false);
   let comboCatalogError = $state('');
   let selectedComboProvider = $state('');
@@ -75,7 +76,7 @@
   let advancedModel = $state('');
   let syncingConnection = $state('');
   let comboCreating = $state(false);
-  const comboProviders = $derived(comboProviderOptions(comboConnections));
+  const comboProviders = $derived(comboProviderOptions(comboConnections, comboProviderCatalog));
   const selectedProvider = $derived(comboProviders.find(option => option.id === selectedComboProvider));
   const selectedProviderModels = $derived(comboModelsForProvider(comboDiscoveredModels, selectedProvider));
 
@@ -245,15 +246,18 @@
     comboCatalogLoading = true;
     comboCatalogError = '';
     try {
-      const [connectionsResponse, modelsResponse] = await Promise.all([
+      const [connectionsResponse, modelsResponse, presetsResponse] = await Promise.all([
         api.get<any>('/api/connections'),
         api.get<any>('/api/models/discovered'),
+        api.get<any>('/api/presets').catch(() => ({ data: [] })),
       ]);
       comboConnections = Array.isArray(connectionsResponse?.data) ? connectionsResponse.data : [];
       comboDiscoveredModels = Array.isArray(modelsResponse?.data) ? modelsResponse.data : [];
+      comboProviderCatalog = Array.isArray(presetsResponse?.data) ? presetsResponse.data : [];
     } catch (e: any) {
       comboConnections = [];
       comboDiscoveredModels = [];
+      comboProviderCatalog = [];
       comboCatalogError = e.message || 'Provider catalog could not be loaded.';
     } finally {
       comboCatalogLoading = false;
@@ -784,7 +788,7 @@
                     <option value="">Choose a provider…</option>
                     {#each comboProviders as provider}<option value={provider.id}>{provider.name} — {provider.accounts.length} account{provider.accounts.length === 1 ? '' : 's'}</option>{/each}
                   </select>
-                  {#if selectedProvider}<small>{selectedProvider.provider} · <code>{selectedProvider.id}</code></small>{/if}
+                  {#if selectedProvider}<small>{selectedProvider.accounts.map(account => account.name).join(', ')}</small>{/if}
                 </label>
                 <label class="selector-step">
                   <span><b>2</b> Model</span>
@@ -890,9 +894,13 @@
                 {#if combo.models && combo.models.length > 0}
                   <div class="flex items-center gap-1.5 flex-wrap" style="margin-top: 4px;">
                     {#each combo.models as model, mIdx}
+                      {@const entryProvider = combo.entries?.[mIdx] ? comboProviderForEntry(combo.entries[mIdx], comboProviders) : undefined}
                       <span class="chain-chip" class:primary-target={mIdx === 0}>
                         <span class="chain-step-num">{mIdx + 1}</span>
-                        <span class="chain-model-name">{model}</span>
+                        <span class="chain-model-name">{entryProvider ? `${entryProvider.name} · ${model}` : model}</span>
+                        {#if entryProvider && combo.entries?.[mIdx]?.connection_id}
+                          <span class="chain-badge account">{entryProvider.accounts.find(account => account.id === combo.entries?.[mIdx]?.connection_id)?.name || combo.entries[mIdx].connection_id}</span>
+                        {/if}
                         {#if mIdx === 0}
                           <span class="chain-badge primary">primary</span>
                         {:else}

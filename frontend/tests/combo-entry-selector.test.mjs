@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   comboProviderOptions,
   comboModelsForProvider,
+  comboProviderForEntry,
   buildComboEntries,
 } from '../src/lib/combo-entry-selector.ts';
 
@@ -21,8 +22,13 @@ const models = [
   { model_id: 'disabled', connection_id: 'qoder-b', is_active: 0 },
 ];
 
+const providerCatalog = [
+  { name: 'Qoder', domain: 'qoder.com', base_url: 'https://api.qoder.com/v1' },
+  { name: 'OpenRouter', domain: 'openrouter.ai', base_url: 'https://openrouter.ai/api/v1' },
+];
+
 test('provider options group two active accounts into one canonical provider', () => {
-  const options = comboProviderOptions(connections);
+  const options = comboProviderOptions(connections, providerCatalog);
   assert.equal(options.length, 2);
   assert.deepEqual(options[0], {
     id: 'provider:qoder:https://api.qoder.com/v1/chat/completions',
@@ -38,10 +44,32 @@ test('provider options group two active accounts into one canonical provider', (
   });
 });
 
+test('canonical provider metadata wins over generic format and opaque account names', () => {
+  const [option] = comboProviderOptions([
+    { id: 'account-7', name: 'personal', format: 'openai', base_url: 'https://openrouter.ai/api/v1', chat_path: '/chat/completions', is_active: 1 },
+  ], providerCatalog);
+  assert.equal(option.name, 'OpenRouter');
+  assert.equal(option.accounts[0].name, 'personal');
+});
+
+test('multiple connections retain canonical provider as primary and account names as secondary', () => {
+  const [option] = comboProviderOptions(connections.slice(0, 2), providerCatalog);
+  assert.equal(option.name, 'Qoder');
+  assert.deepEqual(option.accounts.map(account => account.name), ['Qoder Alice', 'Qoder Bob']);
+});
+
+test('unknown custom providers fall back truthfully to configured connection name', () => {
+  const [option] = comboProviderOptions([
+    { id: 'custom-1', name: 'Acme Internal', format: 'openai', base_url: 'https://llm.internal.example/v1', chat_path: '/chat/completions', is_active: 1 },
+  ], providerCatalog);
+  assert.equal(option.name, 'Acme Internal');
+  assert.equal(option.provider, 'llm.internal.example');
+});
+
 test('provider model list is the active union for that provider only', () => {
-  const qoder = comboProviderOptions(connections)[0];
+  const qoder = comboProviderOptions(connections, providerCatalog)[0];
   assert.deepEqual(comboModelsForProvider(models, qoder), ['only-a', 'only-b', 'shared']);
-  const other = comboProviderOptions(connections)[1];
+  const other = comboProviderOptions(connections, providerCatalog)[1];
   assert.deepEqual(comboModelsForProvider(models, other), ['shared']);
 });
 
@@ -53,6 +81,12 @@ test('provider entries persist canonical pool identity while advanced pin persis
     { model: 'shared', provider_id: 'provider:qoder:api.qoder.com:/chat/completions' },
     { model: 'shared', connection_id: 'qoder-b' },
   ]);
+});
+
+test('existing combo entries resolve their canonical provider without changing persisted ids', () => {
+  const providers = comboProviderOptions(connections, providerCatalog);
+  assert.equal(comboProviderForEntry({ connection_id: 'qoder-b' }, providers)?.name, 'Qoder');
+  assert.equal(comboProviderForEntry({ provider_id: providers[0].id }, providers)?.name, 'Qoder');
 });
 
 test('provider identity follows effective endpoint and retains scheme and explicit port', () => {
