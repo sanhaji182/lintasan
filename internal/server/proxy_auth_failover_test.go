@@ -244,6 +244,100 @@ func TestProviderComboStreamFailureStaysWithinPool(t *testing.T) {
 	}
 }
 
+func configureConnectionFallback(t *testing.T, h *ProxyHandler, database *db.DB, from, to string) {
+	t.Helper()
+	raw, err := json.Marshal(map[string][]string{from: {to}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SetSetting("fallback_connection_chains", string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.fb.LoadChains(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func openConnectionBreaker(h *ProxyHandler, connectionID string) {
+	breaker := h.getBreaker(connectionID)
+	breaker.Failure()
+	breaker.Failure()
+	breaker.Failure()
+}
+
+func TestPinnedComboCircuitOpenDoesNotWidenToConnectionFallback(t *testing.T) {
+	var pinnedHits, outsiderHits int
+	var pinnedPaths []string
+	pinned := httptest.NewServer(okStubLogged(&pinnedHits, &pinnedPaths))
+	defer pinned.Close()
+	var outsiderPaths []string
+	outsider := httptest.NewServer(okStubLogged(&outsiderHits, &outsiderPaths))
+	defer outsider.Close()
+
+	h, database := newAuthProxy(t)
+	addAuthConnection(t, database, "exact", pinned.URL, 100)
+	addAuthConnection(t, database, "outsider", outsider.URL, 0)
+	addAuthModel(t, database, "exact", "m")
+	addAuthModel(t, database, "outsider", "m")
+	if err := h.cmb.LoadFromSettings(`[{"name":"pinned-circuit","strategy":"priority","entries":[{"model":"m","connection_id":"conn-exact"}]}]`); err != nil {
+		t.Fatal(err)
+	}
+	configureConnectionFallback(t, h, database, "conn-exact", "conn-outsider")
+	openConnectionBreaker(h, "conn-exact")
+
+	rec := doAuthChatModel(t, h, "pinned-circuit", false)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("exact pin widened through circuit fallback: %s", rec.Body.String())
+	}
+	for _, path := range pinnedPaths {
+		if strings.Contains(path, "/chat/completions") {
+			t.Fatalf("open exact connection received a chat request: %v", pinnedPaths)
+		}
+	}
+	for _, path := range outsiderPaths {
+		if strings.Contains(path, "/chat/completions") {
+			t.Fatalf("outsider received exact-pin circuit fallback request: %v", outsiderPaths)
+		}
+	}
+}
+
+func TestProviderComboCircuitOpenDoesNotWidenToConnectionFallback(t *testing.T) {
+	var poolHits, outsiderHits int
+	var poolPaths []string
+	pool := httptest.NewServer(okStubLogged(&poolHits, &poolPaths))
+	defer pool.Close()
+	var outsiderPaths []string
+	outsider := httptest.NewServer(okStubLogged(&outsiderHits, &outsiderPaths))
+	defer outsider.Close()
+
+	h, database := newAuthProxy(t)
+	addAuthConnection(t, database, "pool", pool.URL, 100)
+	addAuthConnection(t, database, "outsider", outsider.URL, 0)
+	addAuthModel(t, database, "pool", "m")
+	addAuthModel(t, database, "outsider", "m")
+	providerID := provider.RoutingPoolIdentity("openai", pool.URL, "/chat/completions", "")
+	if err := h.cmb.LoadFromSettings(fmt.Sprintf(`[{"name":"provider-circuit","strategy":"priority","entries":[{"model":"m","provider_id":%q}]}]`, providerID)); err != nil {
+		t.Fatal(err)
+	}
+	configureConnectionFallback(t, h, database, "conn-pool", "conn-outsider")
+	openConnectionBreaker(h, "conn-pool")
+
+	rec := doAuthChatModel(t, h, "provider-circuit", false)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("provider scope widened through circuit fallback: %s", rec.Body.String())
+	}
+	for _, path := range poolPaths {
+		if strings.Contains(path, "/chat/completions") {
+			t.Fatalf("open provider connection received a chat request: %v", poolPaths)
+		}
+	}
+	for _, path := range outsiderPaths {
+		if strings.Contains(path, "/chat/completions") {
+			t.Fatalf("outsider received provider circuit fallback request: %v", outsiderPaths)
+		}
+	}
+}
+
 // The core behaviour: a 403 from the first provider must not reach the client
 // when a second candidate exists — the second provider's success must.
 func TestAuthFailureFailsOverToNextCandidate(t *testing.T) {
@@ -348,6 +442,6 @@ func TestCandidateLoopReevaluatesLength(t *testing.T) {
 	if !strings.Contains(string(src), "for i := 0; i < len(candidates); i++") {
 		t.Error("candidate loop must be an index loop over len(candidates); " +
 			"a range loop breaks mid-loop candidate appends (auth failover, " +
-			"circuit-open connection fallback)")
+			"non-combo circuit-open connection fallback)")
 	}
 }

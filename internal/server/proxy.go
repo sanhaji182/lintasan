@@ -804,8 +804,12 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			if p.fb != nil {
 				p.fb.RecordEvent(resolvedModel, "", fallback.ReasonCircuit, 503)
 			}
-			// Try fallback connections
-			if fallbackConns := p.fb.GetConnFallback(conn.ID); len(fallbackConns) > 0 {
+			// Connection fallback chains are model-wide operator routes. A combo is
+			// already an explicit request-lifetime scope (exact connection or
+			// provider pool), so expanding its candidates here could escape that
+			// scope when the selected connection's circuit is open.
+			if comboName == "" {
+				fallbackConns := p.fb.GetConnFallback(conn.ID)
 				for _, fbID := range fallbackConns {
 					fbConn, err := p.findConnectionByID(fbID)
 					if err != nil {
