@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,14 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/models"
 	"github.com/sanhaji182/lintasan-go/internal/provider"
 )
+
+var comboRevisionPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+func writeComboError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": code, "message": message}})
+}
 
 // comboRevision fingerprints the exact persisted combo state. Request-only
 // concurrency fields are excluded from the resource fingerprint.
@@ -541,6 +550,14 @@ func (s *Server) handleCreateCombo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 		return
 	}
+	if _, supplied := input["revision"]; supplied {
+		writeComboError(w, http.StatusBadRequest, "REQUEST_ONLY_COMBO_METADATA", "revision is server-generated and must not be supplied when creating a combo.")
+		return
+	}
+	if _, supplied := input["expected_revision"]; supplied {
+		writeComboError(w, http.StatusBadRequest, "REQUEST_ONLY_COMBO_METADATA", "expected_revision is only valid when updating an existing combo.")
+		return
+	}
 
 	// Get existing combos
 	combosJSON, _ := s.db.GetSetting("combos")
@@ -573,7 +590,12 @@ func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 		return
 	}
-	expectedRevision, hasPrecondition := input["expected_revision"].(string)
+	expectedRevisionValue, hasPrecondition := input["expected_revision"]
+	expectedRevision, validPrecondition := expectedRevisionValue.(string)
+	if hasPrecondition && (!validPrecondition || !comboRevisionPattern.MatchString(expectedRevision)) {
+		writeComboError(w, http.StatusBadRequest, "INVALID_EXPECTED_REVISION", "expected_revision must be a 64-character lowercase SHA-256 hexadecimal digest.")
+		return
+	}
 	delete(input, "expected_revision")
 	delete(input, "revision")
 

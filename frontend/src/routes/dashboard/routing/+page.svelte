@@ -11,7 +11,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
   import { routingDirtyState, buildPolicyPayload, buildQuotaPayload } from '$lib/workflow-consolidation';
-  import { comboProviderOptions, comboModelsForProvider, comboProviderForEntry, buildComboEntries, filterComboModels, comboCatalogAvailability } from '$lib/combo-entry-selector';
+  import { comboProviderOptions, comboModelsForProvider, comboProviderForEntry, buildComboEntries, filterComboModels, comboCatalogAvailability, comboMatchesSavedPayload } from '$lib/combo-entry-selector';
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
@@ -427,7 +427,7 @@
       const loaded = await loadCombos(true);
       const authoritative = loaded.find(combo => combo.id === id);
       if (!authoritative) throw new Error('Saved combo was not found after refresh.');
-      if (!savedComboPayload || !comboMatchesPayload(authoritative, savedComboPayload)) throw new Error('Refresh did not confirm the saved combo state.');
+      if (!savedComboPayload || !comboMatchesSavedPayload(authoritative, savedComboPayload)) throw new Error('Refresh did not confirm the saved combo state.');
       const name = newComboName.trim();
       resetComboForm();
       showToast(`Combo "${name}" updated successfully`, 'success');
@@ -437,12 +437,6 @@
     } finally { comboCreating = false; }
   }
 
-  function comboMatchesPayload(combo: Combo, payload: { name: string; strategy: string; description: string; entries: any[] }) {
-    return combo.provider === payload.name
-      && combo.strategy === payload.strategy
-      && (combo.description || '') === payload.description
-      && JSON.stringify(combo.entries || []) === JSON.stringify(payload.entries);
-  }
 
   async function syncComboModels() {
     const connectionID = pinnedComboConnection || selectedProvider?.connectionIds[0];
@@ -492,7 +486,7 @@
           const loaded = await loadCombos(true);
           const authoritative = loaded.find(combo => combo.id === editedID);
           if (!authoritative) throw new Error('Saved combo was not found after refresh.');
-          if (!comboMatchesPayload(authoritative, payload)) throw new Error('Refresh did not confirm the saved combo state.');
+          if (!comboMatchesSavedPayload(authoritative, payload)) throw new Error('Refresh did not confirm the saved combo state.');
           resetComboForm();
           showToast(`Combo "${name}" updated successfully`, 'success');
         } catch (reloadError: any) {

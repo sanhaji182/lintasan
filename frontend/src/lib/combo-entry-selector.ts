@@ -196,3 +196,30 @@ export function buildComboEntries(entries: DraftComboEntry[]) {
     })
     .filter(entry => entry.model && (Object.keys(entry).length === 1 || ('connection_id' in entry ? entry.connection_id : entry.provider_id)));
 }
+
+type PersistedComboEntry = { model?: unknown; provider_id?: unknown; connection_id?: unknown; connection_ids?: unknown };
+
+function sameStringArray(left: unknown, right: unknown): boolean {
+  if (left === undefined && right === undefined) return true;
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+  return left.every((value, index) => typeof value === 'string' && value === right[index]);
+}
+
+function sameComboEntry(left: PersistedComboEntry, right: PersistedComboEntry): boolean {
+  return left.model === right.model
+    && left.provider_id === right.provider_id
+    && left.connection_id === right.connection_id
+    && sameStringArray(left.connection_ids, right.connection_ids);
+}
+
+export function comboMatchesSavedPayload(
+  combo: { provider?: string; name?: string; strategy?: string; description?: string; entries?: PersistedComboEntry[] },
+  payload: { name: string; strategy: string; description: string; entries: PersistedComboEntry[] },
+): boolean {
+  const entries = Array.isArray(combo.entries) ? combo.entries : [];
+  return (combo.provider ?? combo.name) === payload.name
+    && combo.strategy === payload.strategy
+    && (combo.description || '') === payload.description
+    && entries.length === payload.entries.length
+    && entries.every((entry, index) => sameComboEntry(entry, payload.entries[index]));
+}

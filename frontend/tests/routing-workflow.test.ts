@@ -573,6 +573,44 @@ describe('Routing save boundaries', () => {
     expect(mocks.get.mock.calls.filter(([path]: [string]) => path === '/api/combos').length).toBeGreaterThan(1);
   });
 
+  it('confirms backend-realistic lexicographic GET entries without erasing routing identity or array order', async () => {
+    let comboReads = 0;
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/combos') {
+        comboReads++;
+        const before = {
+          id: 'shapes', name: 'Shape route', strategy: 'priority', description: 'before', revision: 'a'.repeat(64),
+          models: ['pool-model', 'pin-model', 'legacy-model'],
+          entries: [
+            { model: 'pool-model', provider_id: 'provider:qoder:https://api.qoder.com/chat/completions' },
+            { model: 'pin-model', connection_id: 'qoder-b' },
+            { model: 'legacy-model' },
+          ],
+        };
+        if (comboReads === 1) return { data: [before] };
+        return { data: [{
+          description: 'after', entries: [
+            { model: 'pool-model', provider_id: 'provider:qoder:https://api.qoder.com/chat/completions' },
+            { connection_id: 'qoder-b', model: 'pin-model' },
+            { model: 'legacy-model' },
+          ], id: 'shapes', models: before.models, name: 'Shape route', revision: 'b'.repeat(64), strategy: 'priority',
+        }] };
+      }
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Edit combo Shape route/i }));
+    await fireEvent.input(screen.getByPlaceholderText(/Description/i), { target: { value: 'after' } });
+    await fireEvent.click(screen.getByRole('button', { name: /^Save Combo$/i }));
+    await waitFor(() => expect(screen.queryByText('Edit Combo')).not.toBeInTheDocument());
+    expect(mocks.put).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).toHaveBeenCalledWith(expect.stringMatching(/updated successfully/i), 'success');
+  });
+
   it('sends the loaded revision and preserves a stale draft with a safe reload action on 409', async () => {
     const latest = { id: 'shared', name: 'Shared', strategy: 'priority', description: 'operator B', models: ['one'], entries: [{ model: 'one' }], order: 0, revision: 'rev-b' };
     mocks.get.mockImplementation(async (path: string): Promise<any> => {
@@ -603,13 +641,24 @@ describe('Routing save boundaries', () => {
     expect(mocks.put).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the editor and list after PUT success plus reload failure, then retries GET without another PUT', async () => {
+  it('keeps the editor and list after PUT success plus reload failure, then retries a backend-realistic GET without another PUT', async () => {
     let comboReads = 0;
+    const models = ['pool-model', 'pin-model', 'legacy-model'];
+    const initialEntries = [
+      { model: 'pool-model', provider_id: 'provider:qoder:https://api.qoder.com/chat/completions' },
+      { model: 'pin-model', connection_id: 'qoder-b' },
+      { model: 'legacy-model' },
+    ];
     mocks.get.mockImplementation(async (path: string): Promise<any> => {
       if (path === '/api/combos') {
         comboReads++;
         if (comboReads === 2) throw new Error('refresh offline');
-        return { data: [{ id: 'saved', name: 'Saved', strategy: 'priority', description: comboReads === 1 ? 'before' : 'after', models: ['one'], entries: [{ model: 'one' }], order: 0, revision: comboReads === 1 ? 'rev-a' : 'rev-b' }] };
+        const entries = comboReads === 1 ? initialEntries : [
+          { model: 'pool-model', provider_id: 'provider:qoder:https://api.qoder.com/chat/completions' },
+          { connection_id: 'qoder-b', model: 'pin-model' },
+          { model: 'legacy-model' },
+        ];
+        return { data: [{ description: comboReads === 1 ? 'before' : 'after', entries, id: 'saved', models, name: 'Saved', order: 0, revision: comboReads === 1 ? 'a'.repeat(64) : 'b'.repeat(64), strategy: 'priority' }] };
       }
       if (path === '/api/aliases') return { data: {} };
       if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };

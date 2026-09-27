@@ -133,6 +133,94 @@ func TestComboUpdate_LegacyClientWithoutRevisionRemainsSupported(t *testing.T) {
 	}
 }
 
+func TestComboUpdate_RejectsInvalidExpectedRevisionWithoutMutation(t *testing.T) {
+	invalid := []struct {
+		name  string
+		value any
+	}{
+		{"null", nil}, {"number", 42}, {"object", map[string]any{"digest": "x"}},
+		{"array", []any{"x"}}, {"boolean", true}, {"empty", ""}, {"whitespace", " 	"},
+		{"short", "abc123"}, {"uppercase", strings.Repeat("A", 64)},
+	}
+	for _, tc := range invalid {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newRESTTestServer(t)
+			s.setJSONSetting("combos", []any{map[string]any{"id": "guarded", "name": "Guarded", "strategy": "priority", "description": "original", "entries": []any{map[string]any{"model": "one"}}}})
+			rec := httptest.NewRecorder()
+			s.handleUpdateCombo(rec, reqWithPath("PUT", "/api/combos?id=guarded", map[string]any{
+				"name": "Guarded", "strategy": "random", "description": "mutated",
+				"entries": []any{map[string]any{"model": "two"}}, "expected_revision": tc.value,
+			}, nil))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("got %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			errorBody := asMap(decodeBody(t, rec)["error"])
+			if errorBody["code"] != "INVALID_EXPECTED_REVISION" || !strings.Contains(errorBody["message"].(string), "64-character lowercase SHA-256") {
+				t.Fatalf("unstable or unactionable error: %v", errorBody)
+			}
+			stored := asMap(asSlice(s.getJSONSetting("combos", []any{}))[0])
+			if stored["description"] != "original" || stored["strategy"] != "priority" {
+				t.Fatalf("invalid precondition mutated storage: %v", stored)
+			}
+		})
+	}
+}
+
+func TestComboCreate_RejectsRequestOnlyRevisionMetadataWithoutMutation(t *testing.T) {
+	for _, key := range []string{"revision", "expected_revision"} {
+		t.Run(key, func(t *testing.T) {
+			s := newRESTTestServer(t)
+			s.setJSONSetting("combos", []any{map[string]any{"id": "existing", "name": "Existing"}})
+			rec := httptest.NewRecorder()
+			s.handleCreateCombo(rec, reqWithPath("POST", "/api/combos", map[string]any{
+				"name": "Injected", "strategy": "priority", "entries": []any{map[string]any{"model": "one"}}, key: strings.Repeat("a", 64),
+			}, nil))
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("got %d, want 400; body=%s", rec.Code, rec.Body.String())
+			}
+			if asMap(decodeBody(t, rec)["error"])["code"] != "REQUEST_ONLY_COMBO_METADATA" {
+				t.Fatalf("unexpected error: %s", rec.Body.String())
+			}
+			stored := asSlice(s.getJSONSetting("combos", []any{}))
+			if len(stored) != 1 || asMap(stored[0])["id"] != "existing" {
+				t.Fatalf("rejected create mutated storage: %v", stored)
+			}
+		})
+	}
+}
+
+func TestComboUpdate_StripsRequestMetadataFromStorageAndGET(t *testing.T) {
+	s := newRESTTestServer(t)
+	s.setJSONSetting("combos", []any{map[string]any{"id": "clean", "name": "Clean", "strategy": "priority", "entries": []any{map[string]any{"model": "one"}}}})
+	get := httptest.NewRecorder()
+	s.handleGetCombos(get, reqWithPath("GET", "/api/combos", nil, nil))
+	revision := asMap(asSlice(decodeBody(t, get)["data"])[0])["revision"].(string)
+	update := httptest.NewRecorder()
+	s.handleUpdateCombo(update, reqWithPath("PUT", "/api/combos?id=clean", map[string]any{
+		"name": "Clean", "strategy": "priority", "entries": []any{map[string]any{"model": "two"}},
+		"expected_revision": revision, "revision": "client-forged",
+	}, nil))
+	if update.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", update.Code, update.Body.String())
+	}
+	stored := asMap(asSlice(s.getJSONSetting("combos", []any{}))[0])
+	if _, ok := stored["revision"]; ok {
+		t.Fatalf("revision persisted: %v", stored)
+	}
+	if _, ok := stored["expected_revision"]; ok {
+		t.Fatalf("expected_revision persisted: %v", stored)
+	}
+	get = httptest.NewRecorder()
+	s.handleGetCombos(get, reqWithPath("GET", "/api/combos", nil, nil))
+	served := asMap(asSlice(decodeBody(t, get)["data"])[0])
+	if served["revision"] == "client-forged" || served["revision"] == "" {
+		t.Fatalf("GET revision is not server-generated: %v", served)
+	}
+	if _, ok := served["expected_revision"]; ok {
+		t.Fatalf("GET leaked expected_revision: %v", served)
+	}
+}
+
 // ---------------------------------------------------------------- API keys
 
 func TestKeyDelete_RemovesAndPersists(t *testing.T) {

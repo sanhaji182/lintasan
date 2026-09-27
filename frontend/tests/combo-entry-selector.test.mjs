@@ -7,6 +7,7 @@ import {
   buildComboEntries,
   filterComboModels,
   comboCatalogAvailability,
+  comboMatchesSavedPayload,
 } from '../src/lib/combo-entry-selector.ts';
 
 const connections = [
@@ -153,6 +154,30 @@ test('existing combo entries resolve their canonical provider without changing p
   const providers = comboProviderOptions(connections, providerCatalog);
   assert.equal(comboProviderForEntry({ connection_id: 'qoder-b' }, providers)?.name, 'Qoder');
   assert.equal(comboProviderForEntry({ provider_id: providers[0].id }, providers)?.name, 'Qoder');
+});
+
+test('saved payload comparison normalizes object field order but preserves entry identity and array order', () => {
+  const payload = {
+    name: 'Mixed', strategy: 'priority', description: 'route',
+    entries: [
+      { model: 'pool', provider_id: 'provider:qoder' },
+      { model: 'pin', connection_id: 'account-b' },
+      { model: 'legacy' },
+      { model: 'legacy-pool', connection_ids: ['account-a', 'account-b'] },
+    ],
+  };
+  assert.equal(comboMatchesSavedPayload({
+    provider: 'Mixed', strategy: 'priority', description: 'route',
+    entries: [
+      { provider_id: 'provider:qoder', model: 'pool' },
+      { connection_id: 'account-b', model: 'pin' },
+      { model: 'legacy' },
+      { connection_ids: ['account-a', 'account-b'], model: 'legacy-pool' },
+    ],
+  }, payload), true);
+  assert.equal(comboMatchesSavedPayload({ ...payload, provider: 'Mixed', entries: [...payload.entries].reverse() }, payload), false);
+  assert.equal(comboMatchesSavedPayload({ ...payload, provider: 'Mixed', entries: [{ model: 'pool', connection_id: 'provider:qoder' }, ...payload.entries.slice(1)] }, payload), false);
+  assert.equal(comboMatchesSavedPayload({ ...payload, provider: 'Mixed', entries: [...payload.entries.slice(0, 3), { model: 'legacy-pool', connection_ids: ['account-b', 'account-a'] }] }, payload), false);
 });
 
 test('provider identity follows effective endpoint and retains scheme and explicit port', () => {
