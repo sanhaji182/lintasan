@@ -5,6 +5,8 @@ import {
   comboModelsForProvider,
   comboProviderForEntry,
   buildComboEntries,
+  filterComboModels,
+  comboCatalogAvailability,
 } from '../src/lib/combo-entry-selector.ts';
 
 const connections = [
@@ -112,6 +114,17 @@ test('provider model list is the active union for that provider only', () => {
   assert.deepEqual(comboModelsForProvider(models, qoder), ['only-a', 'only-b', 'shared']);
   const other = comboProviderOptions(connections, providerCatalog)[1];
   assert.deepEqual(comboModelsForProvider(models, other), ['shared']);
+});
+
+test('model search is case insensitive and preserves the provider active-model order', () => {
+  assert.deepEqual(filterComboModels(['Claude Sonnet', 'gpt-4o', 'Qwen Coder'], 'COD'), ['Qwen Coder']);
+  assert.deepEqual(filterComboModels(['Claude Sonnet', 'gpt-4o'], '  '), ['Claude Sonnet', 'gpt-4o']);
+});
+
+test('catalog availability distinguishes inactive providers from an empty connection catalog', () => {
+  assert.equal(comboCatalogAvailability([]), 'empty');
+  assert.equal(comboCatalogAvailability([{ id: 'off', is_active: 0 }]), 'inactive');
+  assert.equal(comboCatalogAvailability([{ id: 'on', is_active: 1 }]), 'available');
 });
 
 test('provider entries persist canonical pool identity while advanced pin persists exact account', () => {

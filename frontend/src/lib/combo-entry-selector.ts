@@ -38,6 +38,20 @@ export interface DraftComboEntry {
   connectionId?: string;
 }
 
+export type ComboCatalogAvailability = 'empty' | 'inactive' | 'available';
+
+export function comboCatalogAvailability(connections: ComboConnection[]): ComboCatalogAvailability {
+  if (connections.length === 0) return 'empty';
+  return connections.some(connection => connection.is_active === 1 || connection.is_active === true)
+    ? 'available'
+    : 'inactive';
+}
+
+export function filterComboModels(models: string[], query: string): string[] {
+  const normalized = query.trim().toLowerCase();
+  return normalized ? models.filter(model => model.toLowerCase().includes(normalized)) : models;
+}
+
 function endpointIdentity(connection: ComboConnection): { id: string; provider: string } {
   const pool = connection.pool_id?.trim();
   if (pool) return { id: `pool:${pool}`, provider: pool };

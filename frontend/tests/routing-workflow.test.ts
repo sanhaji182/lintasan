@@ -301,35 +301,118 @@ describe('Routing save boundaries', () => {
     await renderPage();
     await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Qoder — 2 accounts' })).toBeInTheDocument());
-    expect(screen.getAllByRole('option', { name: /Qoder/ })).toHaveLength(1);
+    const qoderProvider = await screen.findByRole('button', { name: /Qoder.*2 accounts.*3 models/i });
+    expect(screen.getAllByRole('button', { name: /Qoder.*accounts.*models/i })).toHaveLength(1);
 
-    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'provider:qoder:https://api.qoder.com/chat/completions' } });
-    expect(screen.getByRole('option', { name: 'qoder-only-a' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'qoder-only-b' })).toBeInTheDocument();
-    expect(screen.getByRole('option', { name: 'shared-model' })).toBeInTheDocument();
+    await fireEvent.click(qoderProvider);
+    expect(screen.getByRole('option', { name: /qoder-only-a/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /qoder-only-b/i })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: /shared-model/i })).toBeInTheDocument();
 
     await fireEvent.input(screen.getByPlaceholderText(/Combo name/i), { target: { value: 'qoder-pool' } });
-    await fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'shared-model' } });
+    await fireEvent.click(screen.getByRole('option', { name: /shared-model/i }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add entry' }));
-    expect(screen.getByText('Qoder · provider pool')).toBeInTheDocument();
+    const summary = screen.getByRole('region', { name: /Pre-save route summary/i });
+    expect(summary).toHaveTextContent('Qoder');
+    expect(summary).toHaveTextContent('Provider pool');
     await fireEvent.click(screen.getByRole('button', { name: 'Create Combo' }));
     await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/combos', expect.objectContaining({
       entries: [{ model: 'shared-model', provider_id: 'provider:qoder:https://api.qoder.com/chat/completions' }],
     })));
   });
 
+  it('presents canonical provider hierarchy, explicit selection, searchable models, and a route summary', async () => {
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+
+    const provider = await screen.findByRole('button', { name: /Qoder.*2 accounts.*3 models/i });
+    expect(provider).toHaveTextContent('Qoder');
+    expect(provider).toHaveTextContent('Qoder Alice, Qoder Bob');
+    expect(provider).toHaveAttribute('aria-pressed', 'false');
+    await fireEvent.click(provider);
+    expect(provider).toHaveAttribute('aria-pressed', 'true');
+    expect(provider).toHaveTextContent('Selected');
+
+    const search = screen.getByRole('combobox', { name: /Search Qoder models/i });
+    await fireEvent.input(search, { target: { value: 'only-b' } });
+    expect(screen.getByRole('option', { name: /qoder-only-b/i })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /qoder-only-a/i })).not.toBeInTheDocument();
+    await fireEvent.keyDown(search, { key: 'Escape' });
+    expect(search).toHaveValue('');
+
+    await fireEvent.click(screen.getByRole('option', { name: /shared-model/i }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add entry' }));
+    const summary = screen.getByRole('region', { name: /Pre-save route summary/i });
+    expect(summary).toHaveTextContent('Qoder');
+    expect(summary).toHaveTextContent('Provider pool');
+    expect(summary).toHaveTextContent('shared-model');
+  });
+
+  it('distinguishes no synced models and exposes the existing safe sync action', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/connections') return { data: [{ id: 'qoder-a', name: 'Qoder Alice', format: 'qoder', base_url: 'https://api.qoder.com', chat_path: '/chat/completions', is_active: 1 }] };
+      if (path === '/api/presets') return { data: [{ name: 'Qoder', domain: 'qoder.com', base_url: 'https://api.qoder.com/v1' }] };
+      if (path === '/api/models/discovered') return { data: [] };
+      if (path === '/api/combos') return { data: [] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Qoder.*0 models/i }));
+    expect(screen.getByText('No synced models').closest('[role="status"]')).toHaveTextContent(/No active discovered models/i);
+    expect(screen.getByRole('button', { name: /Sync Models/i })).toBeEnabled();
+  });
+
+  it('distinguishes inactive providers from an empty catalog', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/connections') return { data: [{ id: 'off', name: 'Paused account', is_active: 0 }] };
+      if (path === '/api/combos') return { data: [] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+    expect(await screen.findByText('Providers unavailable')).toBeInTheDocument();
+    expect(screen.getByText(/connections exist but none are active/i)).toBeInTheDocument();
+  });
+
+  it('shows an API failure with a retry action', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/connections') throw new Error('Network unavailable');
+      if (path === '/api/combos') return { data: [] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+    expect(await screen.findByText('Provider catalog unavailable')).toBeInTheDocument();
+    expect(screen.getByText('Network unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
   it('advanced account pin persists the exact connection id', async () => {
     await renderPage();
     await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
-    await waitFor(() => expect(screen.getByRole('option', { name: 'Qoder — 2 accounts' })).toBeInTheDocument());
-    await fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'provider:qoder:https://api.qoder.com/chat/completions' } });
+    await fireEvent.click(await screen.findByRole('button', { name: /Qoder.*2 accounts.*3 models/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Advanced: pin to specific account/i }));
     await fireEvent.change(screen.getByLabelText('Pin to specific account'), { target: { value: 'qoder-b' } });
-    await fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'qoder-only-b' } });
+    await fireEvent.click(screen.getByRole('option', { name: /qoder-only-b/i }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add entry' }));
-    expect(screen.getByText(/pinned: Qoder Bob/i)).toBeInTheDocument();
+    const summary = screen.getByRole('region', { name: /Pre-save route summary/i });
+    expect(summary).toHaveTextContent('Qoder Bob');
+    expect(summary).toHaveTextContent('qoder-only-b');
   });
 
   it('uses the canonical provider name on existing combo rows', async () => {

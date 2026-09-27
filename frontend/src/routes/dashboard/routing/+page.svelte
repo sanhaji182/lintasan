@@ -11,11 +11,11 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
   import { routingDirtyState, buildPolicyPayload, buildQuotaPayload } from '$lib/workflow-consolidation';
-  import { comboProviderOptions, comboModelsForProvider, comboProviderForEntry, buildComboEntries } from '$lib/combo-entry-selector';
+  import { comboProviderOptions, comboModelsForProvider, comboProviderForEntry, buildComboEntries, filterComboModels, comboCatalogAvailability } from '$lib/combo-entry-selector';
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
-    BrainCircuit, DollarSign, Gauge, Layers, ToggleLeft, ToggleRight, X, Sparkles
+    BrainCircuit, DollarSign, Gauge, Layers, ToggleLeft, ToggleRight, X, Sparkles, Check, Search, AlertTriangle
   } from 'lucide-svelte/icons';
 
   interface Combo {
@@ -71,6 +71,7 @@
   let selectedComboProvider = $state('');
   let pinnedComboConnection = $state('');
   let selectedComboModel = $state('');
+  let comboModelQuery = $state('');
   let newComboEntries = $state<Array<{ model: string; providerId: string; connectionId?: string }>>([]);
   let showAdvancedModelInput = $state(false);
   let advancedModel = $state('');
@@ -79,6 +80,22 @@
   const comboProviders = $derived(comboProviderOptions(comboConnections, comboProviderCatalog));
   const selectedProvider = $derived(comboProviders.find(option => option.id === selectedComboProvider));
   const selectedProviderModels = $derived(comboModelsForProvider(comboDiscoveredModels, selectedProvider));
+  const filteredProviderModels = $derived(filterComboModels(selectedProviderModels, comboModelQuery));
+  const comboCatalogState = $derived(comboCatalogAvailability(comboConnections));
+
+  function selectComboProvider(providerId: string) {
+    selectedComboProvider = providerId;
+    selectedComboModel = '';
+    pinnedComboConnection = '';
+    comboModelQuery = '';
+  }
+
+  function handleModelSearchKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      comboModelQuery = '';
+    }
+  }
 
   // Smart Routing Intelligence config (ML routing, cost, quota)
   interface SmartConfig {
@@ -337,6 +354,7 @@
       selectedComboProvider = '';
       pinnedComboConnection = '';
       selectedComboModel = '';
+      comboModelQuery = '';
       advancedModel = '';
       showAdvancedModelInput = false;
       await loadCombos();
@@ -775,43 +793,65 @@
             </div>
 
             {#if comboCatalogLoading}
-              <div class="catalog-state"><Spinner /> Loading provider catalog…</div>
+              <div class="catalog-state" role="status" aria-live="polite"><Spinner /> Loading provider catalog…</div>
             {:else if comboCatalogError}
-              <div class="catalog-state error" role="alert">{comboCatalogError}<button type="button" class="btn-secondary" onclick={loadComboCatalog}>Retry</button></div>
-            {:else if comboProviders.length === 0}
-              <div class="catalog-state">No active provider connections are available. Add or enable a connection first.</div>
+              <div class="catalog-state error" role="alert"><AlertTriangle size={18} /><span><strong>Provider catalog unavailable</strong>{comboCatalogError}</span><button type="button" class="btn-secondary" onclick={loadComboCatalog}>Retry</button></div>
+            {:else if comboCatalogState === 'empty'}
+              <div class="catalog-state"><Server size={18} /><span><strong>No provider connections</strong>Add a connection before creating a routed entry.</span></div>
+            {:else if comboCatalogState === 'inactive'}
+              <div class="catalog-state warning" role="status"><AlertTriangle size={18} /><span><strong>Providers unavailable</strong>Your connections exist but none are active. Enable one to continue.</span></div>
             {:else}
-              <div class="selector-steps">
-                <label class="selector-step">
-                  <span><b>1</b> Provider</span>
-                  <select class="input-field provider-search" aria-label="Provider" bind:value={selectedComboProvider} onchange={() => { selectedComboModel = ''; pinnedComboConnection = ''; }}>
-                    <option value="">Choose a provider…</option>
-                    {#each comboProviders as provider}<option value={provider.id}>{provider.name} — {provider.accounts.length} account{provider.accounts.length === 1 ? '' : 's'}</option>{/each}
-                  </select>
-                  {#if selectedProvider}<small>{selectedProvider.accounts.map(account => account.name).join(', ')}</small>{/if}
-                </label>
-                <label class="selector-step">
-                  <span><b>2</b> Model</span>
-                  <select class="input-field" aria-label="Model" bind:value={selectedComboModel} disabled={!selectedProvider || selectedProviderModels.length === 0}>
-                    <option value="">{selectedProvider ? 'Choose a discovered model…' : 'Choose a provider first'}</option>
-                    {#each selectedProviderModels as model}<option value={model}>{model}</option>{/each}
-                  </select>
-                  {#if selectedProvider && selectedProviderModels.length === 0}<small>No active discovered models for this provider.</small>{/if}
-                </label>
-                <div class="entry-actions">
-                  <button type="button" class="btn-primary" onclick={addPinnedComboEntry} disabled={!selectedProvider || !selectedProviderModels.includes(selectedComboModel)}>Add entry</button>
-                  <button type="button" class="btn-secondary" onclick={syncComboModels} disabled={!selectedProvider?.canSync || Boolean(syncingConnection)}><RotateCw size={13} /> {syncingConnection ? 'Syncing…' : 'Sync Models'}</button>
+              <div class="provider-picker" aria-label="Available providers">
+                <div class="picker-label"><span><b>1</b> Provider</span><small>Choose the provider pool. Account identity stays visible below the canonical name.</small></div>
+                <div class="provider-grid">
+                  {#each comboProviders as provider}
+                    {@const providerModels = comboModelsForProvider(comboDiscoveredModels, provider)}
+                    <button
+                      type="button"
+                      class="provider-option"
+                      class:selected={provider.id === selectedComboProvider}
+                      aria-pressed={provider.id === selectedComboProvider}
+                      aria-label={`${provider.name}, ${provider.accounts.length} account${provider.accounts.length === 1 ? '' : 's'}, ${providerModels.length} model${providerModels.length === 1 ? '' : 's'}`}
+                      onclick={() => selectComboProvider(provider.id)}
+                    >
+                      <span class="provider-mark"><Server size={17} /></span>
+                      <span class="provider-copy"><strong>{provider.name}</strong><small>{provider.accounts.map(account => account.name).join(', ')}</small><span>{provider.accounts.length} account{provider.accounts.length === 1 ? '' : 's'} · {providerModels.length} model{providerModels.length === 1 ? '' : 's'}</span></span>
+                      {#if provider.id === selectedComboProvider}<span class="selected-label"><Check size={13} /> Selected</span>{/if}
+                    </button>
+                  {/each}
                 </div>
               </div>
 
-              <button type="button" class="advanced-toggle" onclick={() => showAdvancedModelInput = !showAdvancedModelInput}>Advanced: pin to specific account or enter a model ID</button>
+              {#if selectedProvider}
+                <div class="model-picker-panel">
+                  <div class="picker-label"><span><b>2</b> Model</span><small>{selectedProvider.name} · {selectedProvider.accounts.map(account => account.name).join(', ')}</small></div>
+                  {#if selectedProviderModels.length === 0}
+                    <div class="catalog-state no-models" role="status"><Search size={18} /><span><strong>No synced models</strong>No active discovered models are available for {selectedProvider.name}. Sync the provider to refresh its catalog.</span></div>
+                  {:else}
+                    <label class="model-search"><Search size={16} /><span class="sr-only">Search {selectedProvider.name} models</span><input role="combobox" aria-label={`Search ${selectedProvider.name} models`} aria-controls="combo-model-options" aria-expanded="true" placeholder="Search model ID…" bind:value={comboModelQuery} onkeydown={handleModelSearchKeydown} /></label>
+                    <div id="combo-model-options" class="model-options" role="listbox" aria-label={`${selectedProvider.name} models`}>
+                      {#each filteredProviderModels as model}
+                        <button type="button" role="option" aria-selected={selectedComboModel === model} class:selected={selectedComboModel === model} onclick={() => selectedComboModel = model}><code>{model}</code>{#if selectedComboModel === model}<span><Check size={13} /> Selected</span>{/if}</button>
+                      {:else}
+                        <div class="model-empty">No models match “{comboModelQuery}”. Press Escape to clear.</div>
+                      {/each}
+                    </div>
+                  {/if}
+                  <div class="entry-actions">
+                    <button type="button" class="btn-primary" onclick={addPinnedComboEntry} disabled={!selectedProviderModels.includes(selectedComboModel)}>Add entry</button>
+                    <button type="button" class="btn-secondary" onclick={syncComboModels} disabled={!selectedProvider.canSync || Boolean(syncingConnection)} aria-busy={Boolean(syncingConnection)}><span class:spinning={Boolean(syncingConnection)}><RotateCw size={13} /></span> {syncingConnection ? 'Syncing…' : 'Sync Models'}</button>
+                  </div>
+                </div>
+              {/if}
+
+              <button type="button" class="advanced-toggle" aria-expanded={showAdvancedModelInput} onclick={() => showAdvancedModelInput = !showAdvancedModelInput}>Advanced: pin to specific account or enter a model ID</button>
               {#if showAdvancedModelInput}
                 <div class="advanced-row">
-                  <select class="input-field" aria-label="Pin to specific account" bind:value={pinnedComboConnection} disabled={!selectedProvider}>
+                  <label><span>Account / connection</span><select class="input-field" aria-label="Pin to specific account" bind:value={pinnedComboConnection} disabled={!selectedProvider}>
                     <option value="">Any healthy account in provider</option>
                     {#each selectedProvider?.accounts || [] as account}<option value={account.id}>{account.name} — {account.id}</option>{/each}
-                  </select>
-                  <input class="input-field" placeholder="Exact model ID (optional)" bind:value={advancedModel} disabled={!selectedProvider} />
+                  </select></label>
+                  <label><span>Exact model ID</span><input class="input-field" placeholder="Exact model ID (optional)" bind:value={advancedModel} disabled={!selectedProvider} /></label>
                   <button type="button" class="btn-secondary" onclick={addAdvancedComboEntry} disabled={!selectedProvider || !advancedModel.trim()}>Add manual entry</button>
                   <small>Pinning stores the exact account ID. Without a pin, runtime may use any active account in this provider.</small>
                 </div>
@@ -819,13 +859,16 @@
             {/if}
 
             {#if newComboEntries.length > 0}
-              <ol class="draft-chain">
-                {#each newComboEntries as entry, index}
-                  {@const provider = comboProviders.find(option => option.id === entry.providerId)}
-                  {@const account = provider?.accounts.find(option => option.id === entry.connectionId)}
-                  <li><span class="chain-step-num">{index + 1}</span><div><code>{entry.model}</code><small>{provider?.name || entry.providerId}{account ? ` · pinned: ${account.name}` : ' · provider pool'}</small></div><button type="button" class="btn-icon" aria-label={`Remove ${entry.model} from combo`} onclick={() => removeComboEntry(index)}><X size={14} /></button></li>
-                {/each}
-              </ol>
+              <section class="draft-summary" aria-label="Pre-save route summary">
+                <div class="summary-heading"><div><strong>Route summary</strong><span>Saved in this failover order</span></div><span>{newComboEntries.length} {newComboEntries.length === 1 ? 'entry' : 'entries'}</span></div>
+                <ol class="draft-chain">
+                  {#each newComboEntries as entry, index}
+                    {@const provider = comboProviders.find(option => option.id === entry.providerId)}
+                    {@const account = provider?.accounts.find(option => option.id === entry.connectionId)}
+                    <li><span class="chain-step-num">{index + 1}</span><div class="summary-route"><strong>{provider?.name || entry.providerId}</strong><span class="route-arrow" aria-hidden="true">→</span><small>{account?.name || 'Provider pool'}</small><span class="route-arrow" aria-hidden="true">→</span><code>{entry.model}</code></div><button type="button" class="btn-icon" aria-label={`Remove ${entry.model} from combo`} onclick={() => removeComboEntry(index)}><X size={14} /></button></li>
+                  {/each}
+                </ol>
+              </section>
             {/if}
           </div>
           <div class="flex items-center gap-2">
@@ -1070,29 +1113,78 @@
 
 <style>
   .routing-section-nav { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
-  .combo-entry-builder { padding:14px; border:1px solid var(--color-border); border-radius:10px; background:var(--color-bg-body); }
-  .combo-entry-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:12px; }
-  .combo-entry-heading strong,.combo-entry-heading span { display:block; }
+  .combo-entry-builder { min-width:0; padding:16px; border:1px solid var(--color-border); border-radius:12px; background:var(--color-bg-body); overflow:hidden; }
+  .combo-entry-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
+  .combo-entry-heading strong,.combo-entry-heading span,.catalog-state strong { display:block; }
   .combo-entry-heading strong { font-size:13px; color:var(--color-fg-0); }
-  .combo-entry-heading span,.selector-step small,.advanced-row small,.draft-chain small { font-size:10px; color:var(--color-fg-3); margin-top:2px; }
+  .combo-entry-heading span,.advanced-row small,.draft-chain small,.picker-label small { font-size:11px; color:var(--color-fg-3); margin-top:2px; line-height:1.4; }
   .entry-count { padding:3px 8px; border-radius:999px; background:var(--color-primary-light); color:var(--color-primary) !important; white-space:nowrap; }
-  .selector-steps { display:grid; grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) auto; gap:10px; align-items:end; }
-  .selector-step { display:flex; flex-direction:column; gap:5px; min-width:0; }
-  .selector-step>span { font-size:11px; font-weight:650; color:var(--color-fg-2); }
-  .selector-step b { display:inline-grid; place-items:center; width:18px; height:18px; border-radius:50%; background:var(--color-primary); color:white; margin-right:4px; }
-  .entry-actions { display:flex; gap:6px; flex-wrap:wrap; }
-  .entry-actions button { display:inline-flex; align-items:center; gap:5px; }
-  .catalog-state { display:flex; align-items:center; gap:9px; padding:14px; border:1px dashed var(--color-border); border-radius:8px; font-size:12px; color:var(--color-fg-2); }
+  .provider-picker,.model-picker-panel { min-width:0; }
+  .picker-label { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:8px; }
+  .picker-label>span { font-size:12px; font-weight:700; color:var(--color-fg-1); white-space:nowrap; }
+  .picker-label b { display:inline-grid; place-items:center; width:20px; height:20px; border-radius:50%; background:var(--color-primary); color:white; margin-right:5px; }
+  .picker-label small { text-align:right; }
+  .provider-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(240px,100%),1fr)); gap:8px; }
+  .provider-option { min-width:0; min-height:68px; display:flex; align-items:center; gap:10px; padding:10px 11px; text-align:left; color:var(--color-fg-1); border:1px solid var(--color-border); border-radius:9px; background:var(--color-bg-card); cursor:pointer; transition:var(--transition); }
+  .provider-option:hover { border-color:var(--color-primary); }
+  .provider-option.selected { border:2px solid var(--color-primary); padding:9px 10px; background:var(--color-primary-light); box-shadow:0 0 0 3px var(--color-primary-glow); }
+  .provider-mark { width:34px; height:34px; flex:0 0 34px; display:grid; place-items:center; border-radius:8px; background:var(--color-primary-light); color:var(--color-primary); }
+  .provider-copy { min-width:0; flex:1; display:flex; flex-direction:column; }
+  .provider-copy strong { color:var(--color-fg-0); font-size:13px; line-height:1.25; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .provider-copy small { margin-top:2px; color:var(--color-fg-3); font-size:10px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .provider-copy>span { margin-top:5px; color:var(--color-fg-2); font-size:10px; font-weight:600; }
+  .selected-label,.model-options button>span { display:inline-flex; align-items:center; gap:3px; color:var(--color-primary); font-size:10px; font-weight:750; }
+  .model-picker-panel { margin-top:12px; padding:12px; border:1px solid var(--color-border); border-radius:10px; background:var(--color-bg-card); }
+  .model-search { min-height:44px; display:flex; align-items:center; gap:8px; padding:0 12px; border:1px solid var(--color-border); border-radius:8px; color:var(--color-fg-3); background:var(--color-bg-body); }
+  .model-search:focus-within { border-color:var(--color-primary); box-shadow:0 0 0 3px var(--color-primary-glow); }
+  .model-search input { min-width:0; width:100%; border:0; outline:0; background:transparent; color:var(--color-fg-0); font-size:12px; }
+  .model-options { max-height:220px; margin-top:7px; padding:4px; overflow:auto; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg-body); }
+  .model-options button { width:100%; min-height:44px; display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--color-fg-1); cursor:pointer; text-align:left; }
+  .model-options button:hover,.model-options button.selected { background:var(--color-primary-light); border-color:color-mix(in srgb,var(--color-primary) 35%,transparent); }
+  .model-options code { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .model-empty { padding:18px; text-align:center; color:var(--color-fg-3); font-size:11px; }
+  .entry-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .entry-actions button { min-height:44px; display:inline-flex; align-items:center; gap:5px; }
+  .catalog-state { min-width:0; display:flex; align-items:center; gap:10px; padding:14px; border:1px dashed var(--color-border); border-radius:8px; font-size:12px; color:var(--color-fg-2); }
+  .catalog-state>span { min-width:0; flex:1; }
+  .catalog-state strong { margin-bottom:2px; color:var(--color-fg-0); }
   .catalog-state.error { border-color:var(--color-error); color:var(--color-error); background:var(--color-error-light); }
-  .catalog-state button { margin-left:auto; }
-  .advanced-toggle { margin-top:10px; border:0; background:transparent; color:var(--color-primary); font-size:11px; cursor:pointer; padding:3px 0; }
-  .advanced-row { display:grid; grid-template-columns:minmax(220px,1fr) auto; gap:8px; align-items:center; margin-top:7px; }
+  .catalog-state.warning { border-color:color-mix(in srgb,var(--color-warning) 50%,var(--color-border)); background:color-mix(in srgb,var(--color-warning) 9%,var(--color-bg-card)); }
+  .catalog-state.no-models { margin-top:4px; }
+  .catalog-state button { min-height:44px; margin-left:auto; }
+  .advanced-toggle { min-height:44px; margin-top:8px; border:0; background:transparent; color:var(--color-primary); font-size:11px; font-weight:650; cursor:pointer; padding:8px 0; }
+  .advanced-row { display:grid; grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto; gap:8px; align-items:end; margin-top:4px; }
+  .advanced-row label { min-width:0; display:flex; flex-direction:column; gap:5px; color:var(--color-fg-2); font-size:10px; font-weight:650; }
+  .advanced-row button { min-height:44px; }
   .advanced-row small { grid-column:1/-1; }
-  .draft-chain { list-style:none; margin:12px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
-  .draft-chain li { display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg-card); }
-  .draft-chain li>div { flex:1; min-width:0; display:flex; flex-direction:column; }
-  .draft-chain code { font-size:11px; overflow:hidden; text-overflow:ellipsis; }
-  @media (max-width: 760px) { .selector-steps { grid-template-columns:1fr; } .entry-actions { justify-content:flex-start; } }
+  .draft-summary { margin-top:12px; padding:11px; border:1px solid color-mix(in srgb,var(--color-primary) 30%,var(--color-border)); border-radius:10px; background:color-mix(in srgb,var(--color-primary) 5%,var(--color-bg-card)); }
+  .summary-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+  .summary-heading div,.summary-heading strong,.summary-heading span { display:block; }
+  .summary-heading strong { color:var(--color-fg-0); font-size:12px; }
+  .summary-heading div>span { color:var(--color-fg-3); font-size:10px; margin-top:2px; }
+  .summary-heading>span { padding:3px 7px; border-radius:999px; background:var(--color-primary-light); color:var(--color-primary); font-size:10px; font-weight:700; }
+  .draft-chain { list-style:none; margin:9px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
+  .draft-chain li { min-width:0; display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-bg-card); }
+  .summary-route { min-width:0; flex:1; display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+  .summary-route strong { color:var(--color-fg-0); font-size:11px; }
+  .summary-route small { margin:0; }
+  .summary-route code { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+  .route-arrow { color:var(--color-fg-3); }
+  .spinning { animation:spin .8s linear infinite; }
+  .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+  .provider-option:focus-visible,.model-options button:focus-visible,.advanced-toggle:focus-visible,.entry-actions button:focus-visible { outline:2px solid var(--color-primary); outline-offset:2px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @media (max-width: 760px) {
+    .picker-label { flex-direction:column; gap:2px; }
+    .picker-label small { text-align:left; }
+    .provider-grid { grid-template-columns:1fr; }
+    .entry-actions { align-items:stretch; }
+    .entry-actions button { flex:1; justify-content:center; }
+    .advanced-row { grid-template-columns:1fr; }
+    .summary-route { display:grid; grid-template-columns:auto 14px minmax(0,1fr); }
+    .summary-route .route-arrow:nth-of-type(2) { display:none; }
+    .summary-route code { grid-column:1/-1; padding-left:21px; }
+  }
   .routing-section-nav button { text-align:left; border:1px solid var(--color-border); background:var(--color-bg-card); border-radius:10px; padding:11px 13px; cursor:pointer; color:var(--color-fg-1); }
   .routing-section-nav button.active { border-color:var(--color-primary); background:var(--color-primary-light); color:var(--color-primary); }
   .routing-section-nav span { display:block; font-size:13px; font-weight:700; }
