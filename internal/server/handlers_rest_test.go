@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sanhaji182/lintasan-go/internal/config"
@@ -48,6 +49,88 @@ func decodeBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 		t.Fatalf("decode response: %v (body=%s)", err, rec.Body.String())
 	}
 	return out
+}
+
+func TestComboUpdate_RejectsStaleRevisionWithoutOverwriting(t *testing.T) {
+	s := newRESTTestServer(t)
+	s.setJSONSetting("combos", []any{map[string]any{
+		"id": "shared", "name": "Shared", "strategy": "priority", "description": "original",
+		"models": []any{"one"}, "entries": []any{map[string]any{"model": "one"}},
+	}})
+	get := httptest.NewRecorder()
+	s.handleGetCombos(get, reqWithPath("GET", "/api/combos", nil, nil))
+	revision, _ := asMap(asSlice(decodeBody(t, get)["data"])[0])["revision"].(string)
+	if revision == "" {
+		t.Fatal("GET /api/combos must expose a non-empty revision")
+	}
+
+	first := httptest.NewRecorder()
+	s.handleUpdateCombo(first, reqWithPath("PUT", "/api/combos?id=shared", map[string]any{
+		"name": "Shared", "strategy": "priority", "description": "operator B", "models": []any{"one"},
+		"entries": []any{map[string]any{"model": "one"}}, "expected_revision": revision,
+	}, nil))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first update: got %d body=%s", first.Code, first.Body.String())
+	}
+
+	stale := httptest.NewRecorder()
+	s.handleUpdateCombo(stale, reqWithPath("PUT", "/api/combos?id=shared", map[string]any{
+		"name": "Shared", "strategy": "round-robin", "description": "operator A stale", "models": []any{"one"},
+		"entries": []any{map[string]any{"model": "one"}}, "expected_revision": revision,
+	}, nil))
+	if stale.Code != http.StatusConflict {
+		t.Fatalf("stale update: got %d, want 409; body=%s", stale.Code, stale.Body.String())
+	}
+	stored := asMap(asSlice(s.getJSONSetting("combos", []any{}))[0])
+	if stored["description"] != "operator B" || stored["strategy"] != "priority" {
+		t.Fatalf("stale update overwrote current state: %v", stored)
+	}
+	if _, leaked := stored["expected_revision"]; leaked {
+		t.Fatalf("precondition leaked into persisted combo: %v", stored)
+	}
+}
+
+func TestComboUpdate_ConcurrentSameRevisionAllowsExactlyOneWriter(t *testing.T) {
+	s := newRESTTestServer(t)
+	s.setJSONSetting("combos", []any{map[string]any{"id": "shared", "name": "Shared", "strategy": "priority", "entries": []any{map[string]any{"model": "one"}}}})
+	get := httptest.NewRecorder()
+	s.handleGetCombos(get, reqWithPath("GET", "/api/combos", nil, nil))
+	revision := asMap(asSlice(decodeBody(t, get)["data"])[0])["revision"].(string)
+	codes := make(chan int, 2)
+	var wg sync.WaitGroup
+	for _, description := range []string{"A", "B"} {
+		wg.Add(1)
+		go func(description string) {
+			defer wg.Done()
+			rec := httptest.NewRecorder()
+			s.handleUpdateCombo(rec, reqWithPath("PUT", "/api/combos?id=shared", map[string]any{
+				"name": "Shared", "strategy": "priority", "description": description,
+				"entries": []any{map[string]any{"model": "one"}}, "expected_revision": revision,
+			}, nil))
+			codes <- rec.Code
+		}(description)
+	}
+	wg.Wait()
+	close(codes)
+	counts := map[int]int{}
+	for code := range codes {
+		counts[code]++
+	}
+	if counts[http.StatusOK] != 1 || counts[http.StatusConflict] != 1 {
+		t.Fatalf("concurrent writers got status counts %v, want one 200 and one 409", counts)
+	}
+}
+
+func TestComboUpdate_LegacyClientWithoutRevisionRemainsSupported(t *testing.T) {
+	s := newRESTTestServer(t)
+	s.setJSONSetting("combos", []any{map[string]any{"id": "legacy", "name": "Legacy", "strategy": "priority", "entries": []any{map[string]any{"model": "one"}}}})
+	rec := httptest.NewRecorder()
+	s.handleUpdateCombo(rec, reqWithPath("PUT", "/api/combos?id=legacy", map[string]any{
+		"name": "Legacy", "strategy": "round-robin", "entries": []any{map[string]any{"model": "one"}},
+	}, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("legacy update without expected_revision: got %d body=%s", rec.Code, rec.Body.String())
+	}
 }
 
 // ---------------------------------------------------------------- API keys

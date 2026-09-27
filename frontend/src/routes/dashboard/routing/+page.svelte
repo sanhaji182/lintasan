@@ -26,6 +26,7 @@
     models?: string[];
     description?: string;
     order: number;
+    revision?: string;
     entries?: Array<{ model: string; provider_id?: string; connection_id?: string; connection_ids?: string[] }>;
   }
 
@@ -79,7 +80,11 @@
   let syncingConnection = $state('');
   let comboCreating = $state(false);
   let editingComboId = $state('');
+  let editingComboRevision = $state('');
   let comboFormBaseline = $state('');
+  let comboSaveState = $state<'idle' | 'conflict' | 'reload-failed'>('idle');
+  let comboSaveMessage = $state('');
+  let savedComboPayload = $state<{ name: string; strategy: string; description: string; entries: any[] } | null>(null);
   const comboProviders = $derived(comboProviderOptions(comboConnections, comboProviderCatalog));
   const selectedProvider = $derived(comboProviders.find(option => option.id === selectedComboProvider));
   const selectedProviderModels = $derived(comboModelsForProvider(comboDiscoveredModels, selectedProvider));
@@ -102,8 +107,9 @@
   }
 
   function handleModelSearchKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
+    if (event.key === 'Escape' && comboModelQuery) {
       event.preventDefault();
+      event.stopPropagation();
       comboModelQuery = '';
     }
   }
@@ -249,24 +255,32 @@
     { value: 'random', label: 'Random', icon: Shuffle },
   ];
 
-  async function loadCombos() {
+  function normalizeCombos(raw: any): Combo[] {
+    return Array.isArray(raw) ? raw.map((c: any, i: number) => ({
+      id: c.id || c.name || `combo-${i}`,
+      provider: c.name || c.provider || 'Unknown',
+      strategy: c.strategy || 'priority',
+      keys: Array.isArray(c.keys) ? c.keys : [],
+      models: Array.isArray(c.models) && c.models.length > 0 ? c.models : (Array.isArray(c.entries) ? c.entries.map((e: any) => e.model) : []),
+      description: c.description || '',
+      order: c.order ?? i,
+      entries: Array.isArray(c.entries) ? c.entries : [],
+      revision: c.revision || '',
+    })) : [];
+  }
+
+  async function loadCombos(strict = false) {
     try {
       const res = await api.get<any>('/api/combos');
       const raw = res?.data || res?.combos || [];
-      combos = Array.isArray(raw) ? raw.map((c: any, i: number) => ({
-        id: c.id || c.name || `combo-${i}`,
-        provider: c.name || c.provider || 'Unknown',
-        strategy: c.strategy || 'priority',
-        keys: Array.isArray(c.keys) ? c.keys : [],
-        models: Array.isArray(c.models) && c.models.length > 0 ? c.models : (Array.isArray(c.entries) ? c.entries.map((e: any) => e.model) : []),
-        description: c.description || '',
-        order: c.order ?? i,
-        entries: Array.isArray(c.entries) ? c.entries : [],
-      })) : [];
+      combos = normalizeCombos(raw);
       baseStrategies = Object.fromEntries(combos.map(combo => [combo.id, combo.strategy]));
       stagedStrategies = {};
-    } catch {
-      combos = [];
+      return combos;
+    } catch (e) {
+      // A transport failure is not an authoritative empty collection.
+      if (strict) throw e;
+      return combos;
     }
   }
 
@@ -327,6 +341,7 @@
   function resetComboForm() {
     showComboForm = false;
     editingComboId = '';
+    editingComboRevision = '';
     newComboName = '';
     newComboStrategy = 'priority';
     newComboDescription = '';
@@ -338,6 +353,9 @@
     advancedModel = '';
     showAdvancedModelInput = false;
     comboFormBaseline = '';
+    comboSaveState = 'idle';
+    comboSaveMessage = '';
+    savedComboPayload = null;
   }
 
   function openCreateCombo() {
@@ -352,6 +370,7 @@
     if (combosDirtyCount > 0 || orderDirty) discardCombos();
     if (comboFormDirty && !confirm('Discard unsaved combo edits?')) return;
     editingComboId = combo.id;
+    editingComboRevision = combo.revision || '';
     newComboName = combo.provider;
     newComboStrategy = combo.strategy;
     newComboDescription = combo.description || '';
@@ -368,11 +387,61 @@
     });
     showComboForm = true;
     comboFormBaseline = JSON.stringify({ name: newComboName, strategy: newComboStrategy, description: newComboDescription, entries: newComboEntries });
+    comboSaveState = 'idle';
+    comboSaveMessage = '';
   }
 
   function cancelComboForm() {
     if (comboFormDirty && !confirm('Discard unsaved combo edits?')) return;
     resetComboForm();
+  }
+
+  function handleComboFormKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape' || event.defaultPrevented || comboCreating) return;
+    if ((event.target as HTMLElement).closest('[role="dialog"]')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    cancelComboForm();
+  }
+
+  async function reloadLatestCombo() {
+    if (comboFormDirty && !confirm('Discard this draft and reload the latest saved combo?')) return;
+    comboCreating = true;
+    try {
+      const id = editingComboId;
+      const loaded = await loadCombos(true);
+      const latest = loaded.find(combo => combo.id === id);
+      if (!latest) throw new Error('The combo no longer exists.');
+      comboFormBaseline = '';
+      openEditCombo(latest);
+    } catch (e: any) {
+      comboSaveMessage = e.message || 'Failed to reload the latest combo.';
+      showToast(comboSaveMessage, 'error');
+    } finally { comboCreating = false; }
+  }
+
+  async function retryComboReload() {
+    comboCreating = true;
+    try {
+      const id = editingComboId;
+      const loaded = await loadCombos(true);
+      const authoritative = loaded.find(combo => combo.id === id);
+      if (!authoritative) throw new Error('Saved combo was not found after refresh.');
+      if (!savedComboPayload || !comboMatchesPayload(authoritative, savedComboPayload)) throw new Error('Refresh did not confirm the saved combo state.');
+      const name = newComboName.trim();
+      resetComboForm();
+      showToast(`Combo "${name}" updated successfully`, 'success');
+    } catch (e: any) {
+      comboSaveMessage = `Combo was saved, but refresh failed: ${e.message || 'unknown error'}`;
+      showToast(comboSaveMessage, 'error');
+    } finally { comboCreating = false; }
+  }
+
+  function comboMatchesPayload(combo: Combo, payload: { name: string; strategy: string; description: string; entries: any[] }) {
+    return combo.provider === payload.name
+      && combo.strategy === payload.strategy
+      && (combo.description || '') === payload.description
+      && JSON.stringify(combo.entries || []) === JSON.stringify(payload.entries);
   }
 
   async function syncComboModels() {
@@ -416,16 +485,35 @@
         entries,
       };
       if (editingComboId) {
-        await api.put(`/api/combos?id=${encodeURIComponent(editingComboId)}`, payload);
-        showToast(`Combo "${name}" updated successfully`, 'success');
+        await api.put(`/api/combos?id=${encodeURIComponent(editingComboId)}`, { ...payload, expected_revision: editingComboRevision });
+        savedComboPayload = payload;
+        try {
+          const editedID = editingComboId;
+          const loaded = await loadCombos(true);
+          const authoritative = loaded.find(combo => combo.id === editedID);
+          if (!authoritative) throw new Error('Saved combo was not found after refresh.');
+          if (!comboMatchesPayload(authoritative, payload)) throw new Error('Refresh did not confirm the saved combo state.');
+          resetComboForm();
+          showToast(`Combo "${name}" updated successfully`, 'success');
+        } catch (reloadError: any) {
+          comboSaveState = 'reload-failed';
+          comboSaveMessage = `Combo was saved, but refresh failed: ${reloadError.message || 'unknown error'}`;
+          showToast(comboSaveMessage, 'error');
+        }
       } else {
         await api.post('/api/combos', payload);
+        await loadCombos(true);
+        resetComboForm();
         showToast(`Combo "${name}" created successfully`, 'success');
       }
-      resetComboForm();
-      await loadCombos();
     } catch (e: any) {
-      showToast(e.message || `Failed to ${editingComboId ? 'update' : 'create'} combo`, 'error');
+      if (e.status === 409 && editingComboId) {
+        comboSaveState = 'conflict';
+        comboSaveMessage = 'This combo changed after you opened it. Your draft is preserved; reload the latest version before reapplying your edits.';
+      } else {
+        comboSaveMessage = e.message || `Failed to ${editingComboId ? 'update' : 'create'} combo`;
+      }
+      showToast(comboSaveMessage, 'error');
     } finally {
       comboCreating = false;
     }
@@ -824,11 +912,21 @@
     </div>
 
     {#if showComboForm}
-      <div class="alias-form" style="margin-bottom: 20px;">
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <form class="alias-form" style="margin-bottom: 20px;" aria-label="Combo editor" onkeydown={handleComboFormKeydown} onsubmit={(event) => event.preventDefault()}>
         <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 10px;">
           {editingComboId ? 'Edit Combo' : 'Create New Combo'}
         </div>
         <div style="display: flex; flex-direction: column; gap: 12px;">
+          {#if comboSaveState !== 'idle'}
+            <div class="catalog-state error" role="alert">
+              <AlertTriangle size={18} />
+              <span><strong>{comboSaveState === 'conflict' ? 'Edit conflict' : 'Saved, refresh failed'}</strong>{comboSaveMessage}</span>
+              <button type="button" class="btn-secondary" onclick={comboSaveState === 'conflict' ? reloadLatestCombo : retryComboReload} disabled={comboCreating}>
+                {comboSaveState === 'conflict' ? 'Reload latest' : 'Retry reload'}
+              </button>
+            </div>
+          {/if}
           <div class="flex items-center gap-3 flex-wrap">
             <input
               class="input-field"
@@ -940,15 +1038,15 @@
             {/if}
           </div>
           <div class="flex items-center gap-2">
-            <button class="btn-primary" onclick={saveComboForm} disabled={comboCreating}>
+            <button type="button" class="btn-primary" onclick={saveComboForm} disabled={comboCreating || comboSaveState !== 'idle'}>
               {comboCreating ? (editingComboId ? 'Saving...' : 'Creating...') : (editingComboId ? 'Save Combo' : 'Create Combo')}
             </button>
-            <button class="btn-secondary" onclick={cancelComboForm}>
+            <button type="button" class="btn-secondary" onclick={cancelComboForm}>
               Cancel
             </button>
           </div>
         </div>
-      </div>
+      </form>
     {/if}
 
 

@@ -551,7 +551,7 @@ describe('Routing save boundaries', () => {
 
   it('keeps failed Edit state, then reloads and closes after a successful PUT', async () => {
     mocks.get.mockImplementation(async (path: string): Promise<any> => {
-      if (path === '/api/combos') return { data: [{ id: 'retry', name: 'Retry route', strategy: 'priority', description: 'before', models: ['legacy'], entries: [{ model: 'legacy' }], order: 0 }] };
+      if (path === '/api/combos') return { data: [{ id: 'retry', name: 'Retry route', strategy: 'priority', description: mocks.put.mock.calls.length >= 2 ? 'unsaved retry' : 'before', models: ['legacy'], entries: [{ model: 'legacy' }], order: 0, revision: 'rev-a' }] };
       if (path === '/api/aliases') return { data: {} };
       if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
       if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
@@ -571,5 +571,87 @@ describe('Routing save boundaries', () => {
     await waitFor(() => expect(mocks.put).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByText('Edit Combo')).not.toBeInTheDocument());
     expect(mocks.get.mock.calls.filter(([path]: [string]) => path === '/api/combos').length).toBeGreaterThan(1);
+  });
+
+  it('sends the loaded revision and preserves a stale draft with a safe reload action on 409', async () => {
+    const latest = { id: 'shared', name: 'Shared', strategy: 'priority', description: 'operator B', models: ['one'], entries: [{ model: 'one' }], order: 0, revision: 'rev-b' };
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/combos') return { data: [{ ...latest, description: 'original', revision: 'rev-a' }] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    const conflict: any = new Error('Combo changed since this editor was opened.'); conflict.status = 409;
+    mocks.put.mockRejectedValueOnce(conflict);
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Edit combo Shared/i }));
+    await fireEvent.input(screen.getByPlaceholderText(/Description/i), { target: { value: 'operator A draft' } });
+    await fireEvent.click(screen.getByRole('button', { name: /^Save Combo$/i }));
+    await waitFor(() => expect(mocks.put).toHaveBeenCalledWith('/api/combos?id=shared', expect.objectContaining({ expected_revision: 'rev-a' })));
+    expect(screen.getByDisplayValue('operator A draft')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(/changed.*reload/i);
+
+    mocks.get.mockImplementation(async (path: string): Promise<any> => path === '/api/combos' ? { data: [latest] } : ({ data: [] }));
+    mocks.confirm.mockReturnValueOnce(false);
+    await fireEvent.click(screen.getByRole('button', { name: /Reload latest/i }));
+    expect(screen.getByDisplayValue('operator A draft')).toBeInTheDocument();
+    mocks.confirm.mockReturnValueOnce(true);
+    await fireEvent.click(screen.getByRole('button', { name: /Reload latest/i }));
+    expect(await screen.findByDisplayValue('operator B')).toBeInTheDocument();
+    expect(mocks.put).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the editor and list after PUT success plus reload failure, then retries GET without another PUT', async () => {
+    let comboReads = 0;
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/combos') {
+        comboReads++;
+        if (comboReads === 2) throw new Error('refresh offline');
+        return { data: [{ id: 'saved', name: 'Saved', strategy: 'priority', description: comboReads === 1 ? 'before' : 'after', models: ['one'], entries: [{ model: 'one' }], order: 0, revision: comboReads === 1 ? 'rev-a' : 'rev-b' }] };
+      }
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Edit combo Saved/i }));
+    await fireEvent.input(screen.getByPlaceholderText(/Description/i), { target: { value: 'after' } });
+    await fireEvent.click(screen.getByRole('button', { name: /^Save Combo$/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/saved.*refresh failed/i);
+    expect(screen.getByDisplayValue('after')).toBeInTheDocument();
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: /Retry reload/i }));
+    await waitFor(() => expect(screen.queryByText('Edit Combo')).not.toBeInTheDocument());
+    expect(mocks.put).toHaveBeenCalledTimes(1);
+  });
+
+  it('guards form Escape and clears search before attempting to close', async () => {
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+    const form = screen.getByRole('form', { name: /combo editor/i });
+    await fireEvent.keyDown(form, { key: 'Escape' });
+    expect(screen.queryByText('Create New Combo')).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+    await fireEvent.input(screen.getByPlaceholderText(/Combo name/i), { target: { value: 'dirty' } });
+    mocks.confirm.mockReturnValueOnce(false);
+    await fireEvent.keyDown(screen.getByRole('form', { name: /combo editor/i }), { key: 'Escape' });
+    expect(screen.getByDisplayValue('dirty')).toBeInTheDocument();
+    mocks.confirm.mockReturnValueOnce(true);
+    await fireEvent.keyDown(screen.getByRole('form', { name: /combo editor/i }), { key: 'Escape' });
+    expect(screen.queryByText('Create New Combo')).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Qoder.*2 accounts/i }));
+    const search = screen.getByRole('combobox', { name: /Search Qoder models/i });
+    await fireEvent.input(search, { target: { value: 'qoder-only' } });
+    await fireEvent.keyDown(search, { key: 'Escape' });
+    expect(search).toHaveValue('');
+    expect(screen.getByText('Create New Combo')).toBeInTheDocument();
   });
 });

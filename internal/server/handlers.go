@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -14,6 +15,19 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/models"
 	"github.com/sanhaji182/lintasan-go/internal/provider"
 )
+
+// comboRevision fingerprints the exact persisted combo state. Request-only
+// concurrency fields are excluded from the resource fingerprint.
+func comboRevision(combo map[string]any) string {
+	clean := make(map[string]any, len(combo))
+	for key, value := range combo {
+		if key != "revision" && key != "expected_revision" {
+			clean[key] = value
+		}
+	}
+	b, _ := json.Marshal(clean)
+	return fmt.Sprintf("%x", sha256.Sum256(b))
+}
 
 // Models endpoint - OpenAI compatible
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
@@ -508,8 +522,11 @@ func (s *Server) handleGetCombos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	var combos any
+	var combos []map[string]any
 	if json.Unmarshal([]byte(combosJSON), &combos) == nil {
+		for _, combo := range combos {
+			combo["revision"] = comboRevision(combo)
+		}
 		json.NewEncoder(w).Encode(map[string]any{"data": combos})
 		return
 	}
@@ -517,6 +534,8 @@ func (s *Server) handleGetCombos(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateCombo(w http.ResponseWriter, r *http.Request) {
+	s.comboMu.Lock()
+	defer s.comboMu.Unlock()
 	var input map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
@@ -554,6 +573,15 @@ func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 		return
 	}
+	expectedRevision, hasPrecondition := input["expected_revision"].(string)
+	delete(input, "expected_revision")
+	delete(input, "revision")
+
+	// Legacy API clients may omit expected_revision and retain last-write-wins
+	// behavior. Dashboard edits always send it. The mutex makes the persisted
+	// read, revision check, and write one critical section.
+	s.comboMu.Lock()
+	defer s.comboMu.Unlock()
 	// Get existing combos
 	combosJSON, _ := s.db.GetSetting("combos")
 	var combos []map[string]any
@@ -565,6 +593,15 @@ func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
 	found := false
 	for i, combo := range combos {
 		if combo["id"] == id {
+			if hasPrecondition && (expectedRevision == "" || expectedRevision != comboRevision(combo)) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+					"code":    "COMBO_EDIT_CONFLICT",
+					"message": "Combo changed since this editor was opened. Reload the latest version and reapply your changes.",
+				}})
+				return
+			}
 			// Preserve the id
 			input["id"] = id
 			combos[i] = input
@@ -587,6 +624,8 @@ func (s *Server) handleUpdateCombo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteCombo(w http.ResponseWriter, r *http.Request) {
+	s.comboMu.Lock()
+	defer s.comboMu.Unlock()
 	id := r.URL.Query().Get("id")
 	if id == "" {
 		id = r.PathValue("id")

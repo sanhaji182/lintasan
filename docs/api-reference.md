@@ -296,9 +296,9 @@ factory) kredensial admin baru.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/combos` | List all combos |
+| `GET` | `/api/combos` | List all combos; each item includes a deterministic `revision` fingerprint |
 | `POST` | `/api/combos` | Create combo |
-| `PUT` | `/api/combos?id={id}` | Update combo |
+| `PUT` | `/api/combos?id={id}` | Update combo; dashboard sends `expected_revision` from GET and receives `409 COMBO_EDIT_CONFLICT` if stale. Optional for legacy API clients (last-write-wins compatibility). |
 | `DELETE` | `/api/combos?id={id}` | Delete combo |
 | `POST` | `/api/routing/reorder` | Reorder combos |
 

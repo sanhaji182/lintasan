@@ -466,6 +466,8 @@ func (s *Server) handleBackupDelete(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- Routing
 
 func (s *Server) handleRoutingComboPatch(w http.ResponseWriter, r *http.Request) {
+	s.comboMu.Lock()
+	defer s.comboMu.Unlock()
 	id := r.PathValue("id")
 	var in map[string]any
 	json.NewDecoder(r.Body).Decode(&in)
@@ -493,6 +495,8 @@ func (s *Server) handleRoutingComboPatch(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleRoutingComboReorder(w http.ResponseWriter, r *http.Request) {
+	s.comboMu.Lock()
+	defer s.comboMu.Unlock()
 	var in struct {
 		Combos []struct {
 			ID    string `json:"id"`

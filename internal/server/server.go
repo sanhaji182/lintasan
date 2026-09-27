@@ -52,6 +52,7 @@ type Server struct {
 	metrics        *metrics.Registry      // Prometheus metrics registry (/metrics)
 	startTime      time.Time              // server boot timestamp, used by /health
 	accessLogStore *logging.LogStore      // in-memory access log ring buffer
+	comboMu        sync.Mutex             // serializes combo read-check-write mutations
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
