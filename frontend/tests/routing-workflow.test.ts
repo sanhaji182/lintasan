@@ -349,6 +349,50 @@ describe('Routing save boundaries', () => {
     expect(summary).toHaveTextContent('shared-model');
   });
 
+  it('clears a selected model hidden by a new search and disables Add entry', async () => {
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Qoder.*2 accounts.*3 models/i }));
+
+    await fireEvent.click(screen.getByRole('option', { name: /qoder-only-a/i }));
+    expect(screen.getByRole('button', { name: 'Add entry' })).toBeEnabled();
+
+    await fireEvent.input(screen.getByRole('combobox', { name: /Search Qoder models/i }), { target: { value: 'only-b' } });
+
+    expect(screen.queryByRole('option', { name: /qoder-only-a/i })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add entry' })).toBeDisabled());
+  });
+
+  it('keeps a selected model addable while the search still matches it', async () => {
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Qoder.*2 accounts.*3 models/i }));
+    await fireEvent.click(screen.getByRole('option', { name: /qoder-only-a/i }));
+
+    await fireEvent.input(screen.getByRole('combobox', { name: /Search Qoder models/i }), { target: { value: 'only-a' } });
+
+    expect(screen.getByRole('option', { name: /qoder-only-a/i })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('button', { name: 'Add entry' })).toBeEnabled();
+  });
+
+  it('does not auto-select a previously hidden model when search is cleared', async () => {
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add Combo/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Qoder.*2 accounts.*3 models/i }));
+    const search = screen.getByRole('combobox', { name: /Search Qoder models/i });
+    await fireEvent.click(screen.getByRole('option', { name: /qoder-only-a/i }));
+    await fireEvent.input(search, { target: { value: 'only-b' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Add entry' })).toBeDisabled());
+
+    await fireEvent.keyDown(search, { key: 'Escape' });
+
+    expect(screen.getByRole('option', { name: /qoder-only-a/i })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByRole('button', { name: 'Add entry' })).toBeDisabled();
+  });
+
   it('distinguishes no synced models and exposes the existing safe sync action', async () => {
     mocks.get.mockImplementation(async (path: string): Promise<any> => {
       if (path === '/api/connections') return { data: [{ id: 'qoder-a', name: 'Qoder Alice', format: 'qoder', base_url: 'https://api.qoder.com', chat_path: '/chat/completions', is_active: 1 }] };

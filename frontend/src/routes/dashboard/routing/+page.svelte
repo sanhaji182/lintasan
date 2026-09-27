@@ -83,6 +83,12 @@
   const filteredProviderModels = $derived(filterComboModels(selectedProviderModels, comboModelQuery));
   const comboCatalogState = $derived(comboCatalogAvailability(comboConnections));
 
+  $effect(() => {
+    if (selectedComboModel && !filteredProviderModels.includes(selectedComboModel)) {
+      selectedComboModel = '';
+    }
+  });
+
   function selectComboProvider(providerId: string) {
     selectedComboProvider = providerId;
     selectedComboModel = '';
@@ -282,7 +288,7 @@
   }
 
   function addPinnedComboEntry() {
-    if (!selectedProvider || !selectedComboModel || !selectedProviderModels.includes(selectedComboModel)) return;
+    if (!selectedProvider || !selectedComboModel || !filteredProviderModels.includes(selectedComboModel)) return;
     newComboEntries = [...newComboEntries, {
       model: selectedComboModel,
       providerId: selectedProvider.id,
@@ -838,7 +844,7 @@
                     </div>
                   {/if}
                   <div class="entry-actions">
-                    <button type="button" class="btn-primary" onclick={addPinnedComboEntry} disabled={!selectedProviderModels.includes(selectedComboModel)}>Add entry</button>
+                    <button type="button" class="btn-primary" onclick={addPinnedComboEntry} disabled={!filteredProviderModels.includes(selectedComboModel)}>Add entry</button>
                     <button type="button" class="btn-secondary" onclick={syncComboModels} disabled={!selectedProvider.canSync || Boolean(syncingConnection)} aria-busy={Boolean(syncingConnection)}><span class:spinning={Boolean(syncingConnection)}><RotateCw size={13} /></span> {syncingConnection ? 'Syncing…' : 'Sync Models'}</button>
                   </div>
                 </div>
