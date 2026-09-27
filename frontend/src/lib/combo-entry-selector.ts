@@ -36,6 +36,7 @@ export interface DraftComboEntry {
   model: string;
   providerId: string;
   connectionId?: string;
+  preservedEntry?: { model: string; provider_id?: string; connection_id?: string; connection_ids?: string[] };
 }
 
 export type ComboCatalogAvailability = 'empty' | 'inactive' | 'available';
@@ -187,10 +188,11 @@ export function buildComboEntries(entries: DraftComboEntry[]) {
   return entries
     .map(entry => {
       const model = entry.model.trim();
+      if (entry.preservedEntry) return { ...entry.preservedEntry, model };
       const connectionID = entry.connectionId?.trim();
       return connectionID
         ? { model, connection_id: connectionID }
         : { model, provider_id: entry.providerId.trim() };
     })
-    .filter(entry => entry.model && ('connection_id' in entry ? entry.connection_id : entry.provider_id));
+    .filter(entry => entry.model && (Object.keys(entry).length === 1 || ('connection_id' in entry ? entry.connection_id : entry.provider_id)));
 }

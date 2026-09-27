@@ -137,6 +137,18 @@ test('provider entries persist canonical pool identity while advanced pin persis
   ]);
 });
 
+test('legacy and unresolved entries preserve their original identity until explicitly replaced', () => {
+  assert.deepEqual(buildComboEntries([
+    { model: 'legacy-only', providerId: '', preservedEntry: { model: 'legacy-only' } },
+    { model: 'missing-pool-model', providerId: 'missing', preservedEntry: { model: 'missing-pool-model', provider_id: 'provider:missing' } },
+    { model: 'missing-account-model', providerId: 'missing', connectionId: 'gone', preservedEntry: { model: 'missing-account-model', connection_id: 'gone' } },
+  ]), [
+    { model: 'legacy-only' },
+    { model: 'missing-pool-model', provider_id: 'provider:missing' },
+    { model: 'missing-account-model', connection_id: 'gone' },
+  ]);
+});
+
 test('existing combo entries resolve their canonical provider without changing persisted ids', () => {
   const providers = comboProviderOptions(connections, providerCatalog);
   assert.equal(comboProviderForEntry({ connection_id: 'qoder-b' }, providers)?.name, 'Qoder');

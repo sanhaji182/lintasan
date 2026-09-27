@@ -15,7 +15,7 @@
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
-    BrainCircuit, DollarSign, Gauge, Layers, ToggleLeft, ToggleRight, X, Sparkles, Check, Search, AlertTriangle
+    BrainCircuit, DollarSign, Gauge, Layers, ToggleLeft, ToggleRight, X, Sparkles, Check, Search, AlertTriangle, Pencil, ArrowUp, ArrowDown
   } from 'lucide-svelte/icons';
 
   interface Combo {
@@ -72,16 +72,21 @@
   let pinnedComboConnection = $state('');
   let selectedComboModel = $state('');
   let comboModelQuery = $state('');
-  let newComboEntries = $state<Array<{ model: string; providerId: string; connectionId?: string }>>([]);
+  type DraftEntry = { model: string; providerId: string; connectionId?: string; preservedEntry?: { model: string; provider_id?: string; connection_id?: string; connection_ids?: string[] } };
+  let newComboEntries = $state<DraftEntry[]>([]);
   let showAdvancedModelInput = $state(false);
   let advancedModel = $state('');
   let syncingConnection = $state('');
   let comboCreating = $state(false);
+  let editingComboId = $state('');
+  let comboFormBaseline = $state('');
   const comboProviders = $derived(comboProviderOptions(comboConnections, comboProviderCatalog));
   const selectedProvider = $derived(comboProviders.find(option => option.id === selectedComboProvider));
   const selectedProviderModels = $derived(comboModelsForProvider(comboDiscoveredModels, selectedProvider));
   const filteredProviderModels = $derived(filterComboModels(selectedProviderModels, comboModelQuery));
   const comboCatalogState = $derived(comboCatalogAvailability(comboConnections));
+  const comboFormFingerprint = $derived(JSON.stringify({ name: newComboName, strategy: newComboStrategy, description: newComboDescription, entries: newComboEntries }));
+  const comboFormDirty = $derived(Boolean(showComboForm && comboFormBaseline && comboFormFingerprint !== comboFormBaseline));
 
   $effect(() => {
     if (selectedComboModel && !filteredProviderModels.includes(selectedComboModel)) {
@@ -149,7 +154,7 @@
   const combosDirtyCount = $derived(Object.keys(stagedStrategies).length);
   const dirty = $derived(routingDirtyState({
     policy: savedPolicy !== '' && policyFingerprint !== savedPolicy,
-    combos: combosDirtyCount > 0 || orderDirty,
+    combos: combosDirtyCount > 0 || orderDirty || comboFormDirty,
     quotas: savedQuotas !== '' && quotasFingerprint !== savedQuotas,
   }));
 
@@ -311,6 +316,65 @@
     newComboEntries = newComboEntries.filter((_, entryIndex) => entryIndex !== index);
   }
 
+  function moveComboEntry(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= newComboEntries.length) return;
+    const entries = [...newComboEntries];
+    [entries[index], entries[target]] = [entries[target], entries[index]];
+    newComboEntries = entries;
+  }
+
+  function resetComboForm() {
+    showComboForm = false;
+    editingComboId = '';
+    newComboName = '';
+    newComboStrategy = 'priority';
+    newComboDescription = '';
+    newComboEntries = [];
+    selectedComboProvider = '';
+    pinnedComboConnection = '';
+    selectedComboModel = '';
+    comboModelQuery = '';
+    advancedModel = '';
+    showAdvancedModelInput = false;
+    comboFormBaseline = '';
+  }
+
+  function openCreateCombo() {
+    if (comboFormDirty && !confirm('Discard unsaved combo edits?')) return;
+    resetComboForm();
+    showComboForm = true;
+    comboFormBaseline = JSON.stringify({ name: '', strategy: 'priority', description: '', entries: [] });
+  }
+
+  function openEditCombo(combo: Combo) {
+    if ((combosDirtyCount > 0 || orderDirty) && !confirm('Discard staged Combo strategy/order changes before editing?')) return;
+    if (combosDirtyCount > 0 || orderDirty) discardCombos();
+    if (comboFormDirty && !confirm('Discard unsaved combo edits?')) return;
+    editingComboId = combo.id;
+    newComboName = combo.provider;
+    newComboStrategy = combo.strategy;
+    newComboDescription = combo.description || '';
+    const source: Array<{ model: string; provider_id?: string; connection_id?: string; connection_ids?: string[] }> = (combo.models?.length ? combo.models : (combo.entries || []).map(entry => entry.model))
+      .map((model, index) => combo.entries?.[index] || { model });
+    newComboEntries = source.map(entry => {
+      const provider = comboProviderForEntry(entry, comboProviders);
+      return {
+        model: entry.model,
+        providerId: entry.provider_id || provider?.id || '',
+        ...(entry.connection_id ? { connectionId: entry.connection_id } : {}),
+        preservedEntry: { ...entry },
+      };
+    });
+    showComboForm = true;
+    comboFormBaseline = JSON.stringify({ name: newComboName, strategy: newComboStrategy, description: newComboDescription, entries: newComboEntries });
+  }
+
+  function cancelComboForm() {
+    if (comboFormDirty && !confirm('Discard unsaved combo edits?')) return;
+    resetComboForm();
+  }
+
   async function syncComboModels() {
     const connectionID = pinnedComboConnection || selectedProvider?.connectionIds[0];
     if (!connectionID) return;
@@ -329,7 +393,7 @@
     }
   }
 
-  async function createCombo() {
+  async function saveComboForm() {
     const name = newComboName.trim();
     if (!name) {
       showToast('Combo name is required', 'error');
@@ -351,21 +415,17 @@
         models: entries.map(entry => entry.model),
         entries,
       };
-      await api.post('/api/combos', payload);
-      showToast(`Combo "${name}" created successfully`, 'success');
-      showComboForm = false;
-      newComboName = '';
-      newComboDescription = '';
-      newComboEntries = [];
-      selectedComboProvider = '';
-      pinnedComboConnection = '';
-      selectedComboModel = '';
-      comboModelQuery = '';
-      advancedModel = '';
-      showAdvancedModelInput = false;
+      if (editingComboId) {
+        await api.put(`/api/combos?id=${encodeURIComponent(editingComboId)}`, payload);
+        showToast(`Combo "${name}" updated successfully`, 'success');
+      } else {
+        await api.post('/api/combos', payload);
+        showToast(`Combo "${name}" created successfully`, 'success');
+      }
+      resetComboForm();
       await loadCombos();
     } catch (e: any) {
-      showToast(e.message || 'Failed to create combo', 'error');
+      showToast(e.message || `Failed to ${editingComboId ? 'update' : 'create'} combo`, 'error');
     } finally {
       comboCreating = false;
     }
@@ -750,7 +810,7 @@
       <div class="flex items-center gap-2">
         <button
           class="btn-secondary flex items-center gap-1.5"
-          onclick={() => showComboForm = !showComboForm}
+          onclick={openCreateCombo}
         >
           <Plus size={14} stroke-width={2} />
           Add Combo
@@ -766,7 +826,7 @@
     {#if showComboForm}
       <div class="alias-form" style="margin-bottom: 20px;">
         <div style="font-size: 13px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 10px;">
-          Create New Combo
+          {editingComboId ? 'Edit Combo' : 'Create New Combo'}
         </div>
         <div style="display: flex; flex-direction: column; gap: 12px;">
           <div class="flex items-center gap-3 flex-wrap">
@@ -775,7 +835,9 @@
               style="width: 180px;"
               placeholder="Combo name (e.g. fast-code)"
               bind:value={newComboName}
+              disabled={Boolean(editingComboId)}
             />
+            {#if editingComboId}<small class="edit-name-help">Name is fixed while editing because rename uniqueness is not validated by the update contract.</small>{/if}
             <select
               class="input-field"
               style="width: 170px;"
@@ -869,19 +931,19 @@
                 <div class="summary-heading"><div><strong>Route summary</strong><span>Saved in this failover order</span></div><span>{newComboEntries.length} {newComboEntries.length === 1 ? 'entry' : 'entries'}</span></div>
                 <ol class="draft-chain">
                   {#each newComboEntries as entry, index}
-                    {@const provider = comboProviders.find(option => option.id === entry.providerId)}
+                    {@const provider = comboProviders.find(option => option.id === entry.providerId) || (entry.preservedEntry ? comboProviderForEntry(entry.preservedEntry, comboProviders) : undefined)}
                     {@const account = provider?.accounts.find(option => option.id === entry.connectionId)}
-                    <li><span class="chain-step-num">{index + 1}</span><div class="summary-route"><strong>{provider?.name || entry.providerId}</strong><span class="route-arrow" aria-hidden="true">→</span><small>{account?.name || 'Provider pool'}</small><span class="route-arrow" aria-hidden="true">→</span><code>{entry.model}</code></div><button type="button" class="btn-icon" aria-label={`Remove ${entry.model} from combo`} onclick={() => removeComboEntry(index)}><X size={14} /></button></li>
+                    <li><span class="chain-step-num">{index + 1}</span><div class="summary-route"><strong>{provider?.name || (entry.preservedEntry && !entry.preservedEntry.provider_id && !entry.preservedEntry.connection_id ? 'Legacy model-only' : entry.providerId)}</strong><span class="route-arrow" aria-hidden="true">→</span><small>{entry.preservedEntry && !entry.preservedEntry.provider_id && !entry.preservedEntry.connection_id ? 'Identity unchanged' : (account?.name || 'Provider pool')}</small><span class="route-arrow" aria-hidden="true">→</span><code>{entry.model}</code></div><button type="button" class="btn-icon" aria-label={`Move ${entry.model} up`} disabled={index === 0} onclick={() => moveComboEntry(index, -1)}><ArrowUp size={14} /></button><button type="button" class="btn-icon" aria-label={`Move ${entry.model} down`} disabled={index === newComboEntries.length - 1} onclick={() => moveComboEntry(index, 1)}><ArrowDown size={14} /></button><button type="button" class="btn-icon" aria-label={`Remove ${entry.model} from combo`} onclick={() => removeComboEntry(index)}><X size={14} /></button></li>
                   {/each}
                 </ol>
               </section>
             {/if}
           </div>
           <div class="flex items-center gap-2">
-            <button class="btn-primary" onclick={createCombo} disabled={comboCreating}>
-              {comboCreating ? 'Creating...' : 'Create Combo'}
+            <button class="btn-primary" onclick={saveComboForm} disabled={comboCreating}>
+              {comboCreating ? (editingComboId ? 'Saving...' : 'Creating...') : (editingComboId ? 'Save Combo' : 'Create Combo')}
             </button>
-            <button class="btn-secondary" onclick={() => { showComboForm = false; }}>
+            <button class="btn-secondary" onclick={cancelComboForm}>
               Cancel
             </button>
           </div>
@@ -905,7 +967,7 @@
             class="combo-card"
             class:drag-over={dragOverIndex === i && draggedIndex !== i}
             class:dragging={draggedIndex === i}
-            draggable="true"
+            draggable={!showComboForm}
             ondragstart={() => handleDragStart(i)}
             ondragover={(e) => handleDragOver(e, i)}
             ondragend={handleDragEnd}
@@ -980,11 +1042,22 @@
                 style="width: 160px; font-size: 12px; padding: 6px 10px;"
                 value={combo.strategy}
                 onchange={(e) => updateStrategy(combo.id, (e.target as HTMLSelectElement).value)}
+                disabled={showComboForm}
               >
                 {#each strategies as s}
                   <option value={s.value}>{s.label}</option>
                 {/each}
               </select>
+
+              <button
+                class="btn-icon edit-button"
+                onclick={() => openEditCombo(combo)}
+                disabled={showComboForm}
+                title="Edit combo"
+                aria-label={`Edit combo ${combo.provider}`}
+              >
+                <Pencil size={14} />
+              </button>
 
               <button
                 class="btn-icon"
@@ -1118,6 +1191,10 @@
 </div>
 
 <style>
+  .edit-name-help { max-width:260px; color:var(--color-fg-3); font-size:10px; line-height:1.35; }
+  .btn-icon.edit-button { color:var(--color-primary); }
+  .btn-icon.edit-button:hover { background:var(--color-primary-light); }
+  .btn-icon:disabled { opacity:.35; cursor:not-allowed; }
   .routing-section-nav { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
   .combo-entry-builder { min-width:0; padding:16px; border:1px solid var(--color-border); border-radius:12px; background:var(--color-bg-body); overflow:hidden; }
   .combo-entry-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }

@@ -476,4 +476,100 @@ describe('Routing save boundaries', () => {
     await waitFor(() => expect(screen.getByText('Qoder · shared-model')).toBeInTheDocument());
     expect(screen.getByText('Qoder Bob')).toBeInTheDocument();
   });
+
+  it('opens one Edit form with ordered pool, exact-account, and legacy entries and preserves their identities through PUT', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/combos') return { data: [{
+        id: 'mixed', name: 'Mixed route', strategy: 'round-robin', description: 'Existing chain', order: 0,
+        models: ['qoder-only-a', 'qoder-only-b', 'legacy-model'],
+        entries: [
+          { model: 'qoder-only-a', provider_id: 'provider:qoder:https://api.qoder.com/chat/completions' },
+          { model: 'qoder-only-b', connection_id: 'qoder-b' },
+          { model: 'legacy-model' },
+        ],
+      }] };
+      if (path === '/api/connections') return { data: [
+        { id: 'qoder-a', name: 'Qoder Alice', format: 'qoder', base_url: 'https://api.qoder.com', chat_path: '/chat/completions', is_active: 1 },
+        { id: 'qoder-b', name: 'Qoder Bob', format: 'qoder', base_url: 'https://api.qoder.com', chat_path: '/chat/completions', is_active: 1 },
+      ] };
+      if (path === '/api/presets') return { data: [{ name: 'Qoder', base_url: 'https://api.qoder.com/v1' }] };
+      if (path === '/api/models/discovered') return { data: [
+        { model_id: 'qoder-only-a', connection_id: 'qoder-a', is_active: 1 },
+        { model_id: 'qoder-only-b', connection_id: 'qoder-b', is_active: 1 },
+      ] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Edit combo Mixed route/i }));
+
+    expect(screen.getByText('Edit Combo')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Mixed route')).toBeDisabled();
+    expect(screen.getByDisplayValue('Existing chain')).toBeInTheDocument();
+    const summary = screen.getByRole('region', { name: /Pre-save route summary/i });
+    expect(summary).toHaveTextContent(/Qoder.*Provider pool.*qoder-only-a/s);
+    expect(summary).toHaveTextContent(/Qoder.*Qoder Bob.*qoder-only-b/s);
+    expect(summary).toHaveTextContent(/Legacy model-only.*legacy-model/s);
+
+    await fireEvent.click(screen.getByRole('button', { name: /^Save Combo$/i }));
+    await waitFor(() => expect(mocks.put).toHaveBeenCalledWith('/api/combos?id=mixed', expect.objectContaining({
+      name: 'Mixed route', strategy: 'round-robin', description: 'Existing chain',
+      models: ['qoder-only-a', 'qoder-only-b', 'legacy-model'],
+      entries: [
+        { model: 'qoder-only-a', provider_id: 'provider:qoder:https://api.qoder.com/chat/completions' },
+        { model: 'qoder-only-b', connection_id: 'qoder-b' },
+        { model: 'legacy-model' },
+      ],
+    })));
+    expect(mocks.post).not.toHaveBeenCalledWith('/api/combos', expect.anything());
+  });
+
+  it('supports reorder and remove in Edit while a dirty cancel is guarded', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/combos') return { data: [{ id: 'ordered', name: 'Ordered', strategy: 'priority', models: ['one', 'two'], entries: [{ model: 'one' }, { model: 'two' }], order: 0 }] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Edit combo Ordered/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Move two up/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Remove one from combo/i }));
+    mocks.confirm.mockReturnValueOnce(false);
+    await fireEvent.click(screen.getByRole('button', { name: /^Cancel$/i }));
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.stringMatching(/discard.*combo edits/i));
+    expect(screen.getByText('Edit Combo')).toBeInTheDocument();
+    mocks.confirm.mockReturnValueOnce(true);
+    await fireEvent.click(screen.getByRole('button', { name: /^Cancel$/i }));
+    expect(screen.queryByText('Edit Combo')).not.toBeInTheDocument();
+  });
+
+  it('keeps failed Edit state, then reloads and closes after a successful PUT', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/combos') return { data: [{ id: 'retry', name: 'Retry route', strategy: 'priority', description: 'before', models: ['legacy'], entries: [{ model: 'legacy' }], order: 0 }] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      return { data: [] };
+    });
+    mocks.put.mockRejectedValueOnce(new Error('persistence unavailable')).mockResolvedValueOnce({ status: 'updated' });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(await screen.findByRole('button', { name: /Edit combo Retry route/i }));
+    await fireEvent.input(screen.getByPlaceholderText(/Description/i), { target: { value: 'unsaved retry' } });
+    await fireEvent.click(screen.getByRole('button', { name: /^Save Combo$/i }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith(expect.stringMatching(/persistence unavailable/i), 'error'));
+    expect(screen.getByDisplayValue('unsaved retry')).toBeInTheDocument();
+    expect(screen.getByText('Edit Combo')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: /^Save Combo$/i }));
+    await waitFor(() => expect(mocks.put).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('Edit Combo')).not.toBeInTheDocument());
+    expect(mocks.get.mock.calls.filter(([path]: [string]) => path === '/api/combos').length).toBeGreaterThan(1);
+  });
 });
