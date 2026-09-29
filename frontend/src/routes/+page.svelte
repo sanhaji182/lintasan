@@ -196,7 +196,7 @@
       <div class="section-header">
         <span class="section-badge">Preview</span>
         <h2 class="section-title">What the operator sees</h2>
-        <p class="section-sub">Angka di bawah dibaca langsung dari instance ini — bukan screenshot statis.</p>
+        <p class="section-sub">Coba mode Sample untuk bentuk demo, atau Live untuk membaca angka dari instance ini.</p>
       </div>
       <div class="mockup-frame">
         <BrowserMockup {...mockupHealth} />
