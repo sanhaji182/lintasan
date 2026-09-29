@@ -10,14 +10,26 @@
   import { api } from '$lib/api';
   import { deriveLandingMetrics } from '$lib/landing-metrics';
   import LogoMark from '$lib/components/LogoMark.svelte';
+  import BrowserMockup from '$lib/components/BrowserMockup.svelte';
 
   let version = $state('v0.x');
   let mounted = $state(false);
   let checkingAuth = $state(true);
   let isAuthenticated = $state(false);
 
+  let healthStatus = $state('ok');
+  let healthUptime = $state('');
+
   let metricInput = $state<{ status: 'loading' } | { status: 'error' } | { status: 'ready'; providers: number; models: number }>({ status: 'loading' });
   const landingMetrics = $derived(deriveLandingMetrics(metricInput));
+  // Same /health payload already fetched below — the mockup reuses it instead
+  // of firing a second request, and refuses to invent numbers it does not have.
+  const mockupHealth = $derived<{ models: number; providers: number; status: string; uptime: string }>({
+    models: metricInput.status === 'ready' ? metricInput.models : 0,
+    providers: metricInput.status === 'ready' ? metricInput.providers : 0,
+    status: healthStatus,
+    uptime: healthUptime
+  });
 
   const features = [
     {
@@ -69,6 +81,8 @@
     try {
       const h = await fetch('/health').then(r => r.ok ? r.json() : null);
       if (h?.version) version = h.version;
+      if (typeof h?.status === 'string') healthStatus = h.status;
+      if (typeof h?.uptime === 'string') healthUptime = h.uptime;
       const providers = Number(h?.catalog?.providers || 0);
       const models = Number(h?.catalog?.models || 0);
       metricInput = providers > 0 || models > 0 ? { status: 'ready', providers, models } : { status: 'error' };
@@ -174,6 +188,18 @@
             </div>
           {/each}
         {/if}
+      </div>
+    </section>
+
+    <!-- Interactive product mockup: same /health data, in a browser frame -->
+    <section class="mockup-section">
+      <div class="section-header">
+        <span class="section-badge">Preview</span>
+        <h2 class="section-title">What the operator sees</h2>
+        <p class="section-sub">Angka di bawah dibaca langsung dari instance ini — bukan screenshot statis.</p>
+      </div>
+      <div class="mockup-frame">
+        <BrowserMockup {...mockupHealth} />
       </div>
     </section>
 
@@ -627,6 +653,8 @@
     font-size: 16px;
     color: #64748b;
   }
+
+  .mockup-frame { max-width: 840px; margin: 0 auto; }
 
   .features {
     position: relative;
