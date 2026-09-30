@@ -206,6 +206,36 @@ func envelopeStatus(raw json.RawMessage) (int, bool) {
 // failures as HTTP 200 with the real status buried in the first frame; a naive
 // SSE reader waits for content that never arrives and the request appears to
 // hang until the client gives up.
+// BackoffHintFromBody extracts a queue/backoff hint from an arbitrary upstream
+// response body (non-stream path). Returns (retryAfterSeconds, queued).
+// Bodies come in two shapes:
+//   - a stream envelope ({"body":..., "statusCodeValue":...}) — parsed directly;
+//   - a top-level code/message chain ({"code":"403","message":"{\"code\":\"10605\"...}"})
+//     — rewrapped into the envelope shape so the same nested-unwrap logic
+//     applies.
+// Bodies that carry no queue shape return (0,false), so callers can try it
+// cheaply on any 403/429/503 body.
+func BackoffHintFromBody(raw []byte) (int, bool) {
+	ue := parseEnvelopeError(raw)
+	if ue == nil {
+		// Maybe a bare top-level code/message chain: rewrap and retry once.
+		var probe struct {
+			Body string `json:"body"`
+			Code int    `json:"statusCode"`
+		}
+		if json.Unmarshal(raw, &probe) == nil && probe.Body == "" && probe.Code == 0 {
+			rewrapped, err := json.Marshal(map[string]string{"body": string(raw)})
+			if err == nil {
+				ue = parseEnvelopeError(rewrapped)
+			}
+		}
+	}
+	if ue != nil && ue.IsQueued() {
+		return ue.RetryAfterSeconds, true
+	}
+	return 0, false
+}
+
 func parseEnvelopeError(raw []byte) *UpstreamError {
 	var env envelope
 	if err := json.Unmarshal(raw, &env); err != nil {

@@ -794,6 +794,60 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	// request. It is updated by the stream-failure path when a Qoder queue state
 	// arrives, and is surfaced as a Retry-After header when no route answers.
 	var maxRetryAfter int
+
+	// --- Upstream backoff retry passes (A+D, 2026-09-30) ---------------------
+	// When every candidate reported a backoff hint (upstream asked us to wait),
+	// honour it up to N passes before giving up. Applied generically to every
+	// provider: the trigger is a backoff hint, not a provider-specific code.
+	// Caps: perPassWaitCap bounds a single wait, totalBackoffBudget bounds the
+	// whole request. Vars (not consts) so tests can shrink them.
+	retryPassesLeft := maxBackoffRetryPasses
+	backoffBudgetLeft := totalBackoffBudget
+	deadline := time.Now().Add(totalBackoffBudget)
+
+retryPass:
+	for attempt := 0; attempt <= maxBackoffRetryPasses; attempt++ {
+		if attempt > 0 {
+			if retryPassesLeft <= 0 || backoffBudgetLeft <= 0 || maxRetryAfter <= 0 {
+				break retryPass
+			}
+			wait := time.Duration(maxRetryAfter) * time.Second
+			if wait > perPassWaitCap {
+				wait = perPassWaitCap
+			}
+			if wait > backoffBudgetLeft {
+				wait = backoffBudgetLeft
+			}
+			// Wait, but bail out the moment the client goes away. A departed
+			// client must not keep slots or budget occupied.
+			select {
+			case <-r.Context().Done():
+				// Client gone during backoff: stop retrying, no error to
+				// report, breaker untouched (cancel is not upstream failure).
+				return
+			case <-time.After(wait):
+			}
+			retryPassesLeft--
+			backoffBudgetLeft -= wait
+			maxRetryAfter = 0 // fresh hint collection on the next pass
+			// Re-resolve the pool: account states may have changed while we
+			// waited — a queued account may have drained, a healthy one may
+			// have filled. Stale candidates would waste the next pass.
+			fresh, freshModel, freshCombo, rerr := p.resolveRoute(model)
+			if rerr != nil || len(fresh) == 0 {
+				break retryPass
+			}
+			if freshCombo != "" && freshCombo != comboName {
+				// Combo definition changed mid-request; keep the original
+				// resolution to avoid surprising route swaps.
+				break retryPass
+			}
+			_ = freshModel
+			// Replace, not append: the previous pass already walked every old
+			// candidate. Keeping them would duplicate attempts and waste the
+			// pass on accounts that are still queued.
+			candidates = fresh
+		}
 	// NOTE: index loop, not "for i, conn := range candidates". The range form
 	// evaluates len(candidates) ONCE at loop start, so appending a candidate
 	// mid-loop (the auth-failover below, and the circuit-open connection
@@ -923,6 +977,18 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		if resp.StatusCode == 429 {
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
+			lastStatusCode = resp.StatusCode
+			// Generic provider backoff: honour a standard Retry-After header
+			// (any provider) or a nested queue-state body (Qoder) so the
+			// retry-pass loop can wait it out.
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if secs, err := strconv.Atoi(ra); err == nil && secs > maxRetryAfter {
+					maxRetryAfter = secs
+				}
+			}
+			if hint, queued := qoder.BackoffHintFromBody(b); queued && hint > maxRetryAfter {
+				maxRetryAfter = hint
+			}
 			breaker.Failure()
 			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, true)
 			p.logRequest(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
@@ -945,6 +1011,14 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			lastErr = string(b)
 			lastStatusCode = resp.StatusCode
 			resp.Body.Close()
+
+			// Queue states ride along on 403s (Qoder 10605). Collect the
+			// backoff hint so the retry-pass loop can honour it once the
+			// candidate walk is exhausted. Non-queue 403s (credential
+			// expiry, plan gates) report IsQueued()==false and are skipped.
+			if hint, queued := qoder.BackoffHintFromBody(b); queued && hint > maxRetryAfter {
+				maxRetryAfter = hint
+			}
 
 			// A pooled connection holds several keys. One key being rejected
 			// says nothing about the other four, so exhaust the pool BEFORE
@@ -1370,29 +1444,38 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	if p.wm != nil {
-		p.wm.Fire("request.error", map[string]interface{}{
-			"model": model,
-			"error": lastErr,
-		})
-	}
+		if p.wm != nil {
+			p.wm.Fire("request.error", map[string]interface{}{
+				"model": model,
+				"error": lastErr,
+			})
+		}
 
-	// If every queued candidate reported an upstream backoff hint, surface the
-	// largest one to the client. A single Retry-After lets a well-behaved client
-	// wait out a queue storm instead of hammering the pool into the ground.
-	if maxRetryAfter > 0 {
-		w.Header().Set("Retry-After", strconv.Itoa(maxRetryAfter))
-	}
+		// Candidate walk exhausted. If upstream asked us to back off and we
+		// still have a retry pass + budget, do another pass over a freshly
+		// resolved pool instead of failing the client immediately.
+		if attempt < maxBackoffRetryPasses && retryPassesLeft > 0 && backoffBudgetLeft > 0 && maxRetryAfter > 0 && time.Now().Before(deadline) {
+			continue retryPass
+		}
 
-	// Use the last established status code from the fallback chain rather than
-	// always returning 502. If a specific route returned 429 (rate limit), 503
-	// (circuit breaker), or another meaningful code, propagate it. Fall back to
-	// 502 when lastStatusCode is 0 (no route was tried at all).
-	errCode := lastStatusCode
-	if errCode == 0 {
-		errCode = http.StatusBadGateway
+		// If every queued candidate reported an upstream backoff hint, surface the
+		// largest one to the client. A single Retry-After lets a well-behaved client
+		// wait out a queue storm instead of hammering the pool into the ground.
+		if maxRetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(maxRetryAfter))
+		}
+
+		// Use the last established status code from the fallback chain rather than
+		// always returning 502. If a specific route returned 429 (rate limit), 503
+		// (circuit breaker), or another meaningful code, propagate it. Fall back to
+		// 502 when lastStatusCode is 0 (no route was tried at all).
+		errCode := lastStatusCode
+		if errCode == 0 {
+			errCode = http.StatusBadGateway
+		}
+		http.Error(w, fmt.Sprintf(`{"error":{"message":"all routes failed","details":%q}}`, lastErr), errCode)
+		return
 	}
-	http.Error(w, fmt.Sprintf(`{"error":{"message":"all routes failed","details":%q}}`, lastErr), errCode)
 }
 
 func (p *ProxyHandler) findConnectionByID(id string) (*Connection, error) {
@@ -2336,6 +2419,22 @@ func (p *ProxyHandler) scanConnections(rows *sql.Rows) []*Connection {
 	}
 	return out
 }
+
+// Upstream backoff retry-pass tuning (A+D, 2026-09-30). When every candidate
+// reports a backoff hint (Qoder 10605 retryAfterSeconds, or a plain 429/503
+// Retry-After header), the request waits per the hint and retries the whole
+// pool. Values are vars so tests can shrink them instead of sleeping real
+// seconds.
+var (
+	// maxBackoffRetryPasses bounds how many times a request may re-walk the
+	// pool after honouring an upstream backoff hint.
+	maxBackoffRetryPasses = 3
+	// perPassWaitCap bounds a single wait, even when the hint is larger.
+	perPassWaitCap = 45 * time.Second
+	// totalBackoffBudget bounds the total time one request may spend in
+	// backoff waits across all passes.
+	totalBackoffBudget = 90 * time.Second
+)
 
 // failureUnlessClientGone records a circuit-breaker failure for the connection,
 // UNLESS the request context is already cancelled — a client that gave up mid-request
