@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"database/sql"
 	"encoding/json"
@@ -788,6 +789,11 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 	var lastErr string
 	var lastStatusCode int
+
+	// maxRetryAfter carries the largest upstream backoff hint seen during this
+	// request. It is updated by the stream-failure path when a Qoder queue state
+	// arrives, and is surfaced as a Retry-After header when no route answers.
+	var maxRetryAfter int
 	// NOTE: index loop, not "for i, conn := range candidates". The range form
 	// evaluates len(candidates) ONCE at loop start, so appending a candidate
 	// mid-loop (the auth-failover below, and the circuit-open connection
@@ -884,7 +890,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 		if retryErr != nil {
 			lastErr = retryErr.Error()
-			breaker.Failure()
+			failureUnlessClientGone(breaker, r.Context())
 			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
 			p.logRequest(resolvedModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
@@ -1160,7 +1166,17 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			}, w, flusher); rehandled {
 				// The attempt was discarded, so this candidate is unusable for this
 				// request. Advance.
-				breaker.Failure()
+				failureUnlessClientGone(breaker, r.Context())
+
+				// If the upstream asked us to back off (Qoder queue state code 10605),
+				// remember the hint so the final "all routes failed" answer can say
+				// *how long* to wait instead of letting the client guess.
+				if ue, ok := streamErr.(*qoder.UpstreamError); ok && ue.IsQueued() {
+					if ue.RetryAfterSeconds > maxRetryAfter {
+						maxRetryAfter = ue.RetryAfterSeconds
+					}
+				}
+
 				lastErr = streamErr.Error()
 				lastStatusCode = http.StatusBadGateway
 				qCostStream = costSample{}
@@ -1252,7 +1268,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		if readErr != nil {
 			lastErr = readErr.Error()
 			lastStatusCode = http.StatusGatewayTimeout
-			breaker.Failure()
+			failureUnlessClientGone(breaker, r.Context())
 			p.logRequestCost(candidateModel, conn.ID, conn.Name, http.StatusGatewayTimeout, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, costSample{})
 			// Another candidate may still answer; the timeout is retryable in the same
 			// sense a refused credential is — the connection is unusable for THIS
@@ -1359,6 +1375,13 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			"model": model,
 			"error": lastErr,
 		})
+	}
+
+	// If every queued candidate reported an upstream backoff hint, surface the
+	// largest one to the client. A single Retry-After lets a well-behaved client
+	// wait out a queue storm instead of hammering the pool into the ground.
+	if maxRetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(maxRetryAfter))
 	}
 
 	// Use the last established status code from the fallback chain rather than
@@ -2312,6 +2335,26 @@ func (p *ProxyHandler) scanConnections(rows *sql.Rows) []*Connection {
 		out = append(out, &conn)
 	}
 	return out
+}
+
+// failureUnlessClientGone records a circuit-breaker failure for the connection,
+// UNLESS the request context is already cancelled — a client that gave up mid-request
+// is not evidence the upstream is dead. Without this, three clients timing out on a
+// slow-but-healthy account open its breaker and take it out of the pool for 30s.
+//
+// This is deliberately separate from breaker.Failure() rather than a wrapper inside
+// the circuit package: the decision "does this attempt count as a failure" belongs
+// to the request loop, which is the only place that knows the request context state.
+// The breaker itself stays a pure state machine.
+//
+// Callers that already know the attempt failed for a transport reason (readUpstreamBodyBounded
+// returning context.DeadlineExceeded, etc.) should still call this — the context check is
+// the cheapest way to distinguish "upstream dead" from "client gone".
+func failureUnlessClientGone(breaker *circuit.Breaker, ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	breaker.Failure()
 }
 
 // findAlternateConnectionsForModel returns every OTHER active connection that
