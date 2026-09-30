@@ -215,26 +215,70 @@ func parseEnvelopeError(raw []byte) *UpstreamError {
 	status, hasStatus := envelopeStatus(env.StatusCodeValue)
 
 	// Inner business code: {"code":"105","message":"Login expired"}
+	//
+	// Upstream can nest this several levels deep. Observed live on 2026-09-30 in
+	// the combo ("Core") path: the envelope's body is itself a JSON code/message
+	// string, whose message is the real queue-state JSON. Reading only the first
+	// level classifies a queue state as a generic 403 and kills the failover —
+	// the client sees `"code":"403"" with a buried 10605 in the message instead
+	// of being routed to an account that can serve.
+	//
+	// The unwrap is bounded at 3 levels: enough for the observed double nest,
+	// shallow enough that a pathological body cannot spin forever.
 	if env.Body != "" {
-		var inner struct {
-			Code              string `json:"code"`
-			Message           string `json:"message"`
-			IsQueued          bool   `json:"isQueued"`
-			RetryAfterSeconds int    `json:"retryAfterSeconds"`
-		}
-		if err := json.Unmarshal([]byte(env.Body), &inner); err == nil && inner.Code != "" && inner.Code != "0" {
+		body := env.Body
+		for depth := 0; depth < 3 && body != ""; depth++ {
+			var inner struct {
+				Code              string `json:"code"`
+				Message           string `json:"message"`
+				IsQueued          bool   `json:"isQueued"`
+				RetryAfterSeconds int    `json:"retryAfterSeconds"`
+				ModelKey          string `json:"modelKey"`
+			}
+			if err := json.Unmarshal([]byte(body), &inner); err != nil {
+				break
+			}
+			// A queue state without a business code lives at the leaf: inner has
+			// isQueued but no Code. Surface it directly.
+			if inner.IsQueued && inner.Code == "" {
+				return &UpstreamError{
+					Status:            statusOr(status),
+					Code:              QueueErrorCode,
+					Message:           previousMessage(env.Body, body),
+					Queued:            true,
+					RetryAfterSeconds: inner.RetryAfterSeconds,
+				}
+			}
+			if inner.Code == "" || inner.Code == "0" {
+				break
+			}
+			// We have a business code. If message unwraps further and that unwrap
+			// also has a code, prefer the deeper one — the outer code is often a
+			// generic transport code like "403" while the inner carries 10605.
+			if next := peekNestedCode(inner.Message); next != "" {
+				body = inner.Message
+				continue
+			}
+			// Terminal level for a code. For queue states, retryAfterSeconds may
+			// live one level deeper in the message body (the queue struct itself)
+			// — try to lift it before returning, otherwise the Retry-After header
+			// upstream asked for never reaches the client.
+			retryAfter := inner.RetryAfterSeconds
+			if inner.Code == QueueErrorCode && retryAfter == 0 && inner.Message != "" {
+				var leaf struct {
+					RetryAfterSeconds int `json:"retryAfterSeconds"`
+				}
+				if err := json.Unmarshal([]byte(inner.Message), &leaf); err == nil && leaf.RetryAfterSeconds > 0 {
+					retryAfter = leaf.RetryAfterSeconds
+				}
+			}
+			// Terminal level. Build the error.
 			statusOut := status
 			if statusOut == 0 {
 				statusOut = http.StatusOK
 			}
-			// Message carries BOTH the human text and the raw inner body. The raw
-			// body is what the credit-limit classifier keys on: upstream puts its
-			// corroborating marker (`pricingUrl`) in the body rather than in
-			// `message`, and a classifier that only saw `message` would have to fall
-			// back to matching a bare code — which is exactly the fragile
-			// classification this avoids.
 			msg := inner.Message
-			if rawBody := strings.TrimSpace(env.Body); rawBody != "" && rawBody != msg {
+			if rawBody := strings.TrimSpace(body); rawBody != "" && rawBody != msg {
 				if msg == "" {
 					msg = rawBody
 				} else {
@@ -246,7 +290,7 @@ func parseEnvelopeError(raw []byte) *UpstreamError {
 				Code:              inner.Code,
 				Message:           msg,
 				Queued:            inner.IsQueued || inner.Code == QueueErrorCode,
-				RetryAfterSeconds: inner.RetryAfterSeconds,
+				RetryAfterSeconds: retryAfter,
 			}
 		}
 	}
@@ -259,6 +303,52 @@ func parseEnvelopeError(raw []byte) *UpstreamError {
 		}
 	}
 	return nil
+}
+
+// statusOr returns status when set, or 200 when upstream only provided a body.
+// Extracted for the queue-leaf branch in parseEnvelopeError.
+func statusOr(status int) int {
+	if status == 0 {
+		return http.StatusOK
+	}
+	return status
+}
+
+// previousMessage picks the most informative human-readable message found while
+// unwrapping nested queue-state bodies. The outermost body is the most human
+// text (a transport-level "403" carries no queue detail); the innermost is the
+// queue struct itself. Middle layers carry the real meaning.
+func previousMessage(outermost, terminal string) string {
+	term := strings.TrimSpace(terminal)
+	outer := strings.TrimSpace(outermost)
+	switch {
+	case term == "" && outer == "":
+		return ""
+	case term == "":
+		return outer
+	case outer == "" || outer == term:
+		return term
+	default:
+		return term + ": " + outer
+	}
+}
+
+// peekNestedCode returns the business code of the candidate next-level body
+// without committing to it — used to tell whether another unwrap is worthwhile.
+func peekNestedCode(s string) string {
+	if s == "" {
+		return ""
+	}
+	var probe struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(s), &probe); err != nil {
+		return ""
+	}
+	if probe.Code == "" || probe.Code == "0" {
+		return ""
+	}
+	return probe.Code
 }
 
 // ============================================================================
