@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -247,6 +248,10 @@ func newActivityHTTPClient(customTransport http.RoundTripper) (*http.Client, err
 
 	transport := &http.Transport{
 		Proxy: http.ProxyURL(parsedURL),
+		TLSClientConfig: &tls.Config{
+			// Tolerate proxy MITM/tunnel TLS variations for HTTPS upstream targets
+			InsecureSkipVerify: true,
+		},
 		// Prevent lingering idle conns from tying down rotating proxy tunnels
 		MaxIdleConns:        20,
 		MaxIdleConnsPerHost: 5,
