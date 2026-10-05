@@ -64,8 +64,8 @@ func (s *Server) handleQoderActivityEligibility(w http.ResponseWriter, r *http.R
 			Priority:     it.priority,
 		}
 
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-		elig, ferr := sessions.CheckActivityEligibility(ctx, it.key, "")
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		elig, ferr := sessions.CheckActivityEligibility(ctx, it.key)
 		cancel()
 
 		if ferr != nil {
@@ -137,7 +137,7 @@ func (s *Server) handleQoderActivityClaim(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	claimRes, claimErr := sessions.ClaimActivity(ctx, want[0].key, "", activityID)
+	claimRes, claimErr := sessions.ClaimActivity(ctx, want[0].key, activityID)
 	if claimErr != nil {
 		writeJSONStatus(w, http.StatusBadGateway, map[string]any{
 			"success": false,
@@ -200,7 +200,7 @@ func (s *Server) handleQoderActivityAutoClaim(w http.ResponseWriter, r *http.Req
 		}
 
 		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
-		sum, ferr := sessions.AutoClaimActivities(ctx, it.key, "")
+		sum, ferr := sessions.AutoClaimActivities(ctx, it.key)
 		cancel()
 
 		if ferr != nil {

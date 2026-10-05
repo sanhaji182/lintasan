@@ -31,7 +31,38 @@ func TestGenerateCosySignature(t *testing.T) {
 	}
 }
 
-func TestSetCosyHeaders(t *testing.T) {
+func TestDeviceFingerprintDerivation(t *testing.T) {
+	fp := NewFingerprinter("custom-salt")
+
+	dev1 := fp.DeriveDeviceFingerprint("account-1")
+	dev2 := fp.DeriveDeviceFingerprint("account-2")
+	dev1Repeat := fp.DeriveDeviceFingerprint("account-1")
+
+	if len(dev1.MachineID) != 32 {
+		t.Errorf("expected 32-hex machine ID, got %d chars: %s", len(dev1.MachineID), dev1.MachineID)
+	}
+	if len(dev1.MachineToken) != 43 {
+		t.Errorf("expected 43-char machine token, got %d chars: %s", len(dev1.MachineToken), dev1.MachineToken)
+	}
+	if len(dev1.MachineType) != 18 {
+		t.Errorf("expected 18-char machine type, got %d chars: %s", len(dev1.MachineType), dev1.MachineType)
+	}
+
+	// Stability
+	if dev1.MachineID != dev1Repeat.MachineID || dev1.MachineToken != dev1Repeat.MachineToken || dev1.MachineOS != dev1Repeat.MachineOS {
+		t.Errorf("fingerprint is not deterministic across same seed: %+v vs %+v", dev1, dev1Repeat)
+	}
+
+	// Isolation across accounts
+	if dev1.MachineID == dev2.MachineID {
+		t.Errorf("machine ID collided across distinct accounts: %s", dev1.MachineID)
+	}
+	if dev1.MachineToken == dev2.MachineToken {
+		t.Errorf("machine token collided across distinct accounts: %s", dev1.MachineToken)
+	}
+}
+
+func TestCosyHeadersWithDevice(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "https://openapi.qoder.sh/api/v2/quota/usage", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +227,7 @@ func TestActivityEligibilityAndClaim(t *testing.T) {
 	}
 
 	// 1. Eligibility
-	elig, err := mgr.CheckActivityEligibility(context.Background(), "jt-valid-token", "mid-001")
+	elig, err := mgr.CheckActivityEligibility(context.Background(), "jt-valid-token")
 	if err != nil {
 		t.Fatalf("CheckActivityEligibility failed: %v", err)
 	}
@@ -208,7 +239,7 @@ func TestActivityEligibilityAndClaim(t *testing.T) {
 	}
 
 	// 2. Claim
-	claimRes, err := mgr.ClaimActivity(context.Background(), "jt-valid-token", "mid-001", "act-daily-bonus-01")
+	claimRes, err := mgr.ClaimActivity(context.Background(), "jt-valid-token", "act-daily-bonus-01")
 	if err != nil {
 		t.Fatalf("ClaimActivity failed: %v", err)
 	}
@@ -217,7 +248,7 @@ func TestActivityEligibilityAndClaim(t *testing.T) {
 	}
 
 	// 3. AutoClaimActivities
-	autoSummary, err := mgr.AutoClaimActivities(context.Background(), "jt-valid-token", "mid-001")
+	autoSummary, err := mgr.AutoClaimActivities(context.Background(), "jt-valid-token")
 	if err != nil {
 		t.Fatalf("AutoClaimActivities failed: %v", err)
 	}

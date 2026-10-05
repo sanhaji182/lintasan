@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -84,6 +85,29 @@ type AutoClaimSummary struct {
 	Error       string                     `json:"error,omitempty"`
 }
 
+// DeviceFingerprint holds isolated hardware & client descriptors derived for an account.
+type DeviceFingerprint struct {
+	MachineID    string
+	MachineToken string
+	MachineType  string
+	MachineOS    string
+}
+
+// DeriveDeviceFingerprint deterministically derives a stable, unique 1-account-to-1-device
+// fingerprint matching official Cosy client expectations.
+func (f *Fingerprinter) DeriveDeviceFingerprint(seed string) DeviceFingerprint {
+	osList := []string{"arm64_darwin", "x86_64_linux", "windows_x86_64"}
+	h := md5.Sum([]byte("os:" + f.saltedSeed(seed)))
+	idx := int(h[0]) % len(osList)
+
+	return DeviceFingerprint{
+		MachineID:    f.MachineID(seed),
+		MachineToken: f.MachineToken(seed),
+		MachineType:  f.MachineType(seed),
+		MachineOS:    osList[idx],
+	}
+}
+
 // GenerateCosySignature generates the RFC1123 GMT date string and MD5 signature hex.
 // Matches:
 //
@@ -99,18 +123,28 @@ func GenerateCosySignature(secret string, t time.Time) (dateStr string, sigHex s
 
 // SetCosyHeaders sets the required Cosy authentication, device, and signature headers.
 func SetCosyHeaders(req *http.Request, token, machineID string, now time.Time) {
-	if machineID == "" {
-		machineID = DefaultMachineID
+	SetCosyHeadersWithDevice(req, token, DeviceFingerprint{
+		MachineID: machineID,
+	}, now)
+}
+
+// SetCosyHeadersWithDevice sets full Cosy authentication and isolated device headers.
+func SetCosyHeadersWithDevice(req *http.Request, token string, dev DeviceFingerprint, now time.Time) {
+	if dev.MachineID == "" {
+		dev.MachineID = DefaultMachineID
+	}
+	if dev.MachineOS == "" {
+		dev.MachineOS = CosyDefaultMachineOS
 	}
 	dateStr, sig := GenerateCosySignature(CosySecret, now)
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Cosy-Version", CosyVersion)
 	req.Header.Set("Cosy-ClientType", CosyClientType)
-	req.Header.Set("Cosy-MachineOS", CosyDefaultMachineOS)
-	req.Header.Set("Cosy-MachineId", machineID)
-	req.Header.Set("Cosy-MachineToken", "")
-	req.Header.Set("Cosy-MachineType", "")
+	req.Header.Set("Cosy-MachineOS", dev.MachineOS)
+	req.Header.Set("Cosy-MachineId", dev.MachineID)
+	req.Header.Set("Cosy-MachineToken", dev.MachineToken)
+	req.Header.Set("Cosy-MachineType", dev.MachineType)
 	req.Header.Set("Cosy-MachineCode", "")
 	req.Header.Set("appcode", CosyAppCode)
 	req.Header.Set("login-version", "v2")
@@ -184,8 +218,66 @@ func (m *SessionManager) resolveEffectiveToken(ctx context.Context, credential s
 	return trimmed, nil
 }
 
+// ActivityProxyURL returns the configured proxy URL for Cosy activity operations.
+// Defaults to the local rotating proxy gateway (proxyuser:proxypass123@127.0.0.1:9999).
+// Can be customized via LINTASAN_QODER_PROXY_URL.
+func ActivityProxyURL() string {
+	if custom := strings.TrimSpace(os.Getenv("LINTASAN_QODER_PROXY_URL")); custom != "" {
+		return custom
+	}
+	return "http://proxyuser:proxypass123@127.0.0.1:9999"
+}
+
+// newActivityHTTPClient builds a strict proxy-routed HTTP client.
+// In accordance with anti-bot policy, direct connection without proxy is rejected (fail-closed).
+// An optional custom transport (e.g. for testing) can be passed.
+func newActivityHTTPClient(customTransport http.RoundTripper) (*http.Client, error) {
+	if customTransport != nil {
+		return &http.Client{
+			Transport: customTransport,
+			Timeout:   35 * time.Second,
+		}, nil
+	}
+
+	proxyStr := ActivityProxyURL()
+	parsedURL, err := url.Parse(proxyStr)
+	if err != nil {
+		return nil, fmt.Errorf("qoder activity proxy: invalid url %q: %w", proxyStr, err)
+	}
+
+	transport := &http.Transport{
+		Proxy: http.ProxyURL(parsedURL),
+		// Prevent lingering idle conns from tying down rotating proxy tunnels
+		MaxIdleConns:        20,
+		MaxIdleConnsPerHost: 5,
+		IdleConnTimeout:     30 * time.Second,
+	}
+
+	return &http.Client{
+		Transport: transport,
+		Timeout:   35 * time.Second,
+	}, nil
+}
+
 // CheckActivityEligibility checks available activity claim promotions for a token or PAT.
-func (m *SessionManager) CheckActivityEligibility(ctx context.Context, tokenOrPAT, machineID string) (*ActivityEligibilityResult, error) {
+// Uses unique device fingerprint derived from the credential seed and routes via strict proxy.
+func (m *SessionManager) CheckActivityEligibility(ctx context.Context, tokenOrPAT string) (*ActivityEligibilityResult, error) {
+	seed := FingerprintSeed("", tokenOrPAT)
+	dev := m.fp.DeriveDeviceFingerprint(seed)
+	return m.CheckActivityEligibilityWithDevice(ctx, tokenOrPAT, dev)
+}
+
+// CheckActivityEligibilityWithDevice checks eligibility with explicit device fingerprint and proxy routing.
+func (m *SessionManager) CheckActivityEligibilityWithDevice(ctx context.Context, tokenOrPAT string, dev DeviceFingerprint) (*ActivityEligibilityResult, error) {
+	var customTransport http.RoundTripper
+	if m.client != nil && m.client.Transport != nil {
+		customTransport = m.client.Transport
+	}
+	client, err := newActivityHTTPClient(customTransport)
+	if err != nil {
+		return nil, err
+	}
+
 	effToken, err := m.resolveEffectiveToken(ctx, tokenOrPAT)
 	if err != nil {
 		return nil, err
@@ -197,11 +289,11 @@ func (m *SessionManager) CheckActivityEligibility(ctx context.Context, tokenOrPA
 		return nil, fmt.Errorf("qoder: build eligibility request: %w", err)
 	}
 
-	SetCosyHeaders(req, effToken, machineID, time.Now())
+	SetCosyHeadersWithDevice(req, effToken, dev, time.Now())
 
-	resp, err := m.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("qoder: eligibility request failed: %w", err)
+		return nil, fmt.Errorf("qoder: eligibility request failed (proxy): %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -269,7 +361,24 @@ func (m *SessionManager) CheckActivityEligibility(ctx context.Context, tokenOrPA
 }
 
 // ClaimActivity submits a claim for a specific activity ID.
-func (m *SessionManager) ClaimActivity(ctx context.Context, tokenOrPAT, machineID, activityID string) (*ActivityClaimResult, error) {
+// Uses unique device fingerprint derived from the credential seed and routes via strict proxy.
+func (m *SessionManager) ClaimActivity(ctx context.Context, tokenOrPAT, activityID string) (*ActivityClaimResult, error) {
+	seed := FingerprintSeed("", tokenOrPAT)
+	dev := m.fp.DeriveDeviceFingerprint(seed)
+	return m.ClaimActivityWithDevice(ctx, tokenOrPAT, dev, activityID)
+}
+
+// ClaimActivityWithDevice submits a claim with explicit device fingerprint and proxy routing.
+func (m *SessionManager) ClaimActivityWithDevice(ctx context.Context, tokenOrPAT string, dev DeviceFingerprint, activityID string) (*ActivityClaimResult, error) {
+	var customTransport http.RoundTripper
+	if m.client != nil && m.client.Transport != nil {
+		customTransport = m.client.Transport
+	}
+	client, err := newActivityHTTPClient(customTransport)
+	if err != nil {
+		return nil, err
+	}
+
 	effToken, err := m.resolveEffectiveToken(ctx, tokenOrPAT)
 	if err != nil {
 		return nil, err
@@ -281,12 +390,12 @@ func (m *SessionManager) ClaimActivity(ctx context.Context, tokenOrPAT, machineI
 		return nil, fmt.Errorf("qoder: build claim request: %w", err)
 	}
 
-	SetCosyHeaders(req, effToken, machineID, time.Now())
+	SetCosyHeadersWithDevice(req, effToken, dev, time.Now())
 	req.ContentLength = 0
 
-	resp, err := m.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("qoder: claim request failed: %w", err)
+		return nil, fmt.Errorf("qoder: claim request failed (proxy): %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -338,11 +447,15 @@ func isActivityClaimable(status any) bool {
 	}
 }
 
-// AutoClaimActivities performs exchange -> eligibility check -> claim all claimable activities.
-func (m *SessionManager) AutoClaimActivities(ctx context.Context, credential, machineID string) (*AutoClaimSummary, error) {
+// AutoClaimActivities performs exchange -> eligibility check -> claim all claimable activities
+// using 1 unique machine ID / device fingerprint per account seed and routing strictly via proxy.
+func (m *SessionManager) AutoClaimActivities(ctx context.Context, credential string) (*AutoClaimSummary, error) {
 	summary := &AutoClaimSummary{
 		Claims: []ActivityClaimResult{},
 	}
+
+	seed := FingerprintSeed("", credential)
+	dev := m.fp.DeriveDeviceFingerprint(seed)
 
 	effToken, err := m.resolveEffectiveToken(ctx, credential)
 	if err != nil {
@@ -351,7 +464,7 @@ func (m *SessionManager) AutoClaimActivities(ctx context.Context, credential, ma
 	}
 	summary.JobToken = effToken
 
-	elig, err := m.CheckActivityEligibility(ctx, effToken, machineID)
+	elig, err := m.CheckActivityEligibilityWithDevice(ctx, effToken, dev)
 	if err != nil {
 		summary.Error = err.Error()
 		return summary, err
@@ -361,7 +474,7 @@ func (m *SessionManager) AutoClaimActivities(ctx context.Context, credential, ma
 
 	for _, act := range elig.Activities {
 		if isActivityClaimable(act.Status) && act.ActivityID != "" {
-			cRes, cErr := m.ClaimActivity(ctx, effToken, machineID, act.ActivityID)
+			cRes, cErr := m.ClaimActivityWithDevice(ctx, effToken, dev, act.ActivityID)
 			if cErr != nil {
 				summary.Claims = append(summary.Claims, ActivityClaimResult{
 					ActivityID: act.ActivityID,
