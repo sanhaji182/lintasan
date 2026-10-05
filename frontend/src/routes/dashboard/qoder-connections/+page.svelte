@@ -609,10 +609,19 @@
         message?: string;
       }>('/api/qoder/activity/auto-claim', {});
       if (res.success) {
-        showToast(
-          `✅ Auto-claim finished: ${res.summary?.claims_performed ?? 0} claim(s) across ${res.summary?.accounts_processed ?? 0} account(s)`,
-          'success'
-        );
+        const claims = res.summary?.claims_performed ?? 0;
+        const accounts = res.summary?.accounts_processed ?? 0;
+        if (claims > 0) {
+          showToast(
+            `✅ Auto-claim berhasil: ${claims} reward diklaim di ${accounts} akun.`,
+            'success'
+          );
+        } else {
+          showToast(
+            `ℹ️ Semua akun (${accounts}) sudah dicek: Tidak ada event reward/bonus yang tersedia saat ini (kuota akun aktif).`,
+            'info'
+          );
+        }
         await refreshAll();
       } else {
         showToast(`❌ Auto-claim: ${res.message || 'failed'}`, 'error');
