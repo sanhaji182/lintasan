@@ -598,6 +598,32 @@
     return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(credits);
   }
 
+  let autoClaiming = $state(false);
+
+  async function triggerAutoClaim(): Promise<void> {
+    autoClaiming = true;
+    try {
+      const res = await api.post<{
+        success: boolean;
+        summary?: { accounts_processed: number; claims_performed: number };
+        message?: string;
+      }>('/api/qoder/activity/auto-claim', {});
+      if (res.success) {
+        showToast(
+          `✅ Auto-claim finished: ${res.summary?.claims_performed ?? 0} claim(s) across ${res.summary?.accounts_processed ?? 0} account(s)`,
+          'success'
+        );
+        await refreshAll();
+      } else {
+        showToast(`❌ Auto-claim: ${res.message || 'failed'}`, 'error');
+      }
+    } catch (err) {
+      showToast(`❌ Auto-claim failed: ${err instanceof Error ? err.message : 'unknown error'}`, 'error');
+    } finally {
+      autoClaiming = false;
+    }
+  }
+
   // StatusBadge maps its own keys; translate the tester's status vocabulary.
   function badgeStatus(status: TestResult['status']): string {
     switch (status) {
@@ -620,6 +646,13 @@
   <div class="qd-head">
     <h1 class="qd-title">Qoder Connections</h1>
     <div class="qd-actions">
+      <button class="qd-btn qd-btn-ghost" onclick={triggerAutoClaim} disabled={autoClaiming || refreshing || loading}>
+        {#if autoClaiming}
+          <span class="qd-spin"><RefreshCw size={16} /></span> Claiming…
+        {:else}
+          <Coins size={16} /> Auto-Claim Bonus
+        {/if}
+      </button>
       <button class="qd-btn qd-btn-ghost" onclick={() => (showingAddPATs = !showingAddPATs)}>
         <Plus size={16} /> Add PATs
       </button>

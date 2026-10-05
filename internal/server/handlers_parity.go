@@ -69,6 +69,14 @@ func (s *Server) registerParityRoutes() {
 	// path; this takes a pasted list and derives the identical per-row config. See
 	// qoder_bulk_pat.go.
 	s.mux.HandleFunc("POST /api/qoder/credentials", s.handleQoderBulkAdd)
+	// Cosy Activity claim & eligibility endpoints (ported from qoder-suite).
+	// See qoder_activity_handlers.go.
+	s.mux.HandleFunc("GET /api/qoder/activity/eligibility", s.handleQoderActivityEligibility)
+	s.mux.HandleFunc("GET /api/qoder/activity/eligibility/{connection_id}", s.handleQoderActivityEligibility)
+	s.mux.HandleFunc("POST /api/qoder/activity/claim", s.handleQoderActivityClaim)
+	s.mux.HandleFunc("POST /api/qoder/activity/claim/{connection_id}", s.handleQoderActivityClaim)
+	s.mux.HandleFunc("POST /api/qoder/activity/auto-claim", s.handleQoderActivityAutoClaim)
+	s.mux.HandleFunc("POST /api/qoder/activity/auto-claim/{connection_id}", s.handleQoderActivityAutoClaim)
 	s.mux.HandleFunc("GET /api/audit", s.handleAudit)
 	s.mux.HandleFunc("GET /api/features", s.handleFeatures)
 	s.mux.HandleFunc("GET /api/features/stats", s.handleFeatureStats)

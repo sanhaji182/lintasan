@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.token
+accounts.txt
+*.log
+data/

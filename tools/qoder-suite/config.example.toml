@@ -1,0 +1,39 @@
+[general]
+headless = true
+captcha_attempts = 5
+callback_wait_ms = 5000
+
+[lintasan]
+# Base URL Lintasan gateway
+url = "http://127.0.0.1:20180"
+# Master API key Lintasan (opsional)
+api_key = ""
+# Path file database SQLite Lintasan
+db_path = "../../data/lintasan.db"
+
+[router]
+# URL provider Qoder di dashboard 9router Anda.
+# Bisa localhost (mis. http://localhost:20127/dashboard/providers/qoder)
+# atau domain reverse-proxy Anda.
+url = "http://localhost:20127/dashboard/providers/qoder"
+# Password dashboard 9router (kosongkan jika dashboard tidak diproteksi).
+password = ""
+
+[api]
+# Instance temp mail (kompatibel dengan API tempik: /config, /session, /inboxes).
+tempmail_base = "https://your-tempmail.example/api"
+
+[proxy]
+# mode: none | round-robin | random
+mode = "none"
+pool_file = "proxies.txt"
+
+[notify]
+# Opsional: webhook untuk ringkasan batch (Slack/Discord/Telegram gateway/HTTP apa pun).
+# Bisa juga lewat env QODER_WEBHOOK_URL. Biarkan kosong untuk menonaktifkan.
+webhook_url = ""
+
+[logging]
+# Logging JSON terstruktur ke data/app.jsonl (untuk monitoring/parsing).
+# Bisa juga lewat env QODER_JSON_LOG=1
+json = false
