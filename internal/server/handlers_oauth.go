@@ -70,6 +70,17 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if input.Provider == "antigravity" {
+		if err := oauthide.ValidateAntigravityConfiguration(); err != nil {
+			writeJSONStatus(w, http.StatusBadRequest, map[string]any{
+				"error":      err.Error(),
+				"provider":   input.Provider,
+				"catalog":    true,
+				"disclaimer": auth.IdeOAuthDisclaimer,
+			})
+			return
+		}
+	}
 
 	session, err := s.oauthMgr.CreateSession(input.Provider)
 	if err != nil {

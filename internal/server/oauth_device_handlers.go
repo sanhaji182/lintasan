@@ -57,9 +57,13 @@ func startOAuthAuthorizeFull(s *Server, provider, sessionID, publicBase string) 
 		return &AuthorizeResult{Flow: "browser_redirect", RedirectURL: url}, nil
 	case "antigravity":
 		redirect := publicBase + "/api/oauth/callback/antigravity"
+		authorizeURL, err := oauthide.BuildAntigravityAuthorizeURL(redirect, sessionID)
+		if err != nil {
+			return nil, err
+		}
 		return &AuthorizeResult{
 			Flow:        "browser_redirect",
-			RedirectURL: oauthide.BuildAntigravityAuthorizeURL(redirect, sessionID),
+			RedirectURL: authorizeURL,
 		}, nil
 	case "cline":
 		redirect := publicBase + "/api/oauth/callback/cline"
