@@ -256,6 +256,11 @@ type Connection struct {
 	Priority      int    `json:"priority"`
 	ProviderKind  string `json:"provider_kind"`
 	TargetModel   string `json:"target_model,omitempty"`
+
+	// oauthSessionID identifies the resolved account on this per-request copy.
+	// It is never persisted or serialized; 401/403 handling uses it to attribute
+	// the rejection to the exact OAuth account that produced it.
+	oauthSessionID string
 }
 
 func (p *ProxyHandler) getSetting(key, def string) string {
@@ -1011,6 +1016,10 @@ retryPass:
 			lastErr = string(b)
 			lastStatusCode = resp.StatusCode
 			resp.Body.Close()
+
+			// Attribute this hard auth rejection to the exact OAuth account
+			// selected for this request. Non-OAuth connections are a no-op.
+			p.recordOAuthAccountRejection(conn, true)
 
 			// Queue states ride along on 403s (Qoder 10605). Collect the
 			// backoff hint so the retry-pass loop can honour it once the

@@ -20,7 +20,11 @@ func (p *ProxyHandler) applyConnectionAuth(conn *Connection) {
 	if oauthProvider == "" {
 		return
 	}
-	if p.oauthMgr == nil || p.cfg == nil || !p.cfg.OAuthIDEEnabled {
+	// Use the SAME gate the dashboard/API uses (DB setting wins, env fallback).
+	// Previously this read p.cfg.OAuthIDEEnabled — latched from env at boot — so a
+	// lab enabled from Settings with no env var reported "enabled" everywhere
+	// except here, and the token was silently never attached.
+	if p.oauthMgr == nil || !p.oauthIdeEnabled() {
 		return
 	}
 	cred, err := p.oauthMgr.ResolveUpstreamCredentialFull(oauthProvider, true)
@@ -28,12 +32,24 @@ func (p *ProxyHandler) applyConnectionAuth(conn *Connection) {
 		return
 	}
 	conn.APIKey = cred.Token
+	conn.oauthSessionID = cred.SessionID
 	if cred.AuthHeader != "" {
 		conn.AuthHeader = cred.AuthHeader
 	}
 	if cred.AuthPrefix != "" {
 		conn.AuthPrefix = cred.AuthPrefix
 	}
+}
+
+// recordOAuthAccountRejection attributes an upstream 401/403 to the OAuth
+// account that produced it, so the pool rotates off it and (for a hard auth
+// failure) the account is marked restricted instead of being silently retried.
+// No-op when the request did not use an OAuth account.
+func (p *ProxyHandler) recordOAuthAccountRejection(conn *Connection, hard bool) {
+	if conn == nil || p.oauthMgr == nil || conn.oauthSessionID == "" {
+		return
+	}
+	p.oauthMgr.MarkOAuthAccountRejected(conn.OAuthProvider, conn.oauthSessionID, hard)
 }
 
 func (p *ProxyHandler) connForUpstream(conn *Connection) *Connection {

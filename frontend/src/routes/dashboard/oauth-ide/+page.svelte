@@ -13,6 +13,17 @@
   import { brandForProvider, logoPaths } from '$lib/oauthIdeBrands';
   import { presetByProvider } from '$lib/oauthIdePresets';
   import {
+    accountsForProvider,
+    healthLabel,
+    providerAccountState,
+    quotaLabel,
+    wireState,
+    wireStateLabel,
+    type OAuthAccount,
+    type OAuthAccountsResponse,
+    type OAuthProviderAccounts
+  } from '$lib/oauthAccounts';
+  import {
     FlaskConical,
     ShieldAlert,
     ExternalLink,
@@ -48,16 +59,9 @@
     xai_note?: string;
   }
 
-  interface OAuthSession {
-    id: string;
-    provider: string;
-    status: string;
-    expires_at?: string;
-    created_at?: string;
-  }
-
   let status = $state<OAuthStatus | null>(null);
-  let sessions = $state<OAuthSession[]>([]);
+  let accounts = $state<OAuthAccount[]>([]);
+  let accountProviders = $state<OAuthProviderAccounts[]>([]);
   let loading = $state(true);
   let actionLoading = $state('');
   let acknowledge = $state(false);
@@ -76,17 +80,27 @@
   const catalog = $derived(status?.catalog ?? []);
   const readyProviders = $derived(catalog.filter((p) => p.implementation === 'ready'));
   const importOnly = $derived(catalog.filter((p) => p.implementation === 'import_only'));
-  const activeSessions = $derived(sessions.filter((s) => s.status === 'active').length);
+  const activeSessions = $derived(accounts.filter((account) => account.health === 'healthy' || account.health === 'expiring').length);
 
   const summary = $derived({
     catalog: catalog.length,
     ready: readyProviders.length,
-    sessions: sessions.length,
+    sessions: accounts.length,
     active: activeSessions
   });
 
+  function providerAccounts(id: string) {
+    return accountsForProvider(accounts, id);
+  }
+
+  function providerState(id: string) {
+    return providerAccountState(accountProviders, id);
+  }
+
   function sessionForProvider(id: string) {
-    return sessions.find((s) => s.provider === id && s.status === 'active');
+    return accounts.find(
+      (account) => account.provider === id && (account.health === 'healthy' || account.health === 'expiring')
+    );
   }
 
   function implLabel(impl: string) {
@@ -102,10 +116,12 @@
       const st = await api.get<OAuthStatus>('/api/oauth/status');
       status = st;
       if (st.enabled) {
-        const sess = await api.get<{ data: OAuthSession[] }>('/api/oauth/sessions');
-        sessions = sess.data ?? [];
+        const accountData = await api.get<OAuthAccountsResponse>('/api/oauth/accounts');
+        accounts = accountData.accounts ?? [];
+        accountProviders = accountData.providers ?? [];
       } else {
-        sessions = [];
+        accounts = [];
+        accountProviders = [];
       }
       const cat = st.catalog ?? [];
       if (cat.length && !cat.some((c) => c.id === selectedProvider)) {
@@ -254,10 +270,23 @@
       const res = await api.post<any>('/api/oauth/provision-connection', { provider });
       const preset = presetByProvider(provider);
       showToast(
-        `${res.action === 'created' ? 'Created' : 'Updated'} ${res.name || preset?.name}`,
-        'success',
+        `${res.action === 'created' ? 'Created' : 'Updated'} ${res.name || preset?.name}; verifying live wire state…`,
+        'info',
         4000
       );
+      await load();
+      const current = providerAccountState(accountProviders, provider);
+      if (wireState(current) === 'healthy') {
+        showToast(`${current?.connection_name || res.name || preset?.name} is wired with an active account`, 'success', 4000);
+      } else {
+        showToast(
+          current?.wired
+            ? 'Connection is wired, but no healthy OAuth account is available'
+            : 'Connection was saved, but wire state could not be confirmed',
+          'error',
+          5000
+        );
+      }
     } catch (e: any) {
       error = e?.message || 'Wire proxy failed';
       showToast(error, 'error');
@@ -339,6 +368,8 @@
           {@const brand = brandForProvider(p.id)}
           {@const impl = implLabel(p.implementation)}
           {@const sess = sessionForProvider(p.id)}
+          {@const providerSummary = providerState(p.id)}
+          {@const state = wireState(providerSummary)}
           <article
             class="provider-card"
             style="--brand-color: {brand.color}; --brand-bg: {brand.bg}; --brand-border: {brand.border}"
@@ -362,8 +393,9 @@
               <code class="id-chip">{p.id}</code>
               <span class="flow-chip">{p.flow}</span>
               {#if sess}
-                <span class="live-chip"><span class="live-dot"></span> session</span>
+                <span class="live-chip"><span class="live-dot"></span> {providerSummary?.active ?? 0} active</span>
               {/if}
+              <span class="wire-chip {state}">{wireStateLabel(providerSummary)}</span>
             </div>
             {#if p.notes}
               <p class="note muted">{p.notes}</p>
@@ -521,40 +553,77 @@
 
       <section class="card">
         <div class="card-head-row">
-          <h3 class="card-h">Active sessions</h3>
-          <a href="/dashboard/connections" class="link-sm">Accounts →</a>
+          <div>
+            <h3 class="card-h">OAuth accounts</h3>
+            <p class="muted small account-intro">Health is reported per account. Restricted and expired accounts remain visible.</p>
+          </div>
+          <a href="/dashboard/connections" class="link-sm">Connections →</a>
         </div>
-        {#if sessions.length === 0}
-          <p class="muted">No OAuth sessions yet. Authorize a provider above.</p>
+        {#if accountProviders.length === 0 && accounts.length === 0}
+          <p class="muted">No OAuth accounts yet. Authorize a provider above.</p>
         {:else}
-          <ul class="session-list">
-            {#each sessions as s}
-              {@const brand = brandForProvider(s.provider)}
-              <li class="session-row">
-                <div class="session-main">
-                  <span class="session-provider" style="color: {brand.color}">{s.provider}</span>
-                  <span class="session-status" class:active={s.status === 'active'}>{s.status}</span>
-                  {#if s.expires_at}
-                    <span class="muted small">exp {s.expires_at}</span>
-                  {/if}
+          <div class="account-provider-list">
+            {#each accountProviders as provider}
+              {@const brand = brandForProvider(provider.provider)}
+              {@const state = wireState(provider)}
+              {@const providerRows = providerAccounts(provider.provider)}
+              <article class="account-provider-card">
+                <div class="account-provider-head">
+                  <div>
+                    <div class="account-provider-title" style="color: {brand.color}">{provider.name || provider.provider}</div>
+                    <div class="account-counts">
+                      <span class="count active">{provider.active} active</span>
+                      {#if provider.expiring > 0}<span class="count expiring">{provider.expiring} expiring</span>{/if}
+                      {#if provider.restricted > 0}<span class="count restricted">{provider.restricted} restricted</span>{/if}
+                      {#if provider.expired > 0}<span class="count expired">{provider.expired} expired</span>{/if}
+                      {#if provider.revoked > 0}<span class="count revoked">{provider.revoked} revoked</span>{/if}
+                    </div>
+                  </div>
+                  <div class="provider-wire-state">
+                    <span class="wire-chip {state}">{wireStateLabel(provider)}</span>
+                    <span class="quota-label">Quota <strong>{quotaLabel()}</strong></span>
+                  </div>
                 </div>
-                <code class="session-id">{s.id.slice(0, 8)}…</code>
-                <div class="session-actions">
+                {#if provider.wired && provider.connection_name}
+                  <p class="connection-note">Connection: <strong>{provider.connection_name}</strong></p>
+                {/if}
+                <ul class="session-list account-list">
+                  {#each providerRows as account}
+                    <li class="session-row account-row">
+                      <div class="session-main">
+                        <span class="health-dot {account.health}" aria-hidden="true"></span>
+                        <span class="session-provider">{healthLabel(account.health)}</span>
+                        {#if account.masked_token}<code class="masked-token">{account.masked_token}</code>{/if}
+                        {#if account.expires_at}<span class="muted small">exp {account.expires_at}</span>{/if}
+                      </div>
+                      <code class="session-id">{account.id.slice(0, 8)}…</code>
+                      <div class="session-actions">
+                        <button
+                          type="button"
+                          class="btn-ghost-danger"
+                          disabled={actionLoading === account.id || account.status === 'revoked'}
+                          onclick={() => revoke(account.id)}
+                        >
+                          <Trash2 size={14} /> {account.status === 'revoked' ? 'Revoked' : 'Revoke'}
+                        </button>
+                      </div>
+                    </li>
+                  {/each}
+                </ul>
+                <div class="account-actions">
                   <button
                     type="button"
                     class="btn-secondary-sm"
-                    disabled={s.status !== 'active' || actionLoading === 'wire-' + s.provider}
-                    onclick={() => wireProxy(s.provider)}
+                    disabled={provider.active + provider.expiring === 0 || actionLoading === 'wire-' + provider.provider}
+                    onclick={() => wireProxy(provider.provider)}
                   >
-                    <Link2 size={14} /> Wire proxy
-                  </button>
-                  <button type="button" class="btn-ghost-danger" disabled={actionLoading === s.id} onclick={() => revoke(s.id)}>
-                    <Trash2 size={14} /> Revoke
+                    <Link2 size={14} />
+                    {actionLoading === 'wire-' + provider.provider ? 'Verifying…' : 'Wire / verify'}
                   </button>
                 </div>
-              </li>
+              </article>
             {/each}
-          </ul>
+          </div>
         {/if}
       </section>
     {/if}
@@ -1019,6 +1088,139 @@
     border-radius: 9px;
     font-size: 12px;
     cursor: pointer;
+  }
+  .btn-ghost-danger:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  .wire-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-hover);
+    color: var(--color-fg-3);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .wire-chip.healthy {
+    border-color: rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.1);
+    color: #15803d;
+  }
+  .wire-chip.error {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.1);
+    color: #b45309;
+  }
+  .account-intro {
+    margin: 0;
+  }
+  .account-provider-list {
+    display: grid;
+    gap: 12px;
+  }
+  .account-provider-card {
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-card);
+    border-radius: 12px;
+    padding: 14px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  }
+  .account-provider-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .account-provider-title {
+    font-size: 14px;
+    font-weight: 750;
+  }
+  .account-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+  }
+  .count {
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--color-bg-hover);
+    color: var(--color-fg-3);
+    font-size: 10px;
+    font-weight: 650;
+  }
+  .count.active {
+    color: #15803d;
+    background: rgba(34, 197, 94, 0.1);
+  }
+  .count.expiring,
+  .count.restricted {
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.1);
+  }
+  .count.expired {
+    color: #b91c1c;
+    background: rgba(239, 68, 68, 0.08);
+  }
+  .provider-wire-state {
+    display: flex;
+    align-items: flex-end;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .quota-label,
+  .connection-note {
+    color: var(--color-fg-3);
+    font-size: 11px;
+  }
+  .connection-note {
+    margin: 8px 0 0;
+  }
+  .account-list {
+    margin-top: 8px;
+    border-top: 1px solid var(--color-border);
+  }
+  .account-row:last-child {
+    border-bottom: 0;
+  }
+  .health-dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 auto;
+    border-radius: 50%;
+    background: #94a3b8;
+  }
+  .health-dot.healthy {
+    background: #22c55e;
+    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.1);
+  }
+  .health-dot.expiring,
+  .health-dot.restricted {
+    background: #f59e0b;
+  }
+  .health-dot.expired,
+  .health-dot.revoked {
+    background: #ef4444;
+  }
+  .masked-token {
+    font-size: 10px;
+    color: var(--color-fg-2);
+  }
+  .account-actions {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 10px;
+  }
+  @media (max-width: 640px) {
+    .account-provider-head {
+      flex-direction: column;
+    }
+    .provider-wire-state {
+      align-items: flex-start;
+    }
   }
   .muted {
     color: var(--color-fg-3);

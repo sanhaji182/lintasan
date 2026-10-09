@@ -219,6 +219,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/chat/completions", s.handleChatCompletions)
 	s.mux.HandleFunc("POST /v1/embeddings", s.proxy.HandleEmbeddings)
 
+	// Native Claude/Gemini ingresses — both default OFF and read their DB gate
+	// per request. They inherit the same fail-closed auth boundary as all /v1/*
+	// API surfaces; Gemini's /v1beta path is covered by the generic active-state
+	// middleware too (no public-prefix bypass exists).
+	s.mux.HandleFunc("POST /v1/messages", s.proxy.HandleClaudeMessages)
+	s.mux.HandleFunc("POST /v1beta/models/", s.proxy.HandleGeminiGenerateContent)
+
 	// Codex Official Layer ingress (POST /v1/responses) — M0 scaffolding,
 	// flag-gated by responses_api_enabled (default OFF → 404). Inherits the
 	// /v1/* fail-closed 401 auth middleware. No streaming / tool loop yet
