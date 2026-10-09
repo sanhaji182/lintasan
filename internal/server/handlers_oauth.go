@@ -20,6 +20,7 @@ func (s *Server) registerOAuthRoutes() {
 	s.mux.HandleFunc("GET /api/oauth/callback/{provider}", s.handleOAuthCallback)
 	s.mux.HandleFunc("POST /api/oauth/device/poll", s.handleOAuthDevicePoll)
 	s.mux.HandleFunc("GET /api/oauth/sessions", s.handleOAuthSessions)
+	s.mux.HandleFunc("GET /api/oauth/accounts", s.handleOAuthAccounts)
 	s.mux.HandleFunc("DELETE /api/oauth/sessions/{id}", s.handleOAuthRevokeSession)
 	s.mux.HandleFunc("GET /api/oauth/ide-presets", s.handleOAuthIdePresets)
 	s.mux.HandleFunc("POST /api/oauth/provision-connection", s.handleOAuthProvisionConnection)
@@ -57,7 +58,7 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Provider == "cursor" {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
-			"error": "cursor uses import — POST /api/oauth/cursor/import with accessToken and machineId",
+			"error":  "cursor uses import — POST /api/oauth/cursor/import with accessToken and machineId",
 			"import": "/api/oauth/cursor/import",
 		})
 		return
@@ -132,7 +133,7 @@ func (s *Server) handleOAuthXaiComplete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var input struct {
-		CallbackURL string `json:"callback_url"`
+		CallbackURL    string `json:"callback_url"`
 		CallbackURLAlt string `json:"callbackUrl"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
