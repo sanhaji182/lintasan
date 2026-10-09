@@ -2,6 +2,7 @@ package oauthide
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,12 +36,42 @@ func antigravityClientSecret() string {
 	return strings.TrimSpace(os.Getenv("LINTASAN_OAUTH_IDE_ANTIGRAVITY_SECRET"))
 }
 
-// BuildAntigravityAuthorizeURL standard Google OAuth2 (no PKCE).
-func BuildAntigravityAuthorizeURL(redirectURI, state string) string {
-	cid := antigravityClientID()
-	if cid == "" {
-		return AntigravityAuthorizeURL + "?error=antigravity_client_id_not_configured"
+var ErrAntigravityClientNotConfigured = errors.New("antigravity OAuth client is not configured")
+
+// AntigravityConfigurationError reports an operator-actionable OAuth setup error.
+type AntigravityConfigurationError struct {
+	Missing []string
+}
+
+func (e *AntigravityConfigurationError) Error() string {
+	return "antigravity OAuth requires " + strings.Join(e.Missing, " and ") + "; configure the Google OAuth client outside the repository before starting authorization"
+}
+
+func (e *AntigravityConfigurationError) Unwrap() error {
+	return ErrAntigravityClientNotConfigured
+}
+
+// ValidateAntigravityConfiguration ensures authorization cannot start without an OAuth client.
+func ValidateAntigravityConfiguration() error {
+	var missing []string
+	if antigravityClientID() == "" {
+		missing = append(missing, "LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_ID")
 	}
+	if antigravityClientSecret() == "" {
+		missing = append(missing, "LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_SECRET")
+	}
+	if len(missing) > 0 {
+		return &AntigravityConfigurationError{Missing: missing}
+	}
+	return nil
+}
+
+// BuildAntigravityAuthorizeURL builds a standard Google OAuth2 URL (no PKCE).
+func BuildAntigravityAuthorizeURL(redirectURI, state string) (string, error) {
+	if err := ValidateAntigravityConfiguration(); err != nil {
+		return "", err
+	}
+	cid := antigravityClientID()
 	scopes := strings.Join([]string{
 		"https://www.googleapis.com/auth/cloud-platform",
 		"https://www.googleapis.com/auth/userinfo.email",
@@ -49,14 +80,14 @@ func BuildAntigravityAuthorizeURL(redirectURI, state string) string {
 		"https://www.googleapis.com/auth/experimentsandconfigs",
 	}, " ")
 	params := url.Values{}
-	params.Set("client_id", antigravityClientID())
+	params.Set("client_id", cid)
 	params.Set("response_type", "code")
 	params.Set("redirect_uri", redirectURI)
 	params.Set("scope", scopes)
 	params.Set("state", state)
 	params.Set("access_type", "offline")
 	params.Set("prompt", "consent")
-	return AntigravityAuthorizeURL + "?" + params.Encode()
+	return AntigravityAuthorizeURL + "?" + params.Encode(), nil
 }
 
 // ExchangeAntigravityToken form exchange + postExchange metadata JSON.

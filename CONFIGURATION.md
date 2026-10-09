@@ -42,6 +42,8 @@ Lintasan dikonfigurasi melalui environment variables. **Tidak perlu file `.env`*
 | `LINTASAN_MITM_ENABLED` | `false` | Aktifkan MITM bridge |
 | `LINTASAN_OAUTH_IDE_ENABLED` | `false` | Aktifkan Experimental OAuth IDE lab |
 | `LINTASAN_OAUTH_PUBLIC_BASE_URL` | — | Public origin untuk OAuth redirect (misal `https://lintasan.example.com`) |
+| `LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_ID` | — | Google OAuth client ID untuk Antigravity (wajib bersama client secret) |
+| `LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_SECRET` | — | Google OAuth client secret untuk Antigravity; simpan di EnvironmentFile luar repo |
 | `REDIS_ADDR` | `127.0.0.1:6379` | Redis address untuk vector memory |
 | `DASHBOARD_URL` | `http://127.0.0.1:20180` | Dashboard URL (jika proxy terpisah) |
 
