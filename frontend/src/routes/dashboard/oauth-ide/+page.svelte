@@ -6,7 +6,7 @@
     { label: 'OAuth IDE', path: '/dashboard/oauth-ide', lab: true },
     { label: 'Experimental', path: '/dashboard/experimental', lab: true }
   ];
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import { showToast } from '$lib/toast';
@@ -64,11 +64,12 @@
   let accountProviders = $state<OAuthProviderAccounts[]>([]);
   let loading = $state(true);
   let actionLoading = $state('');
-  let acknowledge = $state(false);
   let selectedProvider = $state('xai');
   let deviceInfo = $state<any>(null);
   let pollSessionId = $state('');
   let lastRedirect = $state('');
+  let waitingProvider = $state('');
+  let flowStatus = $state('');
   let error = $state('');
   let cursorToken = $state('');
   let cursorMachineId = $state('');
@@ -76,6 +77,11 @@
   let xaiLoopbackWarn = $state('');
   let xaiCallbackPaste = $state('');
   let showXaiComplete = $state(false);
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  let pollDeadline = 0;
+  let pollInFlight = false;
+  let flowGeneration = 0;
+  let providerActiveBefore = 0;
 
   const catalog = $derived(status?.catalog ?? []);
   const readyProviders = $derived(catalog.filter((p) => p.implementation === 'ready'));
@@ -109,6 +115,12 @@
     return { label: impl, color: 'var(--color-fg-3)', bg: 'var(--color-bg-hover)' };
   }
 
+  async function refreshAccounts() {
+    const accountData = await api.get<OAuthAccountsResponse>('/api/oauth/accounts');
+    accounts = accountData.accounts ?? [];
+    accountProviders = accountData.providers ?? [];
+  }
+
   async function load() {
     loading = true;
     error = '';
@@ -116,9 +128,7 @@
       const st = await api.get<OAuthStatus>('/api/oauth/status');
       status = st;
       if (st.enabled) {
-        const accountData = await api.get<OAuthAccountsResponse>('/api/oauth/accounts');
-        accounts = accountData.accounts ?? [];
-        accountProviders = accountData.providers ?? [];
+        await refreshAccounts();
       } else {
         accounts = [];
         accountProviders = [];
@@ -135,63 +145,157 @@
     }
   }
 
-  async function authorize() {
-    if (!acknowledge) {
-      error = 'Acknowledge the risks before continuing.';
+  function stopAutoPoll() {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = undefined;
+    flowGeneration += 1;
+    pollInFlight = false;
+  }
+
+  function navigatePopup(popup: Window | null, url: string) {
+    if (!popup || popup.closed || !url) return;
+    try {
+      popup.location.href = url;
+    } catch {
+      // The manual link remains visible if browser policy rejects navigation.
+    }
+  }
+
+  function schedulePoll(callback: () => void, seconds: number, generation: number) {
+    if (generation !== flowGeneration) return;
+    if (Date.now() >= pollDeadline) {
+      waitingProvider = '';
+      flowStatus = '';
+      error = 'Authorization expired. Start the connection again.';
+      stopAutoPoll();
       return;
     }
-    actionLoading = 'authorize';
+    const boundedSeconds = Math.min(10, Math.max(1, seconds || 5));
+    pollTimer = setTimeout(callback, boundedSeconds * 1000);
+  }
+
+  function activeAccountCount(provider: string) {
+    const state = providerAccountState(accountProviders, provider);
+    return (state?.active ?? 0) + (state?.expiring ?? 0);
+  }
+
+  async function pollBrowserAccount(provider: string, generation: number) {
+    if (generation !== flowGeneration || pollInFlight) return;
+    pollInFlight = true;
+    try {
+      await refreshAccounts();
+      if (activeAccountCount(provider) > providerActiveBefore) {
+        waitingProvider = '';
+        flowStatus = '';
+        if (pollTimer) clearTimeout(pollTimer);
+        pollTimer = undefined;
+        showToast('Account connected', 'success');
+        return;
+      }
+    } catch {
+      // A transient refresh failure should not cancel an in-progress OAuth callback.
+    } finally {
+      pollInFlight = false;
+    }
+    schedulePoll(() => pollBrowserAccount(provider, generation), 2, generation);
+  }
+
+  async function authorize(provider: string) {
+    stopAutoPoll();
+    selectedProvider = provider;
+    providerActiveBefore = activeAccountCount(provider);
+    const authPopup = window.open('', '_blank');
+    if (authPopup) {
+      try {
+        authPopup.opener = null;
+      } catch {
+        // Best effort; navigation still happens in the reserved click-opened window.
+      }
+    }
+    actionLoading = 'authorize-' + provider;
+    waitingProvider = provider;
+    flowStatus = 'Waiting for authorization…';
     error = '';
     lastRedirect = '';
     xaiLoopbackWarn = '';
     showXaiComplete = false;
     try {
       const res = await api.post<any>('/api/oauth/authorize', {
-        provider: selectedProvider,
+        provider,
         acknowledge_risk: true
       });
       pollSessionId = res.session_id || '';
       if (res.flow === 'device_code' && res.device) {
         deviceInfo = res.device;
-        lastRedirect = '';
+        lastRedirect = res.device.verification_uri_complete || res.device.verification_uri || '';
+        navigatePopup(authPopup, lastRedirect);
+        pollDeadline = Date.now() + Math.max(1, Number(res.device.expires_in) || 900) * 1000;
+        const generation = flowGeneration;
+        schedulePoll(() => pollDevice(generation), Number(res.device.interval) || 5, generation);
       } else {
         deviceInfo = null;
         lastRedirect = res.redirect_url || '';
         xaiLoopbackWarn = res.xai_loopback_warn || '';
-        if (selectedProvider === 'xai') {
+        if (provider === 'xai') {
           showXaiComplete = !!res.xai_manual_complete;
         }
-        if (lastRedirect) window.open(lastRedirect, '_blank', 'noopener,noreferrer');
+        navigatePopup(authPopup, lastRedirect);
+        pollDeadline = Date.now() + 5 * 60 * 1000;
+        const generation = flowGeneration;
+        schedulePoll(() => pollBrowserAccount(provider, generation), 2, generation);
       }
       if (xaiLoopbackWarn) {
         showToast('xAI login URL opened — see warning below', 'info');
       } else {
         showToast('OAuth flow started', 'info');
       }
-      await load();
     } catch (e: any) {
       error = e?.message || 'Authorize failed';
+      waitingProvider = '';
+      flowStatus = '';
+      stopAutoPoll();
+      if (authPopup && !authPopup.closed) authPopup.close();
     } finally {
       actionLoading = '';
     }
   }
 
-  async function pollDevice() {
-    if (!pollSessionId) return;
+  async function pollDevice(generation = flowGeneration) {
+    if (!pollSessionId || generation !== flowGeneration || pollInFlight) return;
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = undefined;
+    pollInFlight = true;
     actionLoading = 'poll';
     error = '';
     try {
       const res = await api.post<any>(`/api/oauth/device/poll?session_id=${encodeURIComponent(pollSessionId)}`, {});
       if (res.status === 'active') {
         deviceInfo = null;
+        waitingProvider = '';
+        flowStatus = '';
+        if (pollTimer) clearTimeout(pollTimer);
+        pollTimer = undefined;
         showToast('Device login complete', 'success');
-        await load();
+        await refreshAccounts();
       } else {
-        error = res.hint || 'Still pending — complete device login';
+        flowStatus = res.hint
+          ? `Waiting for authorization… ${res.hint}`
+          : 'Waiting for authorization…';
+        schedulePoll(() => pollDevice(generation), Number(deviceInfo?.interval) || 5, generation);
       }
     } catch (e: any) {
-      error = e?.message || 'Poll failed';
+      const message = e?.message || 'Poll failed';
+      if (/authorization_pending|slow_down|pending/i.test(message)) {
+        flowStatus = 'Waiting for authorization…';
+        schedulePoll(() => pollDevice(generation), Number(deviceInfo?.interval) || 5, generation);
+      } else {
+        error = message;
+        waitingProvider = '';
+        flowStatus = '';
+        stopAutoPoll();
+      }
     } finally {
+      pollInFlight = false;
       actionLoading = '';
     }
   }
@@ -226,10 +330,6 @@
   }
 
   async function importCursor() {
-    if (!acknowledge) {
-      error = 'Acknowledge the risks before continuing.';
-      return;
-    }
     actionLoading = 'cursor-import';
     error = '';
     try {
@@ -296,6 +396,7 @@
   }
 
   onMount(load);
+  onDestroy(stopAutoPoll);
 </script>
 
 <svelte:head><title>OAuth IDE (Experimental) — Lintasan</title></svelte:head>
@@ -332,13 +433,11 @@
   </div>
 
   <div class="steps-strip">
-    <span class="step"><span class="step-n">1</span> Acknowledge risk</span>
+    <span class="step"><span class="step-n">1</span> Connect provider</span>
     <ArrowRight size={14} class="step-arrow" />
-    <span class="step"><span class="step-n">2</span> Authorize provider</span>
+    <span class="step"><span class="step-n">2</span> Finish authorization</span>
     <ArrowRight size={14} class="step-arrow" />
-    <span class="step"><span class="step-n">3</span> Wire proxy → Accounts</span>
-    <ArrowRight size={14} class="step-arrow" />
-    <span class="step"><span class="step-n">4</span> Test &amp; chat</span>
+    <span class="step"><span class="step-n">3</span> Wire separately when ready</span>
   </div>
 
   {#if error}
@@ -405,13 +504,12 @@
                 <button
                   type="button"
                   class="btn-primary-sm"
-                  disabled={!status?.enabled || actionLoading === 'authorize'}
-                  onclick={() => {
-                    selectedProvider = p.id;
-                    authorize();
-                  }}
+                  aria-label={sess ? `Add another ${p.name} account` : `Connect ${p.name}`}
+                  disabled={!status?.enabled || actionLoading.startsWith('authorize-')}
+                  onclick={() => authorize(p.id)}
                 >
-                  <KeyRound size={14} /> Authorize
+                  <KeyRound size={14} />
+                  {actionLoading === 'authorize-' + p.id ? 'Starting…' : sess ? 'Add another account' : 'Connect'}
                 </button>
               {:else if p.implementation === 'import_only'}
                 <span class="hint-import muted">Use import panel below</span>
@@ -428,6 +526,11 @@
                 </button>
               {/if}
             </div>
+            {#if waitingProvider === p.id}
+              <div class="waiting-status" role="status">
+                <Spinner /> <span>{flowStatus || 'Waiting for authorization…'}</span>
+              </div>
+            {/if}
           </article>
         {/each}
       </div>
@@ -440,38 +543,16 @@
         <p class="muted small">Set <code>LINTASAN_OAUTH_PUBLIC_BASE_URL</code> on the server for redirect URLs. Per provider: <code>LINTASAN_OAUTH_IDE_*_CLIENT_ID</code> / secrets.</p>
       </section>
     {:else}
-      <section class="card">
-        <h3 class="card-h">Connect a provider</h3>
-        <p class="muted small">Public base: <code>{status.public_base}</code></p>
+      <section class="card flow-card">
+        <h3 class="card-h">Authorization details</h3>
+        <p class="muted small">Choose a provider card above. The authorization page opens immediately; account completion and proxy wiring remain separate.</p>
+        <p class="muted small">Callback base: <code>{status.public_base}</code></p>
         {#if status.xai_note}
           <p class="muted small xai-loopback-note">
             <strong>xAI:</strong> redirect <code>{status.xai_redirect_uri}</code> — {status.xai_note}
           </p>
         {/if}
         {#if status.hint}<p class="muted small">{status.hint}</p>{/if}
-
-        <label class="ack">
-          <input type="checkbox" bind:checked={acknowledge} />
-          I understand this is experimental, for my own account, and may violate upstream terms.
-        </label>
-
-        <div class="row">
-          <select class="input-select" bind:value={selectedProvider}>
-            {#each catalog as p}
-              <option value={p.id} disabled={p.implementation !== 'ready'}>
-                {p.name} ({p.implementation})
-              </option>
-            {/each}
-          </select>
-          <button
-            type="button"
-            class="btn-primary"
-            disabled={!acknowledge || actionLoading === 'authorize' || readyProviders.length === 0}
-            onclick={authorize}
-          >
-            {actionLoading === 'authorize' ? 'Starting…' : 'Authorize (admin)'}
-          </button>
-        </div>
 
         {#if deviceInfo}
           <div class="device-box">
@@ -493,8 +574,8 @@
                 Open verification page <ExternalLink size={14} />
               </a>
             </p>
-            <button type="button" class="btn-primary" disabled={actionLoading === 'poll'} onclick={pollDevice}>
-              {actionLoading === 'poll' ? 'Polling…' : 'Poll for completion'}
+            <button type="button" class="btn-secondary-sm" disabled={actionLoading === 'poll'} onclick={() => pollDevice()}>
+              {actionLoading === 'poll' ? 'Checking…' : 'Check again'}
             </button>
           </div>
         {/if}
@@ -542,7 +623,7 @@
             <button
               type="button"
               class="btn-primary"
-              disabled={!acknowledge || actionLoading === 'cursor-import'}
+              disabled={!cursorToken.trim() || !cursorMachineId.trim() || actionLoading === 'cursor-import'}
               onclick={importCursor}
             >
               {actionLoading === 'cursor-import' ? 'Importing…' : 'Import Cursor session'}
@@ -918,6 +999,17 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+  }
+  .waiting-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(59, 130, 246, 0.08);
+    color: var(--color-fg-2);
+    font-size: 12px;
   }
   .btn-primary-sm,
   .btn-secondary-sm {
