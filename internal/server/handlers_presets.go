@@ -282,6 +282,20 @@ func seedCatalogue() []Preset {
 		{Name: "Jina AI", Domain: "jina.ai", BaseURL: "https://api.jina.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Baseten", Domain: "baseten.co", BaseURL: "https://inference.baseten.co/v1", Format: "openai", KeyLabel: "API Key", Category: "inference"},
 		{Name: "Novita AI", Domain: "novita.ai", BaseURL: "https://api.novita.ai/v3/openai", Format: "openai", KeyLabel: "API Key", Category: "inference"},
+
+		// Providers below are the 2026-10-18 registry diff against 9router
+		// v0.5.104 (tool: scripts/gen-presets.py, see docs/plans/
+		// 2026-10-18-9router-parity.md §4 B3). Each base URL was probed with
+		// GET /models — 200/401/403 means the endpoint is real and merely
+		// auth-gated, which is what we want from a preset. Providers probing
+		// 404 on GET /models were excluded (blackbox, codebuddy-cn/intl —
+		// their /models path requires a credential we do not possess).
+		{Name: "Agnes", Domain: "apihub.agnes-ai.com", BaseURL: "https://apihub.agnes-ai.com/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
+		{Name: "Alibaba TokenPlan Intl", Domain: "aliyuncs.com", BaseURL: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
+		{Name: "Atria", Domain: "api.atria-asi.ai", BaseURL: "https://api.atria-asi.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
+		{Name: "BAI", Domain: "api.b.ai", BaseURL: "https://api.b.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
+		{Name: "Tokenharbor", Domain: "tokenharbor.ai", BaseURL: "https://tokenharbor.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "aggregator"},
+		{Name: "V1M System One", Domain: "v1m.ir", BaseURL: "https://v1m.ir/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
 	}
 }
 
