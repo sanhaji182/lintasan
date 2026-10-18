@@ -32,6 +32,13 @@ func oauthIdePresets() []oauthIdeConnectionPreset {
 		{"kilocode", "oauth-kilocode", "https://api.kilo.ai", "openai", "/v1/chat/completions", "/v1/models", "Authorization", "Bearer "},
 		{"cline", "oauth-cline", "https://api.cline.bot", "openai", "/v1/chat/completions", "/v1/models", "Authorization", "Bearer "},
 		{"antigravity", "oauth-antigravity", "https://cloudcode-pa.googleapis.com", "openai", "/v1/chat/completions", "/v1/models", "Authorization", "Bearer "},
+		// Nous Research (9router v0.5.104): portal-minted Hermes agent key,
+		// used as the bearer on the inference API. Catalog entry is
+		// Impl=Partial (device grant + agent-key mint ported in nous.go;
+		// refresh pending) but the preset is listable so the dashboard shows
+		// its state truthfully — the actual /authorize stub is what gates the
+		// flow from the /oauth-ide page, not this preset list.
+		{"nous", "oauth-nous", "https://inference-api.nousresearch.com/v1", "openai", "/chat/completions", "/models", "Authorization", "Bearer "},
 	}
 }
 
