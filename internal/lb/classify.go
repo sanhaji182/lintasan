@@ -47,11 +47,11 @@ const (
 
 // ErrorRule is one classification rule.
 type ErrorRule struct {
-	Provider  string // empty = applies to all providers
-	Text      string // substring match on lowercased error text
-	Status    int    // HTTP status match (fallback when text rules miss)
-	Cooldown  time.Duration
-	Backoff   bool // expiry uses exponential backoff, not a fixed cooldown
+	Provider string // empty = applies to all providers
+	Text     string // substring match on lowercased error text
+	Status   int    // HTTP status match (fallback when text rules miss)
+	Cooldown time.Duration
+	Backoff  bool // expiry uses exponential backoff, not a fixed cooldown
 }
 
 // TextRules and StatusRules are separate so the hot path scans text first

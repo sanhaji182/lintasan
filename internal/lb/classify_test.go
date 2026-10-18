@@ -64,10 +64,10 @@ func TestClassifyTransientTexts(t *testing.T) {
 		{"no credentials — supply an API key", CooldownLong},
 		{"request not allowed for this endpoint", CooldownShort},
 		{"improperly formed request body", CooldownLong},
-		{"upstream capacity exhausted", BackoffBase},      // backoff → level 1
-		{"service overloaded, try again", BackoffBase},    // backoff → level 1
-		{"quota exceeded for today", BackoffBase},         // backoff → level 1
-		{"too many requests right now", BackoffBase},      // backoff → level 1
+		{"upstream capacity exhausted", BackoffBase},         // backoff → level 1
+		{"service overloaded, try again", BackoffBase},       // backoff → level 1
+		{"quota exceeded for today", BackoffBase},            // backoff → level 1
+		{"too many requests right now", BackoffBase},         // backoff → level 1
 		{"insufficient_quota (openai wording)", BackoffBase}, // backoff → level 1
 	}
 	for _, tc := range cases {
