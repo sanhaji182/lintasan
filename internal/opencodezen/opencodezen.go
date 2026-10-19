@@ -208,6 +208,23 @@ func TranslateSessionId(sessionId, serviceName string) string {
 	return "ses_" + timeHex + string(tail)
 }
 
+// IsFreeTierModel decides lane routing from the upstream model id alone.
+// Port of 9router executors/opencode-zen.js isOpencodeFreeTierModel (and
+// luqman's 9router-go IsOpencodeFreeTierModel in
+// internal/providers/model_formats.go:290): a "-free" suffix is a FIXED-case
+// marker read VERBATIM from the model id — lowercase-only — so a
+// "-FREE" or "-Free" variant is NOT the free lane (9router-go has no case
+// fold either, it carries the literal constant "-free"). Any "-free"
+// model — curated or uncatalogued — reaches the keyless /inference/v1
+// gate, while paid ids route the keyed /zen/v1 lane.
+//
+// The helper does NOT take a provider arg because it is only ever called
+// from the OpenCode family lane. renames above the surface keep the
+// semantic the 9router/9router-go upstream has.
+func IsFreeTierModel(model string) bool {
+	return strings.HasSuffix(strings.TrimSpace(model), "-free")
+}
+
 // PrepareHeaders builds the OpenCode-shaped Authorization and
 // x-opencode-* headers onto an outbound request. downstreamUA is the
 // caller's User-Agent if it already carries a valid opencode version;
