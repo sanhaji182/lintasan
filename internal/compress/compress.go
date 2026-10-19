@@ -11,12 +11,12 @@ import (
 
 // Stats holds compression statistics for logging/debugging.
 type Stats struct {
-	OriginalTokens int     `json:"original_tokens"`
-	CompressedTokens int   `json:"compressed_tokens"`
+	OriginalTokens   int     `json:"original_tokens"`
+	CompressedTokens int     `json:"compressed_tokens"`
 	CompressionRatio float64 `json:"compression_ratio"`
-	MessagesBefore   int    `json:"messages_before"`
-	MessagesAfter    int    `json:"messages_after"`
-	WasCompressed    bool   `json:"was_compressed"`
+	MessagesBefore   int     `json:"messages_before"`
+	MessagesAfter    int     `json:"messages_after"`
+	WasCompressed    bool    `json:"was_compressed"`
 }
 
 // Compressor handles context compression for LLM messages.
@@ -260,7 +260,7 @@ func getContent(msg map[string]any) string {
 // Regex patterns for extraction
 var (
 	// Code block patterns (markdown and inline)
-	codeBlockPattern = regexp.MustCompile("```(?:\\w+)?\\n?([\\s\\S]*?)```")
+	codeBlockPattern  = regexp.MustCompile("```(?:\\w+)?\\n?([\\s\\S]*?)```")
 	inlineCodePattern = regexp.MustCompile("`([^`]+)`")
 
 	// Error patterns

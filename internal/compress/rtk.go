@@ -49,10 +49,10 @@ func CompressRTK(content string) (string, float64) {
 // --- Git Diff ---
 
 var (
-	diffHeaderRe  = regexp.MustCompile(`(?m)^diff --git .+$`)
-	diffIndexRe   = regexp.MustCompile(`(?m)^index [a-f0-9]+\.\.[a-f0-9]+.*$`)
-	diffChunkRe   = regexp.MustCompile(`(?m)^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@.*$`)
-	diffMetaRe    = regexp.MustCompile(`(?m)^(?:old mode|new mode|rename from|rename to|similarity index|deleted file|new file).*$`)
+	diffHeaderRe = regexp.MustCompile(`(?m)^diff --git .+$`)
+	diffIndexRe  = regexp.MustCompile(`(?m)^index [a-f0-9]+\.\.[a-f0-9]+.*$`)
+	diffChunkRe  = regexp.MustCompile(`(?m)^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@.*$`)
+	diffMetaRe   = regexp.MustCompile(`(?m)^(?:old mode|new mode|rename from|rename to|similarity index|deleted file|new file).*$`)
 )
 
 func isGitDiff(s string) bool {

@@ -85,5 +85,3 @@ func TestInjectCavemanPrompt(t *testing.T) {
 		t.Error("aggressive prompt should not be empty")
 	}
 }
-
-

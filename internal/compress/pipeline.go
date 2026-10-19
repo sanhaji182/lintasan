@@ -16,14 +16,14 @@ const (
 
 // PipelineStats tracks compression savings.
 type PipelineStats struct {
-	Mode             string  `json:"mode"`
-	OriginalBytes    int     `json:"original_bytes"`
-	CompressedBytes  int     `json:"compressed_bytes"`
-	SavingsBytes     int     `json:"savings_bytes"`
-	SavingsPercent   float64 `json:"savings_percent"`
-	RTKApplied       bool    `json:"rtk_applied"`
-	CavemanApplied   bool    `json:"caveman_applied"`
-	ItemsCompressed  int     `json:"items_compressed"`
+	Mode            string  `json:"mode"`
+	OriginalBytes   int     `json:"original_bytes"`
+	CompressedBytes int     `json:"compressed_bytes"`
+	SavingsBytes    int     `json:"savings_bytes"`
+	SavingsPercent  float64 `json:"savings_percent"`
+	RTKApplied      bool    `json:"rtk_applied"`
+	CavemanApplied  bool    `json:"caveman_applied"`
+	ItemsCompressed int     `json:"items_compressed"`
 }
 
 // CompressPipeline runs stacked compression: RTK on tool outputs, Caveman on system prompt.
