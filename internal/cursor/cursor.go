@@ -83,6 +83,20 @@ const (
 	FieldMsgServerBubbleID = 32
 	FieldMsgUnifiedMode    = 47
 	FieldMsgSupportedTools = 51
+
+	// Response lane: StreamUnifiedChatResponseWithTools (top level).
+	FieldToolCall      = 1 // ClientSideToolV2Call
+	FieldResponse      = 2 // StreamUnifiedChatResponse
+	FieldToolID        = 3 // inside ClientSideToolV2Call
+	FieldToolName      = 9
+	FieldToolRawArgs   = 10
+	FieldToolIsLast    = 11
+	FieldToolMCPParams = 27
+
+	// StreamUnifiedChatResponse nested fields.
+	FieldResponseText = 1
+	FieldThinking     = 25
+	FieldThinkingText = 1 // nested inside Thinking
 )
 
 // EncodeVarint returns the LEB128 encoding of v (the standard protobuf
