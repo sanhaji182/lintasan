@@ -296,6 +296,34 @@ func seedCatalogue() []Preset {
 		{Name: "BAI", Domain: "api.b.ai", BaseURL: "https://api.b.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
 		{Name: "Tokenharbor", Domain: "tokenharbor.ai", BaseURL: "https://tokenharbor.ai/v1", Format: "openai", KeyLabel: "API Key", Category: "aggregator"},
 		{Name: "V1M System One", Domain: "v1m.ir", BaseURL: "https://v1m.ir/v1", Format: "openai", KeyLabel: "API Key", Category: "open"},
+
+		// Zai GLM Coding (A6, 9router v0.5.104 registry/glm.js). Two lanes
+		// ship as TWO presets rather than one headless lane because the
+		// connection's Format drives the translator (Lintasan has no
+		// multi-endpoint transports field): the openai lane goes through
+		// api/coding/paas/v4/chat/completions (Authorization Bearer); the
+		// anthropic lane goes through api/anthropic/v1/messages (x-api-key
+		// + anthropic-version). OAuth CLI-poll lane stays in the
+		// internal/oauthide catalog (Impl=Planned); these presets cover the
+		// paste-an-API-key path from https://open.bigmodel.cn/usercenter.
+		// Probe 2026-10-18: openai lane /runs auth-gated 401 (real);
+		// anthropic /models answers 200 with `"code":1001,"msg":"Authentication
+		// parameter not received"` (real, header-gated).
+		{Name: "Zai GLM Coding (OpenAI)", Domain: "api.z.ai", BaseURL: "https://api.z.ai/api/coding/paas/v4", Format: "openai", KeyLabel: "API Key", Category: "coding"},
+		{Name: "Zai GLM Coding (Anthropic)", Domain: "api.z.ai", BaseURL: "https://api.z.ai/api/anthropic", Format: "anthropic", KeyLabel: "API Key", Category: "coding"},
+
+		// OpenCode Zen PAYG (A7, 9router v0.5.104 registry/opencode-zen.js).
+		// The companion preset "OpenCode Go" already covers the /zen/go/v1
+		// lane; this one lists the argparse `claude-fable-5/...` fable lane
+		// through the PAYG endpoint https://opencode.ai/zen/v1. Three sub-
+		// lanes same family (openai chat / anthropic messages /
+		// openai-responses) ship as separate presets because the connection
+		// Format drives the translator, so a genuine per-model lane routing
+		// would need a multi-endpoint transports field Lintasan does not
+		// have yet — opencode-zen.js modelsAlready supports it via
+		// supportedFormats. Ships the OpenAI chat lane (defensible); the
+		// other two wait on the transports gap.
+		{Name: "OpenCode Zen PAYG", Domain: "opencode.ai", BaseURL: "https://opencode.ai/zen/v1", Format: "openai", KeyLabel: "API Key", Category: "coding"},
 	}
 }
 
