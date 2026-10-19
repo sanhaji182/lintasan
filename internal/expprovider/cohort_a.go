@@ -99,15 +99,18 @@ func CopilotDescriptor() ProviderDescriptor {
 }
 
 // CohortADescriptors returns every Cohort-A descriptor (Codex + the scaffold
-// providers) for diagnostics/enumeration. It REGISTERS NOTHING — it is a catalog
-// listing, not an activation. A future onboarding checkpoint admits a provider
-// individually (with its fixture), one approved step at a time.
+// providers + Devin CLI) for diagnostics/enumeration. It REGISTERS NOTHING —
+// it is a catalog listing, not an activation. A future onboarding checkpoint
+// admits a provider individually (with its fixture), one approved step at a
+// time.
 func CohortADescriptors() []ProviderDescriptor {
 	return []ProviderDescriptor{
 		CodexDescriptor(),
 		ClaudeCodeDescriptor(),
 		GeminiCLIDescriptor(),
 		CopilotDescriptor(),
+		DevinCLIDescriptor(),
+		SummarizerDevinCLIDescriptor(),
 	}
 }
 

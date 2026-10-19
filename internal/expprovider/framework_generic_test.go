@@ -155,8 +155,14 @@ func TestFramework_CohortADescriptors_AreValidSpecs(t *testing.T) {
 		if err := spec.Validate(); err != nil {
 			t.Fatalf("descriptor %q produced invalid LaunchSpec: %v", d.Name, err)
 		}
-		if spec.Name == "" || spec.AuthEnvVar == "" {
-			t.Fatalf("descriptor %q missing required identity fields: %+v", d.Name, spec)
+		if spec.Name == "" {
+			t.Fatalf("descriptor %q missing required identity field: Name", d.Name)
+		}
+		// AuthNone descriptors legitimately carry no AuthEnvVar (devin-cli:
+		// `devin auth login` stores the session inside the CLI, there is no
+		// env-var credential to inject). Only API/OAuth modes must name one.
+		if spec.AuthMode != AuthNone && spec.AuthEnvVar == "" {
+			t.Fatalf("descriptor %q missing AuthEnvVar for AuthMode=%s", d.Name, spec.AuthMode)
 		}
 		if spec.Protocol != ProtocolACP {
 			t.Fatalf("descriptor %q is not ACP", d.Name)
