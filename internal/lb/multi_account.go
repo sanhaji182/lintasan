@@ -113,12 +113,23 @@ func (m *MultiAccountLB) RecordFailure(accountID string) {
 
 // MarkRateLimited marks an account as rate-limited with a cooldown period.
 func (m *MultiAccountLB) MarkRateLimited(accountID string) {
+	m.MarkRateLimitedWith(accountID, 0)
+}
+
+// MarkRateLimitedWith is MarkRateLimited with an explicit cooldown, so the
+// B1 classifier (lb.ClassifyUpstreamError, new in the 9router parity plan)
+// can drive the expiry from the upstream's own wording. Cooldown 0 keeps each
+// account's existing value unchanged — same as MarkRateLimited.
+func (m *MultiAccountLB) MarkRateLimitedWith(accountID string, cooldown time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for i := range m.accounts {
 		if m.accounts[i].ID == accountID {
 			m.accounts[i].RateLimited = true
 			m.accounts[i].RateLimitedAt = time.Now()
+			if cooldown > 0 {
+				m.accounts[i].Cooldown = cooldown
+			}
 			break
 		}
 	}

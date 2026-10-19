@@ -131,24 +131,48 @@ func (p *ProxyHandler) pickMultiAccountAPIKey(poolID, fallbackKey string) (strin
 }
 
 // recordMultiAccountResult records success or failure for a pool account.
-func (p *ProxyHandler) recordMultiAccountResult(poolID, accountID string, success bool, isRateLimit bool) {
+// success always goes through RecordSuccess; failure paths consult the B1
+// classifier (lb.ClassifyUpstreamError) on the upstream body when the caller
+// provides one, so a "rate limit exceeded" body on a 403 backs off
+// exponentially instead of parking the account for an unrelated fixed window.
+// errText == "" keeps pure status-driven behaviour.
+//
+// The returned cooldown is what the classifier chose (0 = caller's own
+// default stands), surfaced for logging only.
+func (p *ProxyHandler) recordMultiAccountResult(poolID, accountID string, success bool, isRateLimit bool) time.Duration {
+	return p.recordMultiAccountResultClassified(poolID, accountID, success, isRateLimit, "")
+}
+
+// recordMultiAccountResultClassified drives the failure cooldown from the
+// upstream's own wording. A positive classifier match ALWAYS uses the
+// rate-limit slot with the classifier's cooldown — even when the HTTP status
+// was 401/403 — because the text said the quota/capacity problem, not a dead
+// key. No match: MarkAuthFailed-style caller choice wins unchanged.
+func (p *ProxyHandler) recordMultiAccountResultClassified(poolID, accountID string, success bool, isRateLimit bool, errText string) time.Duration {
 	if poolID == "" || accountID == "" {
-		return
+		return 0
 	}
 	p.mabMu.RLock()
 	mab := p.multiAccountLBs[poolID]
 	p.mabMu.RUnlock()
 	if mab == nil {
-		return
+		return 0
 	}
 	if success {
 		mab.RecordSuccess(accountID)
-	} else {
-		mab.RecordFailure(accountID)
-		if isRateLimit {
-			mab.MarkRateLimited(accountID)
-		}
+		return 0
 	}
+	mab.RecordFailure(accountID)
+	if cls := lb.ClassifyUpstreamError("", 0, errText, 0); cls.ShouldFallback {
+		// B1 matched on the body. Always rate-limit slot, classifier's
+		// cooldown (exponential or fixed).
+		mab.MarkRateLimitedWith(accountID, cls.Cooldown)
+		return cls.Cooldown
+	}
+	if isRateLimit {
+		mab.MarkRateLimited(accountID)
+	}
+	return 0
 }
 
 // markPoolAccountAuthFailed takes a rejected key out of the pool's rotation.

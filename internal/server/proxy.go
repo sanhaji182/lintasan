@@ -995,7 +995,11 @@ retryPass:
 				maxRetryAfter = hint
 			}
 			breaker.Failure()
-			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, true)
+			// B1 classified: the 429 body may say something the classifier
+			// recognises (e.g. "quota exceeded", "overloaded"); an unmatched
+			// body keeps the pool's default 60s cooldown. lastErr carries the
+			// upstream response body here.
+			p.recordMultiAccountResultClassified(conn.PoolID, poolAccountID, false, true, lastErr)
 			p.logRequest(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				p.fb.RecordEvent(candidateModel, "", fallback.Reason429, resp.StatusCode)
@@ -1042,7 +1046,19 @@ retryPass:
 			// keys cannot spin.
 			recovered := false
 			if conn.PoolID != "" && poolAccountID != "" {
-				p.markPoolAccountAuthFailed(conn.PoolID, poolAccountID)
+				// B1 classified: a 401/403 whose body says a
+				// throughput-quota / capacity phrase is NOT a dead key — it
+				// goes to the (shorter) rate-limit cooldown so the account
+				// rejoins on backoff, instead of sitting out the 5-minute
+				// auth-failure window for a quota that resets sooner.
+				// markPoolAccountAuthFailed stays the default when the body
+				// is silent or matches an auth-slot phrase; only a positive
+				// match that says "short retry" downgrades to rate-limit.
+				if cls := lb.ClassifyUpstreamError("", resp.StatusCode, lastErr, 0); cls.ShouldFallback && !cls.Backoff && cls.Cooldown <= lb.CooldownShort {
+					p.recordMultiAccountResultClassified(conn.PoolID, poolAccountID, false, true, lastErr)
+				} else {
+					p.markPoolAccountAuthFailed(conn.PoolID, poolAccountID)
+				}
 				p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 
 				if poolResp, poolAcct := p.retryPoolAccounts(r, conn, body, resolvedModel, start, taskClass, modeLabel, &lastErr, &lastStatusCode); poolResp != nil {
