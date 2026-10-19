@@ -68,6 +68,10 @@ var textRules = []ErrorRule{
 	{Text: "insufficient_quota", Backoff: true},
 	{Text: "capacity", Backoff: true},
 	{Text: "overloaded", Backoff: true},
+	{Text: "resource_exhausted", Backoff: true},
+	{Text: "resource has been exhausted", Backoff: true},
+	{Text: "model_capacity_exhausted", Backoff: true},
+	{Text: "server is temporarily unavailable", Backoff: true},
 
 	// --- Status rules (fallback when text doesn't match) ---
 	{Status: 401, Cooldown: CooldownLong},
@@ -75,6 +79,9 @@ var textRules = []ErrorRule{
 	{Status: 403, Cooldown: CooldownLong},
 	{Status: 404, Cooldown: CooldownLong},
 	{Status: 429, Backoff: true},
+	{Status: 502, Backoff: true},
+	{Status: 503, Backoff: true},
+	{Status: 504, Backoff: true},
 }
 
 // Classification is the outcome of one ClassifyUpstreamError call.

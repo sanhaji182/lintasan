@@ -81,10 +81,21 @@ func TestClassifyTransientTexts(t *testing.T) {
 	}
 }
 
-func TestClassifyNoMatchReturnsZero(t *testing.T) {
-	got := ClassifyUpstreamError("p", 503, "connection reset by peer", 0)
+func TestClassifyNoMatchReturnsDefault(t *testing.T) {
+	// 408 is a request-scoped 4xx: no body rule matches, and the status is
+	// not one of the 4 auth-fault statuses, so the caller keeps its own
+	// default (the ping-pong of "transient but not Scoped" is outside the
+	// classifier's influence — mirrors 9router-go's 4xx-only exception).
+	got := ClassifyUpstreamError("p", 408, "", 0)
 	if got.ShouldFallback {
-		t.Fatalf("503 no-rule: got %+v, want no fallback (caller default)", got)
+		t.Fatalf("408 no-rule: got %+v, want no fallback (caller default, like 9router-go)", got)
+	}
+	// 502/503/504 now back off (9router-go registers them as Backoff).
+	for _, st := range []int{502, 503, 504} {
+		got2 := ClassifyUpstreamError("p", st, "", 0)
+		if !got2.ShouldFallback || !got2.Backoff {
+			t.Fatalf("%d got %+v, want backoff (9router-go parity)", st, got2)
+		}
 	}
 }
 
