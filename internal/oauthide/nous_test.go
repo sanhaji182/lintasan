@@ -212,12 +212,20 @@ func TestMintNousAgentKeyMissing(t *testing.T) {
 	}
 }
 
+// TestNousFlowShapeMatchesCatalogClaim is the test that pin الإ Impl status
+// to what's actually implemented. A later port that claims Impl=Ready must
+// update BOTH the catalog AND this test together; that's the single gate
+// that stops auth/refreshOAuthProvider from silently drifting.
+//
+// Structural guards:
+//   - refreshImplementedInNousGo() returns FALSE — nou.refresh stays in
+//     internal/auth/oauth_refresh.go (see the 'case "nous"' branch which
+//     drives the refresh grant from NOUS_CONFIG through the portal's token
+//     endpoint WITHOUT re-minting the agent key). If a future edit moves
+//     the refresh into this package, that branch must be removed and
+//     refreshImplementedInNousGo() flipped to true consciously (the
+//     catalog Impl=Ready claim must flip in the same commit).
 func TestNousFlowShapeMatchesCatalogClaim(t *testing.T) {
-	// The catalog claims nous Impl=Partial with "refresh pending". This test
-	// is the structural proof: requestDeviceCode / pollToken / MintAgentKey
-	// exist, and the refresh path deliberately does NOT. A later port that
-	// adds refresh must also bump the catalog entry Impl to Ready — they are
-	// coupled by naming.
 	if refreshImplementedInNousGo() {
 		t.Fatal("nous.go claims refresh is pending; refresh surface must not appear here yet")
 	}

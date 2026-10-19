@@ -67,6 +67,37 @@ func refreshOAuthProvider(provider, refreshToken string) (*refreshedTokens, time
 			},
 			"",
 		)
+	case "nous":
+		// Nous Research portal device-key refresh. NOUS_CONFIG (oauthide.
+		// DefaultNousConfig) carries the portal's OAuth token endpoint; the
+		// manufacturer-of-record is portal.nousresearch.com, so the refreshed
+		// access token rides the same host and scope as the original grant.
+		// See internal/oauthide/nous.go for the full mint doc-comment — the
+		// refresh grant is just the standard RFC 6749 §6 form exchange, with
+		// the client_id the portal already knows the session under.
+		cfg := oauthide.DefaultNousConfig()
+		tok, exp, err := refreshFormToken(
+			cfg.TokenURL,
+			url.Values{
+				"grant_type":    {"refresh_token"},
+				"refresh_token": {refreshToken},
+				"client_id":     {cfg.ClientID},
+			},
+			"",
+		)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		// The agent key is NOT re-minted on refresh — MintNousAgentKey is a
+		// POST that invoks /api/oauth/agent-key with the *access* token, and
+		// the Hermes-CLI semantics is that a refresh grant returns the SAME
+		// agent key the caller already stored in the session's flow_meta.
+		// Re-minting here would silently rotate the Hermes agent key, which
+		// breaks the user's running CLI until they re-init it. (If we ever
+		// need rotation, it goes in a separate conscious change; the
+		// oauthide catalog doc-comment is the single source of truth for
+		// what the refresh grants vs re-mints.)
+		return tok, exp, nil
 	default:
 		return nil, time.Time{}, fmt.Errorf("refresh not implemented for provider %s", provider)
 	}
