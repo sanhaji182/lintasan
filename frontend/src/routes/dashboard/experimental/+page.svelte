@@ -242,9 +242,6 @@
 
 <svelte:head><title>CLI Coding Agents — Lintasan</title></svelte:head>
 
-<TabNav tabs={__tabs} />
-
-
 <div style="animation: fadeInUp 0.4s ease-out;">
   <!-- Header with gradient accent -->
   <div class="section-header">

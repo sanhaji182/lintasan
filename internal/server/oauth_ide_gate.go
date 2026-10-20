@@ -79,6 +79,11 @@ func (p *ProxyHandler) oauthIdeEnabled() bool {
 }
 
 func (s *Server) oauthPublicBaseURL() string {
+	if s.db != nil {
+		if v, err := s.db.GetSetting("oauth_public_base_url"); err == nil && strings.TrimSpace(v) != "" {
+			return strings.TrimRight(strings.TrimSpace(v), "/")
+		}
+	}
 	if s.cfg != nil && s.cfg.OAuthPublicBaseURL != "" {
 		return s.cfg.OAuthPublicBaseURL
 	}

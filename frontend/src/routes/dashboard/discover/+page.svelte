@@ -2,16 +2,15 @@
   import TabNav from '$lib/components/TabNav.svelte';
   const __tabs = [
     { label: 'Accounts', path: '/dashboard/connections' },
-    { label: 'Discover', path: '/dashboard/discover' },
-    { label: 'OAuth Providers', path: '/dashboard/oauth-ide' },
-    { label: 'CLI Agents', path: '/dashboard/experimental' }
+    { label: 'Discover Free', path: '/dashboard/discover' },
+    { label: 'OAuth Providers', path: '/dashboard/oauth-ide' }
   ];
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
-  import { Search, Globe, Zap, Clock, Shield, Check, Plus, AlertCircle } from 'lucide-svelte/icons';
+  import { Search, Globe, Zap, Clock, Shield, Check, Plus, AlertCircle, X } from 'lucide-svelte/icons';
 
   interface FreeProvider {
     name: string;
@@ -28,6 +27,9 @@
   let error = $state('');
   let connecting = $state<string | null>(null);
   let connected = $state<Set<string>>(new Set());
+  let apiKeyModal = $state<FreeProvider | null>(null);
+  let apiKeyInput = $state('');
+  let keyInputEl = $state<HTMLInputElement | null>(null);
 
   async function loadProviders() {
     loading = true;
@@ -43,17 +45,29 @@
 
   onMount(loadProviders);
 
-  async function connectProvider(provider: FreeProvider) {
+  function handleConnectClick(provider: FreeProvider) {
+    if (provider.auth_type === 'none') {
+      connectProvider(provider, '');
+    } else {
+      apiKeyModal = provider;
+      apiKeyInput = '';
+      setTimeout(() => keyInputEl?.focus(), 30);
+    }
+  }
+
+  async function connectProvider(provider: FreeProvider, key: string) {
     connecting = provider.name;
     try {
       await api.post('/api/connections', {
         name: provider.name,
         provider: provider.prefix.replace('/', ''),
         base_url: provider.base_url,
-        api_key: '',
+        api_key: key,
         models: provider.models,
       });
       connected = new Set([...connected, provider.name]);
+      apiKeyModal = null;
+      showToast(`Connected ${provider.name}`, 'success');
     } catch (e: any) {
       showToast(e.message || 'Failed to connect provider', 'error');
     } finally { connecting = null; }
@@ -140,7 +154,7 @@
           <!-- Connect button -->
           <button
             class="btn-primary w-full flex items-center justify-center gap-2"
-            onclick={() => connectProvider(provider)}
+            onclick={() => handleConnectClick(provider)}
             disabled={isConnected || connecting === provider.name}
             style="opacity: {isConnected ? 0.5 : 1};"
           >
@@ -148,12 +162,54 @@
               <Spinner /> Connecting...
             {:else if isConnected}
               <Check size={16} /> Connected
+            {:else if provider.auth_type === 'apikey'}
+              <Plus size={16} /> Connect with API Key
             {:else}
               <Plus size={16} /> Connect Provider
             {/if}
           </button>
         </div>
       {/each}
+    </div>
+  {/if}
+
+  {#if apiKeyModal}
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      data-testid="api-key-backdrop"
+      onclick={(e) => { if (e.target === e.currentTarget) apiKeyModal = null; }}
+    >
+      <div
+        role="dialog"
+        aria-label="API key required"
+        tabindex="-1"
+        class="card w-full max-w-md p-6 bg-[var(--color-bg-card)] border border-[var(--color-border)] shadow-xl rounded-xl"
+        onkeydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); apiKeyModal = null; } }}
+      >
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-base font-semibold text-[var(--color-fg-0)] m-0">Connect {apiKeyModal.name}</h3>
+          <button class="btn-ghost p-1" onclick={() => apiKeyModal = null}><X size={16} /></button>
+        </div>
+        <p class="text-xs text-[var(--color-fg-2)] mb-3">
+          This provider requires an API key. Enter your key below:
+        </p>
+        <form onsubmit={(e) => { e.preventDefault(); if (apiKeyModal) connectProvider(apiKeyModal, apiKeyInput); }}>
+          <input
+            bind:this={keyInputEl}
+            type="password"
+            class="input-field w-full mb-4"
+            placeholder="sk-…"
+            bind:value={apiKeyInput}
+            required
+          />
+          <div class="flex justify-end gap-2">
+            <button type="button" class="btn-secondary" onclick={() => apiKeyModal = null}>Cancel</button>
+            <button type="submit" class="btn-primary" disabled={!apiKeyInput.trim()}>
+              Save &amp; Connect
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   {/if}
 </div>

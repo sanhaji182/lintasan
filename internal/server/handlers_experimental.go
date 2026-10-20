@@ -85,7 +85,7 @@ func (s *Server) handleExpProviderList(w http.ResponseWriter, r *http.Request) {
 			State:         "proposed",
 			RiskBadge:     "experimental",
 			AuthEnvVar:    d.AuthEnvVar,
-			CredentialSet: credStatus.Configured,
+			CredentialSet: d.AuthMode == expprovider.AuthNone || credStatus.Configured,
 			Capabilities:  capNames(d),
 		}
 		// Serialize descriptor (without secrets)
@@ -161,7 +161,7 @@ func (s *Server) handleExpProviderDetail(w http.ResponseWriter, r *http.Request)
 		RiskBadge:       "experimental",
 		AuthEnvVar:      desc.AuthEnvVar,
 		AuthMethodID:    desc.AuthMethodID,
-		CredentialSet:   detailCredStatus.Configured,
+		CredentialSet:   desc.AuthMode == expprovider.AuthNone || detailCredStatus.Configured,
 		Capabilities:    capNames(*desc),
 		DefaultPath:     desc.DefaultPath,
 		Args:            desc.Args,
@@ -206,7 +206,7 @@ func (s *Server) handleExpProviderAdmit(w http.ResponseWriter, r *http.Request) 
 	// Check credential availability (dashboard > env)
 	credStore := s.credStore()
 	credStatus := credStore.GetStatus(r.Context(), desc.Name, desc.AuthEnvVar)
-	if !credStatus.Configured {
+	if desc.AuthMode != expprovider.AuthNone && !credStatus.Configured {
 		writeJSONStatus(w, http.StatusPreconditionFailed, map[string]any{
 			"error":    "credential not available",
 			"env_var":  desc.AuthEnvVar,

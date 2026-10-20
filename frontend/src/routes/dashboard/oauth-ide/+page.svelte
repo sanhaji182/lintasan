@@ -2,9 +2,8 @@
   import TabNav from '$lib/components/TabNav.svelte';
   const __tabs = [
     { label: 'Accounts', path: '/dashboard/connections' },
-    { label: 'Discover', path: '/dashboard/discover' },
-    { label: 'OAuth Providers', path: '/dashboard/oauth-ide' },
-    { label: 'CLI Agents', path: '/dashboard/experimental' }
+    { label: 'Discover Free', path: '/dashboard/discover' },
+    { label: 'OAuth Providers', path: '/dashboard/oauth-ide' }
   ];
   import { onDestroy, onMount } from 'svelte';
   import { api } from '$lib/api';
