@@ -3,8 +3,8 @@
   const __tabs = [
     { label: 'Accounts', path: '/dashboard/connections' },
     { label: 'Discover', path: '/dashboard/discover' },
-    { label: 'OAuth IDE', path: '/dashboard/oauth-ide', lab: true },
-    { label: 'Experimental', path: '/dashboard/experimental', lab: true }
+    { label: 'OAuth Providers', path: '/dashboard/oauth-ide' },
+    { label: 'CLI Agents', path: '/dashboard/experimental' }
   ];
   import { onDestroy, onMount } from 'svelte';
   import { api } from '$lib/api';
@@ -111,8 +111,23 @@
 
   function implLabel(impl: string) {
     if (impl === 'ready') return { label: 'Ready', color: '#22c55e', bg: 'rgba(34,197,94,0.12)' };
-    if (impl === 'import_only') return { label: 'Import', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)' };
-    return { label: impl, color: 'var(--color-fg-3)', bg: 'var(--color-bg-hover)' };
+    if (impl === 'import_only') return { label: 'Import', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)' };
+    return { label: 'Coming Soon', color: 'var(--color-fg-3)', bg: 'var(--color-bg-hover)' };
+  }
+
+  function formatFlow(flow: string) {
+    switch (flow) {
+      case 'authorization_code_pkce': return 'PKCE';
+      case 'authorization_code': return 'Browser OAuth';
+      case 'device_code': return 'Device Code';
+      case 'import_token':
+      case 'import_state_vscdb': return 'Token Import';
+      case 'custom_device': return 'Device Auth';
+      case 'local_app_callback': return 'App Login';
+      case 'cli_poll': return 'CLI Poll';
+      case 'rsa_key_exchange': return 'RSA Keypair';
+      default: return 'OAuth';
+    }
   }
 
   async function refreshAccounts() {
@@ -399,7 +414,7 @@
   onDestroy(stopAutoPoll);
 </script>
 
-<svelte:head><title>OAuth IDE (Experimental) — Lintasan</title></svelte:head>
+<svelte:head><title>OAuth Providers — Lintasan</title></svelte:head>
 
 <TabNav tabs={__tabs} />
 
@@ -407,11 +422,11 @@
 <div class="oauth-page">
   <div class="section-header">
     <div class="header-icon">
-      <FlaskConical size={22} />
+      <KeyRound size={22} />
     </div>
     <div class="header-text">
-      <h1 class="header-title">OAuth IDE <span class="exp-pill">Experimental</span></h1>
-      <p class="header-desc">9router-parity BYO subscription routing — lab only, admin-gated</p>
+      <h1 class="header-title">OAuth Providers</h1>
+      <p class="header-desc">Connect Claude Code, Codex, Antigravity, GitHub, Nous, and xAI with one click</p>
     </div>
     <button class="btn-icon" onclick={load} disabled={loading} title="Refresh">
       <RefreshCw size={18} class={loading ? 'spin' : ''} />
@@ -449,16 +464,8 @@
   {/if}
 
   {#if loading}
-    <div class="loading-state"><Spinner /><p>Loading OAuth IDE…</p></div>
+    <div class="loading-state"><Spinner /><p>Loading OAuth Providers…</p></div>
   {:else}
-    <section class="card warn-card">
-      <ShieldAlert size={20} />
-      <div>
-        <strong>ToS &amp; risk</strong>
-        <pre class="disclaimer">{status?.disclaimer ?? 'Upstream providers may prohibit third-party OAuth routing.'}</pre>
-      </div>
-    </section>
-
     {#if catalog.length > 0}
       <h2 class="section-title">Provider catalog</h2>
       <p class="section-sub muted">{status?.source}</p>
@@ -490,7 +497,7 @@
             <p class="tagline">{brand.tagline}</p>
             <div class="meta-row">
               <code class="id-chip">{p.id}</code>
-              <span class="flow-chip">{p.flow}</span>
+              <span class="flow-chip">{formatFlow(p.flow)}</span>
               {#if sess}
                 <span class="live-chip"><span class="live-dot"></span> {providerSummary?.active ?? 0} active</span>
               {/if}

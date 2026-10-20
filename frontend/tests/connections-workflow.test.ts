@@ -78,7 +78,7 @@ describe('Connections compact workflow', () => {
     await fireEvent.click(add);
     const menu = await screen.findByRole('menu');
     expect(add.getAttribute('aria-expanded')).toBe('true');
-    expect(within(menu).getAllByRole('menuitem')).toHaveLength(4);
+    expect(within(menu).getAllByRole('menuitem')).toHaveLength(3);
     await waitFor(() => expect(document.activeElement).toBe(within(menu).getByRole('menuitem', { name: /Provider API/i })));
     await fireEvent.keyDown(menu, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();

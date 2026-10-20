@@ -3,8 +3,8 @@
   const __tabs = [
     { label: 'Accounts', path: '/dashboard/connections' },
     { label: 'Discover', path: '/dashboard/discover' },
-    { label: 'OAuth IDE', path: '/dashboard/oauth-ide', lab: true },
-    { label: 'Experimental', path: '/dashboard/experimental', lab: true }
+    { label: 'OAuth Providers', path: '/dashboard/oauth-ide' },
+    { label: 'CLI Agents', path: '/dashboard/experimental' }
   ];
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
@@ -109,6 +109,22 @@
       icon: 'copilot',
       features: ['Inline', 'Chat', 'Workspace'],
     },
+    'devin-cli': {
+      color: '#6366F1', bg: 'rgba(99,102,241,0.08)',
+      gradient: 'linear-gradient(135deg, #6366f1 0%, #4f46e5 100%)',
+      border: 'rgba(99,102,241,0.18)',
+      company: 'Cognition', tagline: 'Autonomous AI software engineer',
+      icon: 'terminal',
+      features: ['Autonomous', 'Shell', 'Coding'],
+    },
+    'devin-cli-summarizer': {
+      color: '#8b5cf6', bg: 'rgba(139,92,246,0.08)',
+      gradient: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
+      border: 'rgba(139,92,246,0.18)',
+      company: 'Cognition', tagline: 'Devin text-only coding assistant',
+      icon: 'terminal',
+      features: ['Text-only', 'Safe', 'Fast'],
+    },
   };
 
   function getBrand(name: string) {
@@ -121,12 +137,14 @@
     };
   }
 
-  function stateConfig(state: string) {
+  function stateConfig(state: string, credSet: boolean) {
     switch (state) {
       case 'active': return { label: 'Active', color: '#22c55e', bg: 'rgba(34,197,94,0.12)', icon: 'check' };
-      case 'admitted': return { label: 'Ready', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', icon: 'shield' };
-      case 'deprecated': return { label: 'Deprecated', color: '#9ca3af', bg: 'rgba(156,163,175,0.12)', icon: 'x' };
-      default: return { label: 'Setup', color: '#f59e0b', bg: 'rgba(245,158,11,0.12)', icon: 'alert' };
+      case 'admitted': return { label: 'Connected', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', icon: 'check' };
+      case 'deprecated': return { label: 'Inactive', color: '#9ca3af', bg: 'rgba(156,163,175,0.12)', icon: 'x' };
+      default:
+        if (credSet) return { label: 'Ready', color: '#3b82f6', bg: 'rgba(59,130,246,0.12)', icon: 'check' };
+        return { label: 'Available', color: '#64748b', bg: 'rgba(100,116,139,0.1)', icon: 'terminal' };
     }
   }
 
@@ -222,7 +240,7 @@
   }
 </script>
 
-<svelte:head><title>Experimental Providers — Lintasan</title></svelte:head>
+<svelte:head><title>CLI Coding Agents — Lintasan</title></svelte:head>
 
 <TabNav tabs={__tabs} />
 
@@ -231,21 +249,21 @@
   <!-- Header with gradient accent -->
   <div class="section-header">
     <div class="header-icon">
-      <FlaskConical size={22} />
+      <Terminal size={22} />
     </div>
     <div class="header-text">
-      <h1 class="header-title">Experimental Providers</h1>
-      <p class="header-desc">ACP-based coding agents — securely connect and manage provider accounts</p>
+      <h1 class="header-title">CLI Coding Agents</h1>
+      <p class="header-desc">Connect and run Codex, Claude Code, Gemini CLI, Copilot, and Devin as local agents</p>
     </div>
   </div>
 
   <!-- Stats Strip -->
   <div class="stats-strip">
     {#each [
-      { label: 'PROVIDERS', value: summary.total, color: 'var(--color-fg-0)', icon: Cpu },
+      { label: 'AGENTS', value: summary.total, color: 'var(--color-fg-0)', icon: Cpu },
       { label: 'ACTIVE', value: summary.active, color: '#22c55e', icon: CircleCheck },
-      { label: 'READY', value: summary.admitted, color: '#3b82f6', icon: Shield },
-      { label: 'SETUP', value: summary.proposed, color: '#f59e0b', icon: TriangleAlert },
+      { label: 'CONNECTED', value: summary.admitted, color: '#3b82f6', icon: Shield },
+      { label: 'STANDBY', value: summary.proposed, color: '#64748b', icon: Terminal },
     ] as stat}
       <div class="stat-cell">
         <stat.icon size={18} style="color: {stat.color}; opacity: 0.5;" />
@@ -275,7 +293,7 @@
     <div class="provider-grid">
       {#each providers as p (p.name)}
         {@const brand = getBrand(p.name)}
-        {@const sc = stateConfig(p.state)}
+        {@const sc = stateConfig(p.state, p.credential_set)}
         {@const cred = credentials[p.name]}
         {@const isOpen = expanded === p.name}
         {@const det = details[p.name]}
@@ -308,7 +326,7 @@
             <div class="state-pill" style="background: {sc.bg}; color: {sc.color}; border: 1px solid {sc.color}30;">
               {#if sc.icon === 'check'}<CircleCheck size={13} />
               {:else if sc.icon === 'shield'}<Shield size={13} />
-              {:else if sc.icon === 'alert'}<TriangleAlert size={13} />
+              {:else if sc.icon === 'terminal'}<Terminal size={13} />
               {:else}<X size={13} />{/if}
               {sc.label}
             </div>
@@ -411,30 +429,27 @@
                 disabled={actionLoading === p.name + ':admit' || !p.credential_set}
                 onclick={() => admit(p.name)}
               >
-                {actionLoading === p.name + ':admit' ? 'Admitting...' : 'Admit Provider'}
+                {actionLoading === p.name + ':admit' ? 'Connecting...' : 'Connect Agent'}
                 <ArrowRight size={15} />
               </button>
               {#if !p.credential_set}
-                <div class="hint-warn">
-                  <TriangleAlert size={13} />
-                  <span>Credential required</span>
-                </div>
+                <span class="muted small" style="font-size: 11px; margin-left: 8px;">Configure credential above</span>
               {/if}
             {:else if p.state === 'admitted'}
               <button class="btn-primary accent-green" disabled={actionLoading === p.name + ':activate'} onclick={() => activate(p.name)}>
-                {actionLoading === p.name + ':activate' ? 'Activating...' : 'Activate'}
+                {actionLoading === p.name + ':activate' ? 'Enabling...' : 'Enable Agent'}
                 <Zap size={15} />
               </button>
               <button class="btn-secondary" disabled={actionLoading === p.name + ':deactivate'} onclick={() => deactivate(p.name)}>
-                Deactivate
+                Disconnect
               </button>
             {:else if p.state === 'active'}
               <div class="live-badge">
                 <span class="live-dot"></span>
-                <span>Live in routing</span>
+                <span>Active</span>
               </div>
               <button class="btn-secondary" disabled={actionLoading === p.name + ':deactivate'} onclick={() => deactivate(p.name)}>
-                Deactivate
+                Disconnect
               </button>
             {/if}
 
