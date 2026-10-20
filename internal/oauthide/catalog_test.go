@@ -47,16 +47,13 @@ func TestNewProvidersStayPlanned(t *testing.T) {
 	}
 }
 
-// The single ImplPartial exception: nous — device code request + poll are
-// ported in nous.go, refresh is not. A partial flow is allowed to start (the
-// dashboard shows its progress state) but must never auto-refresh.
-func TestNousIsPartialNotReady(t *testing.T) {
+func TestNousIsReady(t *testing.T) {
 	p := ByID("nous")
-	if p == nil || p.Impl != ImplPartial {
-		t.Fatalf("nous Impl = %+v, want partial", p)
+	if p == nil || p.Impl != ImplReady {
+		t.Fatalf("nous Impl = %+v, want ready", p)
 	}
 	if !CanStartAuthorize("nous") {
-		t.Fatal("nous should be authorized (partial is actionable)")
+		t.Fatal("nous should be authorized")
 	}
 }
 

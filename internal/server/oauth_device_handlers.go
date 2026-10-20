@@ -104,6 +104,23 @@ func startOAuthAuthorizeFull(s *Server, provider, sessionID, publicBase string) 
 			return nil, err
 		}
 		return &AuthorizeResult{Flow: "device_code", Device: dev}, nil
+	case "nous":
+		dev, err := oauthide.StartNousDevice()
+		if err != nil {
+			return nil, err
+		}
+		uiMeta, _ := json.Marshal(map[string]any{
+			"user_code":                 dev.UserCode,
+			"verification_uri":          dev.VerificationURI,
+			"verification_uri_complete": dev.VerificationURIComplete,
+			"expires_in":                dev.ExpiresIn,
+			"interval":                  dev.Interval,
+			"provider":                  "nous",
+		})
+		if err := s.oauthMgr.SetSessionDevice(sessionID, dev.DeviceCode, string(uiMeta)); err != nil {
+			return nil, err
+		}
+		return &AuthorizeResult{Flow: "device_code", Device: dev}, nil
 	default:
 		return nil, fmt.Errorf("provider %s not implemented yet (flow=%s). Catalog lists all 8; port in progress.", provider, meta.Flow)
 	}
@@ -131,7 +148,7 @@ func (s *Server) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"status": "active", "provider": sess.Provider})
 		return
 	}
-	if (sess.Provider != "github" && sess.Provider != "kilocode") || sess.DeviceCode == "" {
+	if (sess.Provider != "github" && sess.Provider != "kilocode" && sess.Provider != "nous") || sess.DeviceCode == "" {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "not a pending device session"})
 		return
 	}
@@ -141,6 +158,8 @@ func (s *Server) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) {
 		res, err = oauthide.PollGitHubDeviceOnce(sess.DeviceCode)
 	case "kilocode":
 		res, err = oauthide.PollKilocodeOnce(sess.DeviceCode)
+	case "nous":
+		res, err = oauthide.PollNousDeviceOnce(sess.DeviceCode)
 	default:
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "unsupported device provider"})
 		return
@@ -159,6 +178,8 @@ func (s *Server) handleOAuthDevicePoll(w http.ResponseWriter, r *http.Request) {
 			hint = "complete GitHub device login"
 		} else if sess.Provider == "kilocode" {
 			hint = "complete Kilo Code authorization in browser"
+		} else if sess.Provider == "nous" {
+			hint = "complete Nous Research authorization in browser"
 		}
 		writeJSON(w, map[string]any{"status": "pending", "hint": hint})
 		return

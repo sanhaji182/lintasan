@@ -17,11 +17,11 @@ func (s *Server) handleOAuthStatus(w http.ResponseWriter, r *http.Request) {
 		"catalog":      catalog,
 		"disclaimer":   auth.IdeOAuthDisclaimer,
 		"proxy_wired":  false,
-		"source":       "9router OAUTH_PROVIDERS v0.4.71 (Go rewrite)",
+		"source":       "9router OAUTH_PROVIDERS v0.5.104 (Go rewrite)",
 	}
 	if enabled {
 		out["public_base"] = s.oauthPublicBaseURL()
-		out["hint"] = "ready: xai, claude, codex, antigravity, cline (browser); github, kilocode (device + poll); cursor (import)."
+		out["hint"] = "ready: xai, claude, codex, antigravity, cline (browser); github, kilocode, nous (device + poll); cursor (import)."
 		out["xai_redirect_uri"] = oauthide.XAILoopbackRedirect
 		out["xai_note"] = "xAI redirect is fixed loopback only. Authorize always opens xAI. If callback hits this server on :56121, login completes automatically; otherwise paste the callback URL in the dashboard."
 	}

@@ -85,3 +85,26 @@ func TestResolveUpstreamCredential_GitHubCopilotMeta(t *testing.T) {
 		t.Fatalf("cred=%v err=%v", cred, err)
 	}
 }
+
+func TestResolveUpstreamCredential_NousAgentKeyMeta(t *testing.T) {
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	m := NewOAuthManager(database)
+	meta := `{"agent_key":"nk-hermes-agent-key-secret"}`
+	exp := time.Now().Add(2 * time.Hour).Format(time.RFC3339)
+	_, err = m.db.Conn().Exec(
+		`INSERT INTO oauth_sessions (id, provider, access_token, refresh_token, expires_at, status, created_at, flow_meta)
+		 VALUES ('s1', 'nous', 'oauth_access_tok', 'oauth_refresh_tok', ?, 'active', datetime('now'), ?)`,
+		exp, meta,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cred, err := m.ResolveUpstreamCredentialFull("nous", true)
+	if err != nil || cred == nil || cred.Token != "nk-hermes-agent-key-secret" {
+		t.Fatalf("cred=%v err=%v, want agent_key", cred, err)
+	}
+}

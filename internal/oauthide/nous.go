@@ -168,6 +168,58 @@ func PollNousToken(cfg NousConfig, deviceCode string) NousPollDecision {
 	return dec
 }
 
+// StartNousDevice requests a Nous portal device code.
+func StartNousDevice() (*DeviceStart, error) {
+	cfg := DefaultNousConfig()
+	dc, err := RequestNousDeviceCode(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &DeviceStart{
+		DeviceCode:              dc.DeviceCode,
+		UserCode:                dc.UserCode,
+		VerificationURI:         dc.VerificationURI,
+		VerificationURIComplete: dc.VerificationURIComplete,
+		ExpiresIn:               dc.ExpiresIn,
+		Interval:                dc.Interval,
+	}, nil
+}
+
+// PollNousDeviceOnce polls the token endpoint once and, on approval, mints the agent key.
+func PollNousDeviceOnce(deviceCode string) (*DevicePollResult, error) {
+	cfg := DefaultNousConfig()
+	dec := PollNousToken(cfg, deviceCode)
+	if dec.Pending {
+		return &DevicePollResult{Pending: true}, nil
+	}
+	if dec.SlowDown {
+		return &DevicePollResult{Pending: true, Error: "slow_down"}, nil
+	}
+	if dec.HardError {
+		return &DevicePollResult{Error: dec.Error}, nil
+	}
+	if !dec.OK {
+		return &DevicePollResult{Pending: true}, nil
+	}
+
+	apiKey, keyID, expiresAt, err := MintNousAgentKey(cfg, dec.Access)
+	meta := map[string]any{}
+	if err == nil {
+		meta["agent_key"] = apiKey
+		meta["agent_key_id"] = keyID
+		meta["agent_key_expires_at"] = expiresAt
+	}
+	metaJSON, _ := json.Marshal(meta)
+
+	return &DevicePollResult{
+		Done:         true,
+		AccessToken:  dec.Access,
+		RefreshToken: dec.Refresh,
+		ExpiresIn:    dec.ExpiresIn,
+		FlowMeta:     string(metaJSON),
+	}, nil
+}
+
 // MintNousAgentKey performs POST /api/oauth/agent-key with the minted access
 // token and returns the long-lived agent key plus its metadata (api_key /
 // key_id / expires_at) — mirroring the 9router executor's refreshNousToken

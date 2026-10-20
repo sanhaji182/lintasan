@@ -84,6 +84,7 @@ func (m *OAuthManager) ResolveUpstreamCredentialFull(provider string, oauthIdeEn
 
 // credentialForSession maps a session to the bearer/header hints the upstream
 // expects. GitHub carries the short-lived copilot token inside flow_meta.
+// Nous carries the minted agent_key inside flow_meta.
 func credentialForSession(sess *OAuthSession) *UpstreamCredential {
 	if sess == nil {
 		return nil
@@ -92,6 +93,11 @@ func credentialForSession(sess *OAuthSession) *UpstreamCredential {
 	if sess.Provider == "github" {
 		if t := copilotTokenFromFlowMeta(sess.FlowMeta); t != "" {
 			token = t
+		}
+	}
+	if sess.Provider == "nous" {
+		if k := nousAgentKeyFromFlowMeta(sess.FlowMeta); k != "" {
+			token = k
 		}
 	}
 	return &UpstreamCredential{
@@ -145,10 +151,24 @@ func (m *OAuthManager) refreshOAuthSession(sess *OAuthSession) error {
 		return fmt.Errorf("refresh returned empty access token for %s", sess.Provider)
 	}
 	_, err = m.db.Conn().Exec(
-		`UPDATE oauth_sessions SET access_token = ?, refresh_token = CASE WHEN ? != '' THEN ? ELSE refresh_token END, expires_at = ?, status = ? WHERE id = ?`,
-		tok.Access, tok.Refresh, tok.Refresh, expiresAt.Format(time.RFC3339), SessionStatusActive, sess.ID,
+		`UPDATE oauth_sessions SET access_token = ?, refresh_token = CASE WHEN ? != '' THEN ? ELSE refresh_token END, expires_at = ?, status = ?, flow_meta = CASE WHEN ? != '' THEN ? ELSE flow_meta END WHERE id = ?`,
+		tok.Access, tok.Refresh, tok.Refresh, expiresAt.Format(time.RFC3339), SessionStatusActive, tok.FlowMeta, tok.FlowMeta, sess.ID,
 	)
 	return err
+}
+
+func nousAgentKeyFromFlowMeta(flowMetaJSON string) string {
+	if flowMetaJSON == "" {
+		return ""
+	}
+	var meta map[string]any
+	if json.Unmarshal([]byte(flowMetaJSON), &meta) != nil {
+		return ""
+	}
+	if k, _ := meta["agent_key"].(string); k != "" {
+		return strings.TrimSpace(k)
+	}
+	return ""
 }
 
 func (m *OAuthManager) getLatestActiveSession(provider string) (*OAuthSession, error) {

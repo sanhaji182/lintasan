@@ -14,8 +14,9 @@ import (
 )
 
 type refreshedTokens struct {
-	Access  string
-	Refresh string
+	Access   string
+	Refresh  string
+	FlowMeta string
 }
 
 func refreshOAuthProvider(provider, refreshToken string) (*refreshedTokens, time.Time, error) {
@@ -108,18 +109,74 @@ func refreshOAuthProvider(provider, refreshToken string) (*refreshedTokens, time
 		if mintErr != nil {
 			return nil, time.Time{}, fmt.Errorf("nous agent-key re-mint: %w", mintErr)
 		}
-		// The refreshedTokens struct only carries the Access/Refresh pair —
-		// the Hermes agent key rides the session's flow_meta. The caller
-		// (oauth_mgr.refreshOAuthSession) is responsible for the persist
-		// update; for a keyed session, the flow_meta record carries
-		// agentKey / agentKeyId / agentKeyExpiresAt.
-		_ = apiKey
-		_ = keyID
-		_ = expiresAt
+		meta := map[string]any{
+			"agent_key":            apiKey,
+			"agent_key_id":         keyID,
+			"agent_key_expires_at": expiresAt,
+		}
+		metaJSON, _ := json.Marshal(meta)
+		tok.FlowMeta = string(metaJSON)
 		return tok, exp, nil
+	case "cline":
+		return refreshClineToken(refreshToken)
 	default:
 		return nil, time.Time{}, fmt.Errorf("refresh not implemented for provider %s", provider)
 	}
+}
+
+func refreshClineToken(refreshToken string) (*refreshedTokens, time.Time, error) {
+	payload := map[string]string{
+		"refreshToken": refreshToken,
+		"grantType":    "refresh_token",
+		"clientType":   "extension",
+	}
+	b, _ := json.Marshal(payload)
+	req, err := http.NewRequest(http.MethodPost, "https://api.cline.bot/api/v1/auth/refresh", strings.NewReader(string(b)))
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, time.Time{}, fmt.Errorf("cline refresh HTTP %d: %s", resp.StatusCode, truncateOAuthErr(string(body)))
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, time.Time{}, err
+	}
+	dataObj := raw
+	if d, ok := raw["data"].(map[string]any); ok && d != nil {
+		dataObj = d
+	}
+	access, _ := dataObj["accessToken"].(string)
+	if access == "" {
+		access, _ = dataObj["access_token"].(string)
+	}
+	if access == "" {
+		return nil, time.Time{}, fmt.Errorf("cline refresh response missing accessToken")
+	}
+	refresh, _ := dataObj["refreshToken"].(string)
+	if refresh == "" {
+		refresh, _ = dataObj["refresh_token"].(string)
+	}
+	if refresh == "" {
+		refresh = refreshToken
+	}
+	expires := time.Now().Add(24 * time.Hour)
+	if expStr, ok := dataObj["expiresAt"].(string); ok && expStr != "" {
+		if t, err := time.Parse(time.RFC3339, expStr); err == nil {
+			expires = t
+		}
+	} else if v, ok := dataObj["expiresIn"].(float64); ok && v > 0 {
+		expires = time.Now().Add(time.Duration(int(v)) * time.Second)
+	}
+	return &refreshedTokens{Access: access, Refresh: refresh}, expires, nil
 }
 
 func refreshFormToken(tokenURL string, form url.Values, basicAuth string) (*refreshedTokens, time.Time, error) {
