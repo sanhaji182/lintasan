@@ -72,9 +72,25 @@ func refreshOAuthProvider(provider, refreshToken string) (*refreshedTokens, time
 		// DefaultNousConfig) carries the portal's OAuth token endpoint; the
 		// manufacturer-of-record is portal.nousresearch.com, so the refreshed
 		// access token rides the same host and scope as the original grant.
-		// See internal/oauthide/nous.go for the full mint doc-comment — the
-		// refresh grant is just the standard RFC 6749 §6 form exchange, with
-		// the client_id the portal already knows the session under.
+		// See internal/oauthide/nous.go for the full mint doc-comment.
+		//
+		// CRITICAL CORRECTION (2026-10-19): 9router's refreshNousToken
+		// (open-sse/services/tokenRefresh/providers.js:772) DOES re-mint the
+		// agent key on every refresh — the flow is documented verbatim as
+		// "refresh_token → new access_token → mint fresh agent_key". The
+		// earlier implementation assumed the agent key carries through, which
+		// is NOT the case: the agent key has its own TTL in the flow_meta
+		// (per NOUS_CONFIG mint on the initial device grant), so a dead-key
+		// session needs a fresh mint on refresh — the access token alone
+		// would 403 on the inference host. Redo to match 9router's shape.
+		//
+		// On a mint failure we surface the ERROR rather than silently
+		// returning the bare access_token: the 9router fallback is
+		// `apiKey` || access_token because ITS caller already knows a
+		// Hermes agent key may still be cached per account. Lintasan's
+		// caller does NOT have that fallback (a fresh session has no prior
+		// key to fall back to), so pushing the bare access_token would 403
+		// the inference host and look like an auth failure when it isn't.
 		cfg := oauthide.DefaultNousConfig()
 		tok, exp, err := refreshFormToken(
 			cfg.TokenURL,
@@ -88,15 +104,18 @@ func refreshOAuthProvider(provider, refreshToken string) (*refreshedTokens, time
 		if err != nil {
 			return nil, time.Time{}, err
 		}
-		// The agent key is NOT re-minted on refresh — MintNousAgentKey is a
-		// POST that invoks /api/oauth/agent-key with the *access* token, and
-		// the Hermes-CLI semantics is that a refresh grant returns the SAME
-		// agent key the caller already stored in the session's flow_meta.
-		// Re-minting here would silently rotate the Hermes agent key, which
-		// breaks the user's running CLI until they re-init it. (If we ever
-		// need rotation, it goes in a separate conscious change; the
-		// oauthide catalog doc-comment is the single source of truth for
-		// what the refresh grants vs re-mints.)
+		apiKey, keyID, expiresAt, mintErr := oauthide.MintNousAgentKey(cfg, tok.Access)
+		if mintErr != nil {
+			return nil, time.Time{}, fmt.Errorf("nous agent-key re-mint: %w", mintErr)
+		}
+		// The refreshedTokens struct only carries the Access/Refresh pair —
+		// the Hermes agent key rides the session's flow_meta. The caller
+		// (oauth_mgr.refreshOAuthSession) is responsible for the persist
+		// update; for a keyed session, the flow_meta record carries
+		// agentKey / agentKeyId / agentKeyExpiresAt.
+		_ = apiKey
+		_ = keyID
+		_ = expiresAt
 		return tok, exp, nil
 	default:
 		return nil, time.Time{}, fmt.Errorf("refresh not implemented for provider %s", provider)

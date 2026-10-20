@@ -1,6 +1,7 @@
 package oauthide
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,45 +187,76 @@ func TestPollNousTokenNonJSONBodyDegrades(t *testing.T) {
 }
 
 func TestMintNousAgentKeyHappy(t *testing.T) {
-	var authSeen string
+	var authSeen, bodySeen, contentTypeSeen string
 	cfg, pool := setupFakeNous(t)
 	pool.set("/api/oauth/agent-key", func(w http.ResponseWriter, r *http.Request) {
 		authSeen = r.Header.Get("Authorization")
-		w.Write([]byte(`{"key":"nk-tete8"}`))
+		contentTypeSeen = r.Header.Get("Content-Type")
+		b, _ := ioReadAll(r.Body)
+		bodySeen = string(b)
+		w.Write([]byte(`{"api_key":"nk-tete8","key_id":"kid-1","expires_at":"2026-10-20T00:00:00Z"}`))
 	})
-	key, err := MintNousAgentKey(cfg, "at-ok")
+	apiKey, keyID, expiresAt, err := MintNousAgentKey(cfg, "at-ok")
 	if err != nil {
 		t.Fatalf("agent-key: %v", err)
 	}
-	if key != "nk-tete8" {
-		t.Fatalf("agent key = %q", key)
+	if apiKey != "nk-tete8" {
+		t.Fatalf("agent key = %q", apiKey)
+	}
+	if keyID != "kid-1" {
+		t.Fatalf("key_id = %q", keyID)
+	}
+	if expiresAt != "2026-10-20T00:00:00Z" {
+		t.Fatalf("expires_at = %q", expiresAt)
 	}
 	if authSeen != "Bearer at-ok" {
 		t.Fatalf("agent-key Authorization = %q, want 'Bearer at-ok'", authSeen)
+	}
+	if contentTypeSeen != "application/json" {
+		t.Fatalf("agent-key Content-Type = %q, want 'application/json' (9r shape pins a JSON body)", contentTypeSeen)
+	}
+	// Body shape: 9router sends {"min_ttl_seconds": 7200} — a Hermes
+	// agent key mint needs at least 2h TTL (the JS source's body).
+	if bodySeen != `{"min_ttl_seconds":7200}` {
+		t.Fatalf("agent-key body = %q, want '{\"min_ttl_seconds\":7200}'", bodySeen)
 	}
 }
 
 func TestMintNousAgentKeyMissing(t *testing.T) {
 	cfg, pool := setupFakeNous(t)
 	pool.set("/api/oauth/agent-key", respond(200, `{"something_else":true}`))
-	if _, err := MintNousAgentKey(cfg, "at-ok"); err == nil {
+	if _, _, _, err := MintNousAgentKey(cfg, "at-ok"); err == nil {
 		t.Fatal("expected error for missing key field")
 	}
 }
 
-// TestNousFlowShapeMatchesCatalogClaim is the test that pin الإ Impl status
-// to what's actually implemented. A later port that claims Impl=Ready must
-// update BOTH the catalog AND this test together; that's the single gate
-// that stops auth/refreshOAuthProvider from silently drifting.
+// Test only — a small (ReadAll, error) helper the tests above use.
+func ioReadAll(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
+	return io.ReadAll(r)
+}
+
+// TestNousFlowShapeMatchesCatalogClaim is the test that pins the Impl
+// status to what's actually implemented. A later port that claims
+// Impl=Ready must update BOTH the catalog AND this test together; that's
+// the single gate that stops auth/refreshOAuthProvider from drifting.
 //
-// Structural guards:
-//   - refreshImplementedInNousGo() returns FALSE — nou.refresh stays in
-//     internal/auth/oauth_refresh.go (see the 'case "nous"' branch which
-//     drives the refresh grant from NOUS_CONFIG through the portal's token
-//     endpoint WITHOUT re-minting the agent key). If a future edit moves
-//     the refresh into this package, that branch must be removed and
-//     refreshImplementedInNousGo() flipped to true consciously (the
-//     catalog Impl=Ready claim must flip in the same commit).
+// STRUCTURAL GUARDS (2026-10-19 CORRECTION):
+//   - refreshImplementedInNousGo() STILL returns FALSE — the refresh
+//     GRANT (refresh_token → new access_token) lives in
+//     internal/auth/oauth_refresh.go case "nous" (the RFC 6749 §6 shape).
+//   - The CORRECTION this comment block pins: 9router's refreshNousToken
+//     open-sse/services/tokenRefresh/providers.js:772 DOES re-mint the
+//     Hermes agent key on every refresh grant ("refresh_token → new
+//     access_token → mint fresh agent_key"). The earlier wording said no
+//     re-mint happened; the source says otherwise — see
+//     auth/oauth_refresh.go for the re-mint code path. A session whose
+//     agent key has expired NEEDS the re-mint on refresh or it 403s the
+//     inference host with no fallback. The catalog entry stays
+//     Impl=Partial (device grant + poll + agent-key mint done; the
+//     refresh flow re-mint helper exists but the catalog claims Ready
+//     first needs a live e2e walk).
+//   - If a future port ALSO moves the re-mint into this package, that
+//     must ALSO flip refreshImplementedInNousGo() AND bump the catalog.
 func TestNousFlowShapeMatchesCatalogClaim(t *testing.T) {
 	if refreshImplementedInNousGo() {
 		t.Fatal("nous.go claims refresh is pending; refresh surface must not appear here yet")

@@ -169,35 +169,59 @@ func PollNousToken(cfg NousConfig, deviceCode string) NousPollDecision {
 }
 
 // MintNousAgentKey performs POST /api/oauth/agent-key with the minted access
-// token and returns the long-lived agent key. This is the Hermes-compatible
-// credential: storage per 9router is `sessionKey` + the access token, the
-// agent key being what actually authenticates inference calls.
-func MintNousAgentKey(cfg NousConfig, accessToken string) (string, error) {
-	req, err := http.NewRequest(http.MethodPost, cfg.AgentKeyURL, nil)
+// token and returns the long-lived agent key plus its metadata (api_key /
+// key_id / expires_at) — mirroring the 9router executor's refreshNousToken
+// agent-key body exactly.
+//
+// SRCE NOTE (2026-10-19, correction): 9router's
+// open-sse/services/tokenRefresh/providers.js refreshNousToken DOES re-mint
+// an agent key on every refresh grant — the flow is "refresh → new access
+// token → mint fresh agent_key" (the JS comment says so). The earlier
+// implementation skipped re-minting in the false belief that the agent key
+// carries through; it does NOT (the flow is documented as minting a fresh
+// key on each refresh). This function is the shared mint helper for both
+// paths (post-device-code initial mint, and post-refresh re-mint). It
+// returns (apiKey, keyID, expiresAt) — the caller drives what it stores.
+func MintNousAgentKey(cfg NousConfig, accessToken string) (string, string, string, error) {
+	req, err := http.NewRequest(http.MethodPost, cfg.AgentKeyURL, strings.NewReader(`{"min_ttl_seconds":7200}`))
 	if err != nil {
-		return "", err
+		return "", "", "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("nous agent-key request: %w", err)
+		return "", "", "", fmt.Errorf("nous agent-key request: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("nous agent-key HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", "", "", fmt.Errorf("nous agent-key HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return "", fmt.Errorf("nous agent-key decode: %w", err)
+		return "", "", "", fmt.Errorf("nous agent-key decode: %w", err)
 	}
-	// 9router reads `key`; tolerate `agent_key` too because the field name is
-	// not formally documented in a public spec.
-	for _, field := range []string{"key", "agent_key"} {
-		if s, ok := raw[field].(string); ok && strings.TrimSpace(s) != "" {
-			return s, nil
+	// 9router response shape: `api_key` (the Hermes agent key itself),
+	// `key_id`, `expires_at`. The executor tolerates `key` too because the
+	// field names were not formally documented in a public spec, but the
+	// canonical 9r-shape is api_key/key_id/expires_at.
+	apiKey := coalesceStrings(raw, "api_key", "key", "agent_key")
+	keyID := coalesceStrings(raw, "key_id")
+	expiresAt := coalesceStrings(raw, "expires_at")
+	if apiKey == "" {
+		return "", "", "", fmt.Errorf("nous agent-key: response missing api_key field")
+	}
+	return apiKey, keyID, expiresAt, nil
+}
+
+// coalesceStrings returns the first non-empty string field from raw.
+func coalesceStrings(m map[string]any, fields ...string) string {
+	for _, f := range fields {
+		if v, ok := m[f].(string); ok && strings.TrimSpace(v) != "" {
+			return v
 		}
 	}
-	return "", fmt.Errorf("nous agent-key: response missing key field")
+	return ""
 }
