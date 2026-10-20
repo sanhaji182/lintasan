@@ -25,6 +25,7 @@ func (s *Server) registerOAuthRoutes() {
 	s.mux.HandleFunc("GET /api/oauth/ide-presets", s.handleOAuthIdePresets)
 	s.mux.HandleFunc("POST /api/oauth/provision-connection", s.handleOAuthProvisionConnection)
 	s.mux.HandleFunc("POST /api/oauth/xai/complete", s.handleOAuthXaiComplete)
+	s.mux.HandleFunc("POST /api/oauth/antigravity/complete", s.handleOAuthAntigravityComplete)
 	s.registerOAuthCursorRoutes()
 }
 
@@ -121,6 +122,10 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 			out["xai_manual_complete"] = true
 			out["xai_redirect_uri"] = oauthide.XAILoopbackRedirect
 		}
+		if input.Provider == "antigravity" {
+			out["antigravity_manual_complete"] = true
+			out["antigravity_redirect_uri"] = oauthide.AntigravityRedirectURI()
+		}
 	} else {
 		out["device"] = result.Device
 		msg := "Enter user_code at provider site, then click Poll until active."
@@ -167,6 +172,39 @@ func (s *Server) handleOAuthXaiComplete(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, map[string]any{"status": "active", "provider": "xai"})
 }
 
+// POST /api/oauth/antigravity/complete — finish Antigravity login with pasted callback URL (browser on another machine).
+func (s *Server) handleOAuthAntigravityComplete(w http.ResponseWriter, r *http.Request) {
+	if !s.oauthIdeEnabled() {
+		oauthIdeDisabledJSON(w)
+		return
+	}
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	var input struct {
+		CallbackURL    string `json:"callback_url"`
+		CallbackURLAlt string `json:"callbackUrl"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	raw := strings.TrimSpace(input.CallbackURL)
+	if raw == "" {
+		raw = strings.TrimSpace(input.CallbackURLAlt)
+	}
+	code, state, err := parseAntigravityCallbackInput(raw)
+	if err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := completeAntigravityOAuthCode(s, code, state); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"status": "active", "provider": "antigravity"})
+}
+
 // GET /api/oauth/callback/{provider} — public callback; validates state + exchanges code when configured.
 func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	if !s.oauthIdeEnabled() {
@@ -202,6 +240,8 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	redirectURI := s.oauthPublicBaseURL() + "/api/oauth/callback/" + provider
 	if provider == "xai" {
 		redirectURI = oauthide.XAILoopbackRedirect
+	} else if provider == "antigravity" {
+		redirectURI = oauthide.AntigravityRedirectURI()
 	}
 	access, refresh, expIn, flowMeta, exchErr := exchangeOAuthCallback(provider, code, redirectURI, pending.PKCEVerifier, state)
 	if exchErr != nil {

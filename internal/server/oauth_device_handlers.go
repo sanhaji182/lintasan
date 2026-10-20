@@ -56,15 +56,20 @@ func startOAuthAuthorizeFull(s *Server, provider, sessionID, publicBase string) 
 		}
 		return &AuthorizeResult{Flow: "browser_redirect", RedirectURL: url}, nil
 	case "antigravity":
-		redirect := publicBase + "/api/oauth/callback/antigravity"
+		redirect := oauthide.AntigravityRedirectURI()
 		authorizeURL, err := oauthide.BuildAntigravityAuthorizeURL(redirect, sessionID)
 		if err != nil {
 			return nil, err
 		}
-		return &AuthorizeResult{
+		loopbackOK, loopWarn := tryStartAntigravityLoopbackProxy(s, sessionID)
+		res := &AuthorizeResult{
 			Flow:        "browser_redirect",
 			RedirectURL: authorizeURL,
-		}, nil
+		}
+		if !loopbackOK && loopWarn != "" {
+			res.XaiLoopbackWarn = loopWarn
+		}
+		return res, nil
 	case "cline":
 		redirect := publicBase + "/api/oauth/callback/cline"
 		return &AuthorizeResult{

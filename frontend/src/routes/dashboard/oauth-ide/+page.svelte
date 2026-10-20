@@ -76,6 +76,8 @@
   let xaiLoopbackWarn = $state('');
   let xaiCallbackPaste = $state('');
   let showXaiComplete = $state(false);
+  let antigravityCallbackPaste = $state('');
+  let showAntigravityComplete = $state(false);
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let pollDeadline = 0;
   let pollInFlight = false;
@@ -233,6 +235,7 @@
     lastRedirect = '';
     xaiLoopbackWarn = '';
     showXaiComplete = false;
+    showAntigravityComplete = false;
     try {
       const res = await api.post<any>('/api/oauth/authorize', {
         provider,
@@ -253,13 +256,16 @@
         if (provider === 'xai') {
           showXaiComplete = !!res.xai_manual_complete;
         }
+        if (provider === 'antigravity') {
+          showAntigravityComplete = !!res.antigravity_manual_complete;
+        }
         navigatePopup(authPopup, lastRedirect);
         pollDeadline = Date.now() + 5 * 60 * 1000;
         const generation = flowGeneration;
         schedulePoll(() => pollBrowserAccount(provider, generation), 2, generation);
       }
       if (xaiLoopbackWarn) {
-        showToast('xAI login URL opened — see warning below', 'info');
+        showToast(provider === 'antigravity' ? 'Antigravity login URL opened — see note below' : 'xAI login URL opened — see warning below', 'info');
       } else {
         showToast('OAuth flow started', 'info');
       }
@@ -335,6 +341,22 @@
       showToast('xAI session active', 'success');
       xaiCallbackPaste = '';
       showXaiComplete = false;
+      await load();
+    } catch (e: any) {
+      error = e?.message || 'Complete failed';
+    } finally {
+      actionLoading = '';
+    }
+  }
+
+  async function completeAntigravityLogin() {
+    actionLoading = 'antigravity-complete';
+    error = '';
+    try {
+      await api.post('/api/oauth/antigravity/complete', { callback_url: antigravityCallbackPaste });
+      showToast('Antigravity session active', 'success');
+      antigravityCallbackPaste = '';
+      showAntigravityComplete = false;
       await load();
     } catch (e: any) {
       error = e?.message || 'Complete failed';
@@ -614,6 +636,29 @@
               onclick={completeXaiLogin}
             >
               {actionLoading === 'xai-complete' ? 'Completing…' : 'Complete xAI login'}
+            </button>
+          </div>
+        {/if}
+
+        {#if showAntigravityComplete}
+          <div class="device-box">
+            <p><strong>Google Antigravity — complete login</strong></p>
+            <p class="muted small">
+              After signing in with Google, paste the authorization code (starting with <code>4/0A...</code>) OR the full address bar URL (<code>http://127.0.0.1:51121/callback?code=...&state=...</code>).
+            </p>
+            <textarea
+              class="import-ta"
+              placeholder="http://127.0.0.1:51121/callback?code=...&state=... or code (4/0A...)"
+              bind:value={antigravityCallbackPaste}
+              rows="2"
+            ></textarea>
+            <button
+              type="button"
+              class="btn-primary"
+              disabled={!antigravityCallbackPaste.trim() || actionLoading === 'antigravity-complete'}
+              onclick={completeAntigravityLogin}
+            >
+              {actionLoading === 'antigravity-complete' ? 'Completing…' : 'Complete Antigravity login'}
             </button>
           </div>
         {/if}

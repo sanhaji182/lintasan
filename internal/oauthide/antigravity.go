@@ -13,7 +13,7 @@ import (
 )
 
 // Antigravity Google OAuth (9router ANTIGRAVITY_CONFIG shape).
-// Client credentials are NOT shipped in source — set env from your own Google OAuth app or lab copy of 9router constants.
+// Client credentials are read from environment (LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_ID and SECRET).
 const (
 	AntigravityAuthorizeURL       = "https://accounts.google.com/o/oauth2/v2/auth"
 	AntigravityTokenURL           = "https://oauth2.googleapis.com/token"
@@ -23,6 +23,10 @@ const (
 	AntigravityLoadUserAgent      = "google-api-nodejs-client/9.15.1"
 	AntigravityLoadAPIClient      = "google-cloud-sdk vscode_cloudshelleditor/0.1"
 	AntigravityLoadClientMetadata = `{"ideType":9,"platform":3,"pluginType":2}`
+
+	AntigravityLoopbackPort     = 51121
+	AntigravityLoopbackPath     = "/callback"
+	AntigravityLoopbackRedirect = "http://127.0.0.1:51121/callback"
 )
 
 func antigravityClientID() string {
@@ -31,9 +35,19 @@ func antigravityClientID() string {
 
 func antigravityClientSecret() string {
 	if v := os.Getenv("LINTASAN_OAUTH_IDE_ANTIGRAVITY_CLIENT_SECRET"); v != "" {
-		return v
+		return strings.TrimSpace(v)
 	}
 	return strings.TrimSpace(os.Getenv("LINTASAN_OAUTH_IDE_ANTIGRAVITY_SECRET"))
+}
+
+// AntigravityRedirectURI returns the redirect URI for Antigravity OAuth.
+// Defaults to AntigravityLoopbackRedirect (required by the public Google client).
+// Can be overridden with LINTASAN_OAUTH_IDE_ANTIGRAVITY_REDIRECT_URI if a custom client is configured.
+func AntigravityRedirectURI() string {
+	if v := strings.TrimSpace(os.Getenv("LINTASAN_OAUTH_IDE_ANTIGRAVITY_REDIRECT_URI")); v != "" {
+		return v
+	}
+	return AntigravityLoopbackRedirect
 }
 
 var ErrAntigravityClientNotConfigured = errors.New("antigravity OAuth client is not configured")
