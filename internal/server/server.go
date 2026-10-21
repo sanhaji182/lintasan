@@ -307,6 +307,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/analytics", s.handleAnalytics)
 	s.mux.HandleFunc("GET /api/telemetry", s.handleTelemetry)
 	s.mux.HandleFunc("GET /api/usage", s.handleUsage)
+	s.mux.HandleFunc("GET /api/usage/{connection_id}", s.handleConnectionUsage)
+	s.mux.HandleFunc("GET /api/quota/providers", s.handleQuotaProviders)
 	s.mux.HandleFunc("GET /api/backup", s.handleBackup)
 	s.mux.HandleFunc("POST /api/backup", s.handleBackupAction)
 	s.mux.HandleFunc("GET /api/fallback", s.handleFallback)

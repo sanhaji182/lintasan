@@ -2357,6 +2357,9 @@
                           <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
                             <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; syncModels(conn.id); }}><RefreshCw size={13} /> Sync Models</button>
                             <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}><Cpu size={13} /> View Models</button>
+                            {#if conn.oauth_provider === 'antigravity' || conn.format === 'qoder'}
+                              <a class="conn-dropdown-item" href="/dashboard/usage" onclick={() => { openMenuConnId = null; }}><Layers size={13} /> View Quota & Limits</a>
+                            {/if}
                             {#if !conn.pool_id}
                               <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={13} /> Edit Pool</button>
                             {/if}
