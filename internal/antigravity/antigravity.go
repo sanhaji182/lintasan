@@ -12,8 +12,10 @@ import (
 const (
 	// AntigravityIDEVersion is the official Antigravity IDE Desktop fingerprint.
 	AntigravityIDEVersion = "2.22.0"
-	// AntigravityIDEBaseURL is the daily-cloudcode-pa endpoint used by official Antigravity IDE.
+	// AntigravityIDEBaseURL is the daily-cloudcode-pa endpoint used by official Antigravity IDE for chat generation.
 	AntigravityIDEBaseURL = "https://daily-cloudcode-pa.googleapis.com"
+	// AntigravityLoadCodeAssistURL is the production Anycast endpoint used for onboarding and connection testing.
+	AntigravityLoadCodeAssistURL = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
 	// AntigravityIDEUserAgent is the exact user agent expected by Google Cloud Code for Antigravity.
 	AntigravityIDEUserAgent = "antigravity/ide/2.22.0 darwin/arm64"
 )

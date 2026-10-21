@@ -488,7 +488,7 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request) {
 		strings.EqualFold(formatFromDB, "antigravity") ||
 		strings.Contains(strings.ToLower(base), "cloudcode-pa.googleapis.com") {
 		loadReqBody := `{"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`
-		loadReq, loadErr := http.NewRequest("POST", antigravity.AntigravityIDEBaseURL+"/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
+		loadReq, loadErr := http.NewRequest("POST", antigravity.AntigravityLoadCodeAssistURL, strings.NewReader(loadReqBody))
 		if loadErr == nil {
 			loadReq.Header.Set("Authorization", "Bearer "+key)
 			loadReq.Header.Set("Content-Type", "application/json")
@@ -793,44 +793,14 @@ func (s *Server) testAntigravityModelOnce(conn *Connection, modelID, token strin
 
 	client := &http.Client{Timeout: 25 * time.Second}
 
-	// 1. Probe loadCodeAssist to verify token validity
-	loadReqBody := `{"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`
-	loadReq, err := http.NewRequest("POST", antigravity.AntigravityIDEBaseURL+"/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
-	if err != nil {
-		return map[string]any{"success": false, "status": "upstream_error", "message": err.Error()}
-	}
-	loadReq.Header.Set("Authorization", "Bearer "+token)
-	loadReq.Header.Set("Content-Type", "application/json")
-	loadReq.Header.Set("User-Agent", antigravity.AntigravityIDEUserAgent)
-
-	loadResp, err := client.Do(loadReq)
-	if err != nil {
-		latency := time.Since(start).Milliseconds()
-		return map[string]any{"success": false, "status": "network_error", "latency_ms": latency, "message": err.Error()}
-	}
-	defer loadResp.Body.Close()
-
-	loadBody, _ := io.ReadAll(loadResp.Body)
-	if loadResp.StatusCode == 401 || loadResp.StatusCode == 403 {
-		latency := time.Since(start).Milliseconds()
-		return map[string]any{
-			"success":     false,
-			"status":      "auth_error",
-			"http_status": loadResp.StatusCode,
-			"latency_ms":  latency,
-			"message":     "Antigravity token expired or unauthorized (re-authorize via OAuth IDE)",
-			"body":        truncateBody(loadBody, 400),
-		}
-	}
-
-	// Use random project ID matching 9router (never use rate-limited 'aicode-consumers')
+	// Use dynamic project ID matching 9router (never use rate-limited 'aicode-consumers')
 	projectID := antigravity.GenerateProjectID()
 
-	// 2. Perform chat probe via v1internal:generateContent to daily-cloudcode-pa.googleapis.com
+	// Perform chat probe via v1internal:generateContent to daily-cloudcode-pa.googleapis.com
 	wireModel := antigravity.ResolveUpstreamModel(modelID)
 	genURL := antigravity.AntigravityIDEBaseURL + "/v1internal:generateContent"
 	reqID := antigravity.BuildIdeRequestID(wireModel, "agent")
-	genBody := fmt.Sprintf(`{"project":%q,"model":%q,"userAgent":"antigravity","requestId":%q,"request":{"contents":[{"role":"user","parts":[{"text":"ping"}]}]}}`,
+	genBody := fmt.Sprintf(`{"project":%q,"model":%q,"userAgent":"antigravity","requestId":%q,"request":{"contents":[{"role":"user","parts":[{"text":"ping"}]}],"generationConfig":{"maxOutputTokens":1}}}`,
 		projectID, wireModel, reqID)
 
 	genReq, err := http.NewRequest("POST", genURL, strings.NewReader(genBody))
@@ -841,8 +811,9 @@ func (s *Server) testAntigravityModelOnce(conn *Connection, modelID, token strin
 	genReq.Header.Set("Content-Type", "application/json")
 	genReq.Header.Set("User-Agent", antigravity.AntigravityIDEUserAgent)
 
+	probeStart := time.Now()
 	genResp, err := client.Do(genReq)
-	latency := time.Since(start).Milliseconds()
+	latency := time.Since(probeStart).Milliseconds()
 	if err != nil {
 		return map[string]any{"success": false, "status": "network_error", "latency_ms": latency, "message": err.Error()}
 	}
@@ -850,6 +821,17 @@ func (s *Server) testAntigravityModelOnce(conn *Connection, modelID, token strin
 
 	respBytes, _ := io.ReadAll(genResp.Body)
 	bodyStr := truncateBody(respBytes, 400)
+
+	if genResp.StatusCode == 401 || genResp.StatusCode == 403 {
+		return map[string]any{
+			"success":     false,
+			"status":      "auth_error",
+			"http_status": genResp.StatusCode,
+			"latency_ms":  latency,
+			"message":     "Antigravity token expired or unauthorized (re-authorize via OAuth IDE)",
+			"body":        bodyStr,
+		}
+	}
 
 	if genResp.StatusCode == 200 {
 		return map[string]any{
