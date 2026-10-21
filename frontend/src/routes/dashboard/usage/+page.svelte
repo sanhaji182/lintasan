@@ -24,6 +24,9 @@
   let metricMode = $state<'tokens' | 'requests'>('tokens');
   let providerSearch = $state('');
   let modelSearch = $state('');
+  let quotaSearch = $state('');
+  let quotaFilter = $state<'all' | 'antigravity' | 'commandcode' | 'qoder' | 'other'>('all');
+  let refreshingAllQuota = $state(false);
 
   const COLORS = ['#3c50e0', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#14b8a6', '#6366f1'];
 
@@ -69,6 +72,16 @@
     };
   }
 
+  function getProviderBadge(prov?: string) {
+    const p = (prov || '').toLowerCase();
+    if (p.includes('antigravity')) return { label: 'AG', bg: '#2563eb', color: '#fff' };
+    if (p.includes('commandcode')) return { label: 'CC', bg: '#0d9488', color: '#fff' };
+    if (p.includes('qoder')) return { label: 'QD', bg: '#7c3aed', color: '#fff' };
+    if (p.includes('openrouter')) return { label: 'OR', bg: '#ea580c', color: '#fff' };
+    if (p.includes('deepseek')) return { label: 'DS', bg: '#0284c7', color: '#fff' };
+    return { label: p ? p.slice(0, 2).toUpperCase() : 'AI', bg: 'var(--color-primary)', color: '#fff' };
+  }
+
   async function refreshSingleQuota(connId: string) {
     refreshingConnId = connId;
     try {
@@ -86,6 +99,40 @@
     }
     refreshingConnId = null;
   }
+
+  async function refreshAllQuotas() {
+    refreshingAllQuota = true;
+    try {
+      const res = await api.get<any>('/api/quota/providers?refresh=1');
+      if (res?.providers) {
+        quotaProviders = res.providers;
+      }
+    } catch (e: any) {
+      console.error('Failed to refresh all quotas:', e);
+    }
+    refreshingAllQuota = false;
+  }
+
+  const filteredQuotaProviders = $derived(
+    (quotaProviders || []).filter((p: any) => {
+      const prov = (p.provider || '').toLowerCase();
+      const name = (p.name || '').toLowerCase();
+      const q = quotaSearch.toLowerCase().trim();
+
+      if (quotaFilter !== 'all') {
+        if (quotaFilter === 'other') {
+          if (['antigravity', 'commandcode', 'qoder'].includes(prov)) return false;
+        } else if (prov !== quotaFilter) {
+          return false;
+        }
+      }
+
+      if (q) {
+        return prov.includes(q) || name.includes(q) || (p.connection_id || '').toLowerCase().includes(q);
+      }
+      return true;
+    })
+  );
 
   async function loadUsage() {
     loading = true;
@@ -278,7 +325,7 @@
     <!-- Live Provider Quota & Limits (9Router Parity) -->
     {#if quotaProviders?.length}
       <div class="card mb-5" style="padding: 20px 22px;">
-        <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div class="flex items-center gap-2.5">
             <div style="width: 32px; height: 32px; border-radius: 9px; background: rgba(59, 130, 246, 0.12); display: grid; place-items: center; color: var(--color-primary);">
               <Layers size={17} />
@@ -288,95 +335,179 @@
                 <h3 style="font-size: 15px; font-weight: 700; color: var(--color-fg-0); margin: 0;">Live Provider Quota & Limits</h3>
                 <span style="font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 12px; background: rgba(16, 185, 129, 0.12); color: var(--color-success); border: 1px solid rgba(16, 185, 129, 0.25);">LIVE UPSTREAM</span>
               </div>
-              <p style="font-size: 12px; color: var(--color-fg-3); margin: 2px 0 0 0;">Real-time rolling and weekly quotas fetched directly from upstream accounts.</p>
+              <p style="font-size: 12px; color: var(--color-fg-3); margin: 2px 0 0 0;">Real-time rolling and weekly quotas fetched directly from upstream accounts ({quotaProviders.length} connected).</p>
             </div>
+          </div>
+
+          <div class="flex items-center gap-2 flex-wrap">
+            <div style="position: relative;">
+              <input
+                type="text"
+                placeholder="Filter account or ID..."
+                bind:value={quotaSearch}
+                style="padding: 5px 10px 5px 28px; font-size: 11px; border-radius: 6px; border: 1px solid var(--color-border); background: var(--color-bg-card); color: var(--color-fg-0); width: 170px;"
+              />
+              <Search size={12} style="position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--color-fg-3); pointer-events: none;" />
+            </div>
+
+            <button
+              class="btn-secondary flex items-center gap-1.5"
+              style="padding: 5px 12px; font-size: 11px; font-weight: 500;"
+              onclick={refreshAllQuotas}
+              disabled={refreshingAllQuota}
+              title="Force refresh all provider quotas"
+            >
+              <RefreshCw size={12} class={refreshingAllQuota ? 'spinning' : ''} />
+              <span>Refresh All</span>
+            </button>
           </div>
         </div>
 
+        <!-- Filter Tabs -->
+        <div class="flex items-center gap-1.5 mb-4 flex-wrap">
+          <button
+            class="filter-pill"
+            class:active={quotaFilter === 'all'}
+            onclick={() => quotaFilter = 'all'}
+          >
+            All ({quotaProviders.length})
+          </button>
+          <button
+            class="filter-pill"
+            class:active={quotaFilter === 'antigravity'}
+            onclick={() => quotaFilter = 'antigravity'}
+          >
+            Antigravity ({quotaProviders.filter(p => p.provider === 'antigravity').length})
+          </button>
+          <button
+            class="filter-pill"
+            class:active={quotaFilter === 'commandcode'}
+            onclick={() => quotaFilter = 'commandcode'}
+          >
+            Command Code ({quotaProviders.filter(p => p.provider === 'commandcode').length})
+          </button>
+          <button
+            class="filter-pill"
+            class:active={quotaFilter === 'qoder'}
+            onclick={() => quotaFilter = 'qoder'}
+          >
+            Qoder ({quotaProviders.filter(p => p.provider === 'qoder').length})
+          </button>
+          {#if quotaProviders.some(p => !['antigravity', 'commandcode', 'qoder'].includes(p.provider))}
+            <button
+              class="filter-pill"
+              class:active={quotaFilter === 'other'}
+              onclick={() => quotaFilter = 'other'}
+            >
+              Other ({quotaProviders.filter(p => !['antigravity', 'commandcode', 'qoder'].includes(p.provider)).length})
+            </button>
+          {/if}
+        </div>
+
         <div style="display: flex; flex-direction: column; gap: 16px;">
-          {#each quotaProviders as provider}
-            <div class="quota-account-card">
-              <div class="quota-account-header">
-                <div class="flex items-center gap-2.5">
-                  <span class="provider-avatar">{provider.provider ? provider.provider[0].toUpperCase() : 'P'}</span>
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <strong style="font-size: 14px; color: var(--color-fg-0);">{provider.name || provider.provider}</strong>
-                      <span class="plan-pill">{provider.plan ? provider.plan.toUpperCase() : 'FREE-TIER'}</span>
-                    </div>
-                    <small style="font-size: 11px; color: var(--color-fg-3);">
-                      ID: {provider.connection_id}
-                      {#if provider.fetched_at}
-                        · Updated: {new Date(provider.fetched_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      {/if}
-                    </small>
-                  </div>
-                </div>
-
-                <button
-                  class="btn-secondary flex items-center gap-1.5"
-                  style="padding: 5px 12px; font-size: 11px; font-weight: 500;"
-                  onclick={() => refreshSingleQuota(provider.connection_id)}
-                  disabled={refreshingConnId === provider.connection_id}
-                  title="Force refresh live quota from upstream"
-                >
-                  <RefreshCw size={12} class={refreshingConnId === provider.connection_id ? 'spinning' : ''} />
-                  <span>Refresh</span>
-                </button>
-              </div>
-
-              {#if provider.error}
-                <div style="padding: 12px 14px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 8px; color: var(--color-error); font-size: 12px; margin-top: 10px;">
-                  ⚠️ {provider.error}
-                </div>
-              {:else if provider.groups?.length}
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                  {#each provider.groups as group}
-                    <div class="quota-group-card">
-                      <div class="flex items-center justify-between mb-2 pb-2" style="border-bottom: 1px solid var(--color-border-light);">
-                        <strong style="font-size: 13px; color: var(--color-fg-0);">{group.name}</strong>
-                        <span style="font-size: 11px; color: var(--color-fg-3);">{group.limits?.length || 0} limits</span>
-                      </div>
-                      {#if group.description}
-                        <p style="font-size: 11px; color: var(--color-fg-3); margin: 0 0 10px 0;">{group.description}</p>
-                      {/if}
-
-                      <div style="display: flex; flex-direction: column; gap: 12px;">
-                        {#each group.limits as limit}
-                          {@const colors = getQuotaColor(limit.remainingPercentage)}
-                          <div class="quota-limit-row">
-                            <div class="flex items-center justify-between text-xs mb-1">
-                              <span style="font-weight: 600; color: var(--color-fg-1);">{limit.displayName}</span>
-                              <span style="font-weight: 700; font-family: var(--font-mono); color: {colors.text}; background: {colors.pill}; padding: 1px 7px; border-radius: 6px; border: 1px solid {colors.border}; font-size: 11px;">
-                                {limit.remainingPercentage.toFixed(2)}%
-                              </span>
-                            </div>
-
-                            <!-- Progress Track -->
-                            <div class="quota-progress-track">
-                              <div
-                                class="quota-progress-fill"
-                                style="width: {Math.max(0, Math.min(100, limit.remainingPercentage))}%; background: {colors.bg};"
-                              ></div>
-                            </div>
-
-                            <div class="flex items-center justify-between text-[11px] mt-1" style="color: var(--color-fg-3);">
-                              <span>{limit.used.toLocaleString()} / {limit.total.toLocaleString()} units</span>
-                              {#if limit.resetAt}
-                                <span class="flex items-center gap-1 font-medium" style="color: var(--color-fg-2);">
-                                  <Clock size={11} /> Reset in {formatCountdown(limit.resetAt)}
-                                </span>
-                              {/if}
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              {/if}
+          {#if filteredQuotaProviders.length === 0}
+            <div style="padding: 24px; text-align: center; color: var(--color-fg-3); font-size: 12px; background: var(--color-bg-card); border-radius: 8px; border: 1px dashed var(--color-border);">
+              No provider accounts match the filter.
             </div>
-          {/each}
+          {:else}
+            {#each filteredQuotaProviders as provider}
+              {@const badge = getProviderBadge(provider.provider)}
+              <div class="quota-account-card">
+                <div class="quota-account-header">
+                  <div class="flex items-center gap-2.5">
+                    <span class="provider-avatar" style="background: {badge.bg}; color: {badge.color};">
+                      {badge.label}
+                    </span>
+                    <div>
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <strong style="font-size: 14px; color: var(--color-fg-0);">{provider.name || provider.provider}</strong>
+                        <span class="plan-pill">{provider.plan ? provider.plan.toUpperCase() : 'STANDARD'}</span>
+                        <span class="badge" style="font-size: 10px; padding: 1px 6px; background: var(--color-border-light); color: var(--color-fg-2); text-transform: uppercase;">
+                          {provider.provider}
+                        </span>
+                      </div>
+                      <small style="font-size: 11px; color: var(--color-fg-3);">
+                        ID: {provider.connection_id}
+                        {#if provider.fetched_at}
+                          · Updated: {new Date(provider.fetched_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                        {/if}
+                      </small>
+                    </div>
+                  </div>
+
+                  <button
+                    class="btn-secondary flex items-center gap-1.5"
+                    style="padding: 5px 12px; font-size: 11px; font-weight: 500;"
+                    onclick={() => refreshSingleQuota(provider.connection_id)}
+                    disabled={refreshingConnId === provider.connection_id}
+                    title="Force refresh live quota from upstream"
+                  >
+                    <RefreshCw size={12} class={refreshingConnId === provider.connection_id ? 'spinning' : ''} />
+                    <span>Refresh</span>
+                  </button>
+                </div>
+
+                {#if provider.error}
+                  <div style="padding: 12px 14px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 8px; color: var(--color-error); font-size: 12px; margin-top: 10px;">
+                    ⚠️ {provider.error}
+                  </div>
+                {:else if provider.groups?.length}
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                    {#each provider.groups as group}
+                      <div class="quota-group-card">
+                        <div class="flex items-center justify-between mb-2 pb-2" style="border-bottom: 1px solid var(--color-border-light);">
+                          <strong style="font-size: 13px; color: var(--color-fg-0);">{group.name}</strong>
+                          <span style="font-size: 11px; color: var(--color-fg-3);">{group.limits?.length || 0} limits</span>
+                        </div>
+                        {#if group.description}
+                          <p style="font-size: 11px; color: var(--color-fg-3); margin: 0 0 10px 0;">{group.description}</p>
+                        {/if}
+
+                        <div style="display: flex; flex-direction: column; gap: 12px;">
+                          {#each group.limits as limit}
+                            {@const colors = getQuotaColor(limit.remainingPercentage ?? 100)}
+                            <div class="quota-limit-row">
+                              <div class="flex items-center justify-between text-xs mb-1">
+                                <span style="font-weight: 600; color: var(--color-fg-1);">{limit.displayName}</span>
+                                <span style="font-weight: 700; font-family: var(--font-mono); color: {colors.text}; background: {colors.pill}; padding: 1px 7px; border-radius: 6px; border: 1px solid {colors.border}; font-size: 11px;">
+                                  {(limit.remainingPercentage ?? 100).toFixed(1)}%
+                                </span>
+                              </div>
+
+                              <!-- Progress Track -->
+                              <div class="quota-progress-track">
+                                <div
+                                  class="quota-progress-fill"
+                                  style="width: {Math.max(0, Math.min(100, limit.remainingPercentage ?? 100))}%; background: {colors.bg};"
+                                ></div>
+                              </div>
+
+                              <div class="flex items-center justify-between text-[11px] mt-1" style="color: var(--color-fg-3);">
+                                <span>
+                                  {#if limit.total > 0}
+                                    {limit.used.toLocaleString()} / {limit.total.toLocaleString()} units
+                                  {:else if limit.description}
+                                    {limit.description}
+                                  {:else}
+                                    Active
+                                  {/if}
+                                </span>
+                                {#if limit.resetAt}
+                                  <span class="flex items-center gap-1 font-medium" style="color: var(--color-fg-2);">
+                                    <Clock size={11} /> {limit.resetAt.includes('T') ? 'Reset in ' + formatCountdown(limit.resetAt) : limit.resetAt}
+                                  </span>
+                                {/if}
+                              </div>
+                            </div>
+                          {/each}
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          {/if}
         </div>
       </div>
     {/if}
@@ -705,5 +836,27 @@
     height: 100%;
     transition: width 0.3s ease, background 0.3s ease;
     border-radius: 4px;
+  }
+  .filter-pill {
+    all: unset;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    color: var(--color-fg-2);
+    transition: all 0.15s ease;
+  }
+  .filter-pill:hover {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+  .filter-pill.active {
+    background: rgba(99, 102, 241, 0.12);
+    border-color: rgba(99, 102, 241, 0.3);
+    color: var(--color-primary);
+    font-weight: 600;
   }
 </style>
