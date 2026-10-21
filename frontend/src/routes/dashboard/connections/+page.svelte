@@ -295,6 +295,11 @@
   }
 
   const KNOWN_PROVIDER_LABELS: Record<string, string> = {
+    'antigravity': 'Google Antigravity',
+    'googleapis': 'Google Antigravity',
+    'copilot': 'GitHub Copilot',
+    'qoder': 'Qoder',
+    'opencode': 'OpenCode Free',
     'xiaomimimo': 'Xiaomi MiMo',
     'mimo': 'Xiaomi MiMo',
     'x': 'xAI',
@@ -365,7 +370,7 @@
   const groupedConnections = $derived.by(() => {
     const groups = new Map<string, { key: string; label: string; connections: any[]; active: number; totalModels: number; baseURL: string; formats: Set<string> }>();
     for (const conn of sortedConnections) {
-      let key = conn.pool_id || extractProvider(conn.base_url || '');
+      let key = conn.oauth_provider || conn.pool_id || extractProvider(conn.base_url || '');
       // Split CommandCode into two groups: official /v1/chat/completions vs
       // the alpha /alpha/generate endpoint (same base URL, different protocol).
       if (key.toLowerCase() === 'commandcode') {
@@ -1414,6 +1419,36 @@
       <span class="stat-pill-val">{summary.pools}</span>
     </div>
   </div>
+
+  <!-- Connected OAuth Sessions Banner -->
+  {#if oauthSessions.some(s => s.status === 'active')}
+    <div class="card mb-4" style="padding: 12px 18px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.03); border-radius: 10px;">
+      <div class="flex items-center justify-between flex-wrap gap-2">
+        <div class="flex items-center gap-2">
+          <Sparkles size={16} style="color: var(--color-primary);" />
+          <strong style="font-size: 13px; color: var(--color-fg-0);">Connected OAuth Sessions</strong>
+          <span class="badge" style="background: rgba(34,197,94,0.12); color: #22c55e; font-size: 11px;">
+            {oauthSessions.filter(s => s.status === 'active').length} Active
+          </span>
+        </div>
+        <a href="/dashboard/oauth-ide" class="flex items-center gap-1" style="font-size: 11px; color: var(--color-primary); font-weight: 600; text-decoration: none;">
+          Manage in OAuth Providers <ChevronRight size={13} />
+        </a>
+      </div>
+      <div class="flex flex-wrap gap-2 mt-2">
+        {#each oauthSessions.filter(s => s.status === 'active') as sess}
+          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; font-size: 12px;">
+            <div style="width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.4);"></div>
+            <strong style="color: var(--color-fg-0); text-transform: capitalize;">{sess.provider}</strong>
+            <span style="color: var(--color-fg-3); font-family: var(--font-mono); font-size: 11px;">
+              {sess.access_token ? sess.access_token.slice(0, 8) + '…' : 'Active'}
+            </span>
+            <span class="badge" style="font-size: 10px; background: rgba(59,130,246,0.1); color: var(--color-primary);">Auto-wired</span>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   <!-- Toolbar: Title + Search + Actions -->
   <div class="conn-toolbar">

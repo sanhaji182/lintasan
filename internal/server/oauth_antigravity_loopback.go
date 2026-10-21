@@ -124,6 +124,7 @@ func completeAntigravityOAuthCode(s *Server, code, state string) error {
 		return fmt.Errorf("failed to store tokens: %v", err)
 	}
 	s.audit("oauth.ide.callback_ok", "antigravity", state, map[string]any{"via": "manual"})
+	_, _ = s.autoProvisionOAuthConnection("antigravity")
 	return nil
 }
 

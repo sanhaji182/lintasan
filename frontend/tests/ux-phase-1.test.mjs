@@ -113,7 +113,7 @@ test('snippets use a newly issued gateway key in every copyable example', () => 
 test('sidebar intent groups preserve every dashboard route and progressive disclosure', () => {
   const expected = [
     '/dashboard', '/dashboard/quickstart', '/dashboard/playground', '/dashboard/connections',
-    '/dashboard/models', '/dashboard/providers', '/dashboard/routing', '/dashboard/analytics', '/dashboard/keys',
+    '/dashboard/models', '/dashboard/providers', '/dashboard/routing', '/dashboard/usage', '/dashboard/analytics', '/dashboard/keys',
     '/dashboard/qoder-connections',
     '/dashboard/teams', '/dashboard/users', '/dashboard/webhooks', '/dashboard/memory',
     '/dashboard/mcp', '/dashboard/translator', '/dashboard/plugins', '/dashboard/backup',

@@ -118,6 +118,7 @@ func completeXAIOAuthCode(s *Server, code, state string) error {
 		return fmt.Errorf("failed to store tokens: %v", err)
 	}
 	s.audit("oauth.ide.callback_ok", "xai", state, map[string]any{"via": "manual"})
+	_, _ = s.autoProvisionOAuthConnection("xai")
 	return nil
 }
 

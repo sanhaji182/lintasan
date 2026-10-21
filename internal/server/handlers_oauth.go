@@ -265,6 +265,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.audit("oauth.ide.callback_ok", provider, state, map[string]any{"provider": provider})
+	_, _ = s.autoProvisionOAuthConnection(provider)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

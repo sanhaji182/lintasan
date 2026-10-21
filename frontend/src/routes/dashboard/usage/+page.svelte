@@ -11,15 +11,19 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { BarChart3, ChartColumn, DollarSign, Database, Server, RefreshCw, AlertCircle } from 'lucide-svelte/icons';
+  import { BarChart3, ChartColumn, DollarSign, Database, Server, RefreshCw, AlertCircle, Search, Activity, Zap, Cpu, Layers } from 'lucide-svelte';
 
   let data = $state<any>(null);
   let quotaData = $state<any[]>([]);
   let loading = $state(true);
   let error = $state('');
   let canvasEl: HTMLCanvasElement = $state()!;
+  let period = $state<'today' | '7d' | '30d' | 'all'>('all');
+  let metricMode = $state<'tokens' | 'requests'>('tokens');
+  let providerSearch = $state('');
+  let modelSearch = $state('');
 
-  const COLORS = ['#3c50e0', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4'];
+  const COLORS = ['#3c50e0', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#14b8a6', '#6366f1'];
 
   async function loadUsage() {
     loading = true;
@@ -39,13 +43,47 @@
 
   onMount(loadUsage);
 
+  const totalTokens = $derived(
+    (data?.providers || []).reduce((s: number, p: any) => s + (p.tokens || 0), 0)
+  );
+  const totalRequests = $derived(
+    (data?.providers || []).reduce((s: number, p: any) => s + (p.requests || 0), 0)
+  );
+
+  const filteredDaily = $derived(() => {
+    if (!data?.daily) return [];
+    const list = [...data.daily].sort((a, b) => a.date.localeCompare(b.date));
+    if (period === 'today') return list.slice(-1);
+    if (period === '7d') return list.slice(-7);
+    if (period === '30d') return list.slice(-30);
+    return list.slice(-14);
+  });
+
+  const filteredProviders = $derived(() => {
+    if (!data?.providers) return [];
+    if (!providerSearch.trim()) return data.providers;
+    const q = providerSearch.toLowerCase();
+    return data.providers.filter((p: any) => (p.provider || p.name || '').toLowerCase().includes(q));
+  });
+
+  const filteredModels = $derived(() => {
+    if (!data?.models) return [];
+    if (!modelSearch.trim()) return data.models;
+    const q = modelSearch.toLowerCase();
+    return data.models.filter((m: any) => (m.model || '').toLowerCase().includes(q));
+  });
+
   $effect(() => {
-    if (data?.daily && canvasEl) drawChart();
+    const list = filteredDaily();
+    if (list.length && canvasEl) drawChart();
   });
 
   function drawChart() {
     const ctx = canvasEl.getContext('2d');
-    if (!ctx || !data?.daily) return;
+    if (!ctx) return;
+    const daily = filteredDaily();
+    if (!daily.length) return;
+
     const dpr = window.devicePixelRatio || 1;
     const w = canvasEl.clientWidth;
     const h = 220;
@@ -55,12 +93,12 @@
     ctx.scale(dpr, dpr);
 
     ctx.clearRect(0, 0, w, h);
-    const daily = data.daily.slice(-14);
-    if (!daily.length) return;
 
-    const maxVal = Math.max(...daily.map((d: any) => d.tokens || 0), 1);
-    const barW = Math.max((w - 40) / daily.length - 6, 12);
-    const padX = 20;
+    const isToken = metricMode === 'tokens';
+    const values = daily.map((d: any) => (isToken ? (d.tokens || 0) : (d.requests || 0)));
+    const maxVal = Math.max(...values, 1);
+    const barW = Math.max((w - 40) / daily.length - 8, 12);
+    const padX = 24;
 
     // Grid lines
     ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--color-border').trim() || '#e2e8f0';
@@ -75,16 +113,17 @@
 
     // Bars
     daily.forEach((d: any, i: number) => {
-      const barH = ((d.tokens || 0) / maxVal) * (h - 50);
-      const x = padX + i * ((w - 2 * padX) / daily.length) + 3;
+      const val = isToken ? (d.tokens || 0) : (d.requests || 0);
+      const barH = (val / maxVal) * (h - 55);
+      const x = padX + i * ((w - 2 * padX) / daily.length) + 4;
       const y = h - 30 - barH;
 
       const grad = ctx.createLinearGradient(x, y, x, h - 30);
-      grad.addColorStop(0, COLORS[0]);
-      grad.addColorStop(1, COLORS[1]);
+      grad.addColorStop(0, isToken ? '#3c50e0' : '#10b981');
+      grad.addColorStop(1, isToken ? '#6366f1' : '#34d399');
       ctx.fillStyle = grad;
       ctx.beginPath();
-      ctx.roundRect(x, y, barW, barH, [3, 3, 0, 0]);
+      ctx.roundRect(x, y, barW, barH, [4, 4, 0, 0]);
       ctx.fill();
 
       // Date label
@@ -97,121 +136,252 @@
   }
 </script>
 
+<svelte:head>
+  <title>Usage & Quota — Lintasan</title>
+</svelte:head>
+
 <TabNav tabs={__tabs} />
 
-
 <div style="animation: fadeInUp 0.4s ease-out;">
-  <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 20px;">Usage</h2>
+  <!-- Header with Period Controls (ala 9router) -->
+  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-5">
+    <div>
+      <h2 style="font-size: 20px; font-weight: 700; color: var(--color-fg-0); margin: 0 0 4px 0;">Usage & Quotas</h2>
+      <p style="font-size: 13px; color: var(--color-fg-2); margin: 0;">Comprehensive breakdown of tokens, request volume, and connected accounts.</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <div style="display: inline-flex; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; background: var(--color-bg-card);">
+        {#each [
+          { key: 'today', label: 'Today' },
+          { key: '7d', label: '7D' },
+          { key: '30d', label: '30D' },
+          { key: 'all', label: 'All' }
+        ] as p}
+          <button
+            class="period-btn"
+            class:active={period === p.key}
+            onclick={() => { period = p.key as any; }}
+          >
+            {p.label}
+          </button>
+        {/each}
+      </div>
+      <button class="btn-secondary flex items-center gap-1.5" onclick={loadUsage} disabled={loading} style="padding: 6px 12px; font-size: 12px;">
+        <RefreshCw size={13} class={loading ? 'spinning' : ''} /> Refresh
+      </button>
+    </div>
+  </div>
 
   {#if loading}
     <Spinner />
   {:else if error}
     <div class="card"><EmptyState icon={AlertCircle} title="Failed to load usage" description={error} action={loadUsage} actionLabel="Retry" /></div>
   {:else if !data}
-    <div class="card"><EmptyState icon={ChartColumn} title="No usage data" /></div>
+    <div class="card"><EmptyState icon={ChartColumn} title="No usage data recorded yet" description="Send requests through the proxy router to see live usage metrics." /></div>
   {:else}
-    <!-- Summary stats -->
-    <div class="card mb-5" style="padding: 0; overflow: hidden;">
-      <div class="grid grid-cols-3" style="gap: 1px; background: var(--color-border);">
-        {#each [
-          { label: 'TOTAL TOKENS', value: (data.providers || []).reduce((s: number, p: any) => s + (p.tokens || 0), 0).toLocaleString() },
-          { label: 'PROVIDERS', value: (data.providers || []).length },
-          { label: 'MODELS', value: (data.models || []).length }
-        ] as stat}
-          <div class="text-center" style="padding: 16px; background: var(--color-bg-card);">
-            <div style="font-size: 11px; font-weight: 500; color: var(--color-fg-3); text-transform: uppercase; letter-spacing: 0.5px;">{stat.label}</div>
-            <div style="font-size: 20px; font-weight: 700; color: var(--color-fg-0); font-family: var(--font-mono);">{stat.value}</div>
-          </div>
-        {/each}
+    <!-- Summary stats cards (4 cards) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+      <div class="metric-card">
+        <div class="metric-icon" style="color: #3c50e0; background: rgba(60,80,224,0.1);"><Activity size={18} /></div>
+        <div class="metric-body">
+          <span class="metric-label">TOTAL REQUESTS</span>
+          <strong class="metric-val">{totalRequests.toLocaleString()}</strong>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon" style="color: #8b5cf6; background: rgba(139,92,246,0.1);"><Zap size={18} /></div>
+        <div class="metric-body">
+          <span class="metric-label">TOTAL TOKENS</span>
+          <strong class="metric-val">{totalTokens.toLocaleString()}</strong>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon" style="color: #10b981; background: rgba(16,185,129,0.1);"><Server size={18} /></div>
+        <div class="metric-body">
+          <span class="metric-label">ACTIVE PROVIDERS</span>
+          <strong class="metric-val">{(data.providers || []).length}</strong>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon" style="color: #f59e0b; background: rgba(245,158,11,0.1);"><Cpu size={18} /></div>
+        <div class="metric-body">
+          <span class="metric-label">MODELS IN USE</span>
+          <strong class="metric-val">{(data.models || []).length}</strong>
+        </div>
       </div>
     </div>
 
-    <!-- Chart -->
-    <div class="card mb-5">
-      <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 16px;">Daily Token Usage</div>
+    <!-- Chart Panel -->
+    <div class="card mb-5" style="padding: 18px 20px;">
+      <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div class="flex items-center gap-2">
+          <BarChart3 size={16} style="color: var(--color-primary);" />
+          <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Daily Usage Trend</h3>
+        </div>
+        <div class="flex items-center gap-2">
+          <div style="display: inline-flex; border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; font-size: 11px;">
+            <button
+              class="metric-toggle-btn"
+              class:active={metricMode === 'tokens'}
+              onclick={() => { metricMode = 'tokens'; }}
+            >
+              Tokens
+            </button>
+            <button
+              class="metric-toggle-btn"
+              class:active={metricMode === 'requests'}
+              onclick={() => { metricMode = 'requests'; }}
+            >
+              Requests
+            </button>
+          </div>
+        </div>
+      </div>
       <canvas bind:this={canvasEl} style="width: 100%;"></canvas>
     </div>
 
-    <!-- Provider breakdown -->
-    {#if data.providers?.length}
-      <div class="card mb-5">
-        <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 16px;">Provider Breakdown</div>
-        <div style="overflow-x: auto;">
-          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+    <!-- Grid: Provider & Model Breakdowns -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
+      <!-- Provider Breakdown Table -->
+      <div class="card" style="padding: 18px 20px;">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div class="flex items-center gap-2">
+            <Server size={15} style="color: var(--color-primary);" />
+            <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Usage by Provider / Account</h3>
+          </div>
+          <div class="relative" style="width: 160px;">
+            <Search size={12} class="absolute" style="left: 7px; top: 50%; transform: translateY(-50%); color: var(--color-fg-3);" />
+            <input
+              class="input-field"
+              placeholder="Filter..."
+              bind:value={providerSearch}
+              style="padding-left: 24px; font-size: 11px; padding-top: 3px; padding-bottom: 3px;"
+            />
+          </div>
+        </div>
+        <div style="overflow-x: auto; max-height: 420px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
             <thead>
-              <tr>
-                {#each ['Provider', 'Requests', 'Tokens'] as h}
-                  <th style="text-align: left; padding: 12px 14px; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-fg-3); border-bottom: 1px solid var(--color-border);">{h}</th>
-                {/each}
+              <tr style="border-bottom: 1px solid var(--color-border);">
+                <th style="text-align: left; padding: 8px 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--color-fg-3);">Provider</th>
+                <th style="text-align: right; padding: 8px 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--color-fg-3);">Reqs</th>
+                <th style="text-align: right; padding: 8px 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--color-fg-3);">Tokens</th>
+                <th style="text-align: right; padding: 8px 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--color-fg-3); width: 70px;">Share</th>
               </tr>
             </thead>
             <tbody>
-              {#each data.providers as p, i}
+              {#each filteredProviders() as p, i}
+                {@const share = totalTokens > 0 ? (p.tokens || 0) / totalTokens * 100 : 0}
                 <tr style="border-bottom: 1px solid var(--color-border-light);">
-                  <td style="padding: 12px 14px;">
-                    <div class="flex items-center gap-2">
-                      <span class="w-2 h-2 rounded-full" style="background: {COLORS[i % COLORS.length]};"></span>
-                      <span style="font-weight: 500; color: var(--color-fg-0);">{p.provider || p.name}</span>
+                  <td style="padding: 9px 10px;">
+                    <div class="flex items-center gap-1.5">
+                      <span class="w-2 h-2 rounded-full flex-shrink-0" style="background: {COLORS[i % COLORS.length]};"></span>
+                      <span style="font-weight: 500; color: var(--color-fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px;" title={p.provider || p.name}>
+                        {p.provider || p.name}
+                      </span>
                     </div>
                   </td>
-                  <td style="padding: 12px 14px; font-family: var(--font-mono); font-size: 12px;">{p.requests?.toLocaleString() || 0}</td>
-                  <td style="padding: 12px 14px; font-family: var(--font-mono); font-size: 12px;">{p.tokens?.toLocaleString() || 0}</td>
+                  <td style="text-align: right; padding: 9px 10px; font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-2);">
+                    {(p.requests || 0).toLocaleString()}
+                  </td>
+                  <td style="text-align: right; padding: 9px 10px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--color-fg-0);">
+                    {(p.tokens || 0).toLocaleString()}
+                  </td>
+                  <td style="text-align: right; padding: 9px 10px;">
+                    <div style="display: flex; align-items: center; justify-content: flex-end; gap: 6px;">
+                      <div style="width: 36px; height: 4px; background: var(--color-border); border-radius: 2px; overflow: hidden;">
+                        <div style="width: {Math.min(100, Math.round(share))}%; height: 100%; background: var(--color-primary); border-radius: 2px;"></div>
+                      </div>
+                      <span style="font-size: 10px; font-family: var(--font-mono); color: var(--color-fg-3); width: 28px; text-align: right;">{share.toFixed(0)}%</span>
+                    </div>
+                  </td>
                 </tr>
               {/each}
             </tbody>
           </table>
         </div>
       </div>
-    {/if}
 
-    <!-- Model breakdown -->
-    {#if data.models?.length}
-      <div class="card mb-5">
-        <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 16px;">Model Breakdown</div>
-        <div style="overflow-x: auto;">
-          <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+      <!-- Model Breakdown Table -->
+      <div class="card" style="padding: 18px 20px;">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div class="flex items-center gap-2">
+            <Cpu size={15} style="color: var(--color-primary);" />
+            <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Usage by Model</h3>
+          </div>
+          <div class="relative" style="width: 160px;">
+            <Search size={12} class="absolute" style="left: 7px; top: 50%; transform: translateY(-50%); color: var(--color-fg-3);" />
+            <input
+              class="input-field"
+              placeholder="Filter..."
+              bind:value={modelSearch}
+              style="padding-left: 24px; font-size: 11px; padding-top: 3px; padding-bottom: 3px;"
+            />
+          </div>
+        </div>
+        <div style="overflow-x: auto; max-height: 420px;">
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
             <thead>
-              <tr>
-                {#each ['Model', 'Requests', 'Tokens'] as h}
-                  <th style="text-align: left; padding: 12px 14px; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-fg-3); border-bottom: 1px solid var(--color-border);">{h}</th>
-                {/each}
+              <tr style="border-bottom: 1px solid var(--color-border);">
+                <th style="text-align: left; padding: 8px 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--color-fg-3);">Model</th>
+                <th style="text-align: right; padding: 8px 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--color-fg-3);">Reqs</th>
+                <th style="text-align: right; padding: 8px 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--color-fg-3);">Tokens</th>
+                <th style="text-align: right; padding: 8px 10px; font-size: 10px; font-weight: 600; text-transform: uppercase; color: var(--color-fg-3); width: 70px;">Share</th>
               </tr>
             </thead>
             <tbody>
-              {#each data.models as m}
+              {#each filteredModels() as m}
+                {@const share = totalTokens > 0 ? (m.tokens || 0) / totalTokens * 100 : 0}
                 <tr style="border-bottom: 1px solid var(--color-border-light);">
-                  <td style="padding: 12px 14px; font-weight: 500; color: var(--color-fg-0); font-size: 12px;">{m.model}</td>
-                  <td style="padding: 12px 14px; font-family: var(--font-mono); font-size: 12px;">{m.requests?.toLocaleString() || 0}</td>
-                  <td style="padding: 12px 14px; font-family: var(--font-mono); font-size: 12px;">{(m.tokens || 0).toLocaleString()}</td>
+                  <td style="padding: 9px 10px; font-weight: 500; color: var(--color-fg-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px;" title={m.model}>
+                    {m.model}
+                  </td>
+                  <td style="text-align: right; padding: 9px 10px; font-family: var(--font-mono); font-size: 11px; color: var(--color-fg-2);">
+                    {(m.requests || 0).toLocaleString()}
+                  </td>
+                  <td style="text-align: right; padding: 9px 10px; font-family: var(--font-mono); font-size: 11px; font-weight: 600; color: var(--color-fg-0);">
+                    {(m.tokens || 0).toLocaleString()}
+                  </td>
+                  <td style="text-align: right; padding: 9px 10px;">
+                    <div style="display: flex; align-items: center; justify-content: flex-end; gap: 6px;">
+                      <div style="width: 36px; height: 4px; background: var(--color-border); border-radius: 2px; overflow: hidden;">
+                        <div style="width: {Math.min(100, Math.round(share))}%; height: 100%; background: #10b981; border-radius: 2px;"></div>
+                      </div>
+                      <span style="font-size: 10px; font-family: var(--font-mono); color: var(--color-fg-3); width: 28px; text-align: right;">{share.toFixed(0)}%</span>
+                    </div>
+                  </td>
                 </tr>
               {/each}
             </tbody>
           </table>
         </div>
       </div>
-    {/if}
+    </div>
 
     <!-- Quota Tracking -->
     {#if quotaData?.length}
-      <div class="card mb-5">
-        <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin-bottom: 16px;">Quota Tracking</div>
+      <div class="card mb-5" style="padding: 18px 20px;">
+        <div class="flex items-center gap-2 mb-3">
+          <Layers size={16} style="color: var(--color-primary);" />
+          <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Provider Quota Tracking</h3>
+        </div>
         <div style="overflow-x: auto;">
           <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
             <thead>
-              <tr>
+              <tr style="border-bottom: 1px solid var(--color-border);">
                 {#each ['Provider', 'Input Tokens', 'Output Tokens', 'Cost Est.', 'Remaining', 'Next Reset'] as h}
-                  <th style="text-align: left; padding: 12px 14px; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: var(--color-fg-3); border-bottom: 1px solid var(--color-border);">{h}</th>
+                  <th style="text-align: left; padding: 10px 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; color: var(--color-fg-3);">{h}</th>
                 {/each}
               </tr>
             </thead>
             <tbody>
               {#each quotaData as q}
                 <tr style="border-bottom: 1px solid var(--color-border-light);">
-                  <td style="padding: 12px 14px; font-weight: 500; color: var(--color-fg-0);">{q.provider}</td>
-                  <td style="padding: 12px 14px; font-family: var(--font-mono); font-size: 12px;">{(q.input_tokens || 0).toLocaleString()}</td>
-                  <td style="padding: 12px 14px; font-family: var(--font-mono); font-size: 12px;">{(q.output_tokens || 0).toLocaleString()}</td>
-                  <td style="padding: 12px 14px; font-family: var(--font-mono); font-size: 12px;">${(q.cost_estimate || 0).toFixed(4)}</td>
-                  <td style="padding: 12px 14px;">
+                  <td style="padding: 10px 12px; font-weight: 500; color: var(--color-fg-0);">{q.provider}</td>
+                  <td style="padding: 10px 12px; font-family: var(--font-mono); font-size: 12px;">{(q.input_tokens || 0).toLocaleString()}</td>
+                  <td style="padding: 10px 12px; font-family: var(--font-mono); font-size: 12px;">{(q.output_tokens || 0).toLocaleString()}</td>
+                  <td style="padding: 10px 12px; font-family: var(--font-mono); font-size: 12px;">${(q.cost_estimate || 0).toFixed(4)}</td>
+                  <td style="padding: 10px 12px;">
                     {#if q.remaining?.percent_remaining !== undefined}
                       <div style="display: flex; align-items: center; gap: 8px;">
                         <div style="flex: 1; height: 6px; background: var(--color-border); border-radius: 3px; overflow: hidden; max-width: 100px;">
@@ -223,7 +393,7 @@
                       <span style="font-size: 12px; color: var(--color-fg-3);">Unlimited</span>
                     {/if}
                   </td>
-                  <td style="padding: 12px 14px; font-size: 12px; color: var(--color-fg-3);">
+                  <td style="padding: 10px 12px; font-size: 12px; color: var(--color-fg-3);">
                     {q.next_reset ? new Date(q.next_reset).toLocaleString() : '—'}
                   </td>
                 </tr>
@@ -235,3 +405,75 @@
     {/if}
   {/if}
 </div>
+
+<style>
+  .period-btn {
+    padding: 5px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--color-fg-2);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .period-btn:hover {
+    color: var(--color-fg-0);
+  }
+  .period-btn.active {
+    background: var(--color-primary);
+    color: #ffffff;
+    font-weight: 600;
+  }
+  .metric-toggle-btn {
+    padding: 3px 8px;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    color: var(--color-fg-2);
+  }
+  .metric-toggle-btn.active {
+    background: var(--color-primary);
+    color: #ffffff;
+    font-weight: 600;
+  }
+  .metric-card {
+    padding: 16px 18px;
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: var(--shadow-sm);
+  }
+  .metric-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
+  .metric-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .metric-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--color-fg-3);
+  }
+  .metric-val {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--color-fg-0);
+    font-family: var(--font-mono);
+    line-height: 1.1;
+  }
+  .spinning {
+    animation: spin 0.8s linear infinite;
+  }
+</style>

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -51,6 +52,40 @@ func presetForOAuthProvider(id string) *oauthIdeConnectionPreset {
 		}
 	}
 	return nil
+}
+
+// autoProvisionOAuthConnection ensures an active connection exists in connections table for the given OAuth provider.
+func (s *Server) autoProvisionOAuthConnection(provider string) (string, error) {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	if provider == "" {
+		return "", fmt.Errorf("provider required")
+	}
+	preset := presetForOAuthProvider(provider)
+	if preset == nil {
+		return "", fmt.Errorf("no preset for provider %s", provider)
+	}
+	name := preset.Name
+
+	var existingID string
+	_ = s.db.Conn().QueryRow(
+		`SELECT id FROM connections WHERE oauth_provider = ? LIMIT 1`, provider,
+	).Scan(&existingID)
+
+	if existingID != "" {
+		_, err := s.db.Conn().Exec(
+			`UPDATE connections SET name=?, base_url=?, api_key='', format=?, chat_path=?, models_path=?, auth_header=?, auth_prefix=?, is_active=1, updated_at=datetime('now','localtime') WHERE id=?`,
+			name, preset.BaseURL, preset.Format, preset.ChatPath, preset.ModelsPath, preset.AuthHeader, preset.AuthPrefix, existingID,
+		)
+		return existingID, err
+	}
+
+	id := uuid.New().String()
+	_, err := s.db.Conn().Exec(
+		`INSERT INTO connections (id, name, base_url, api_key, oauth_provider, format, priority, chat_path, models_path, auth_header, auth_prefix, is_active)
+		 VALUES (?, ?, ?, '', ?, ?, 5, ?, ?, ?, ?, 1)`,
+		id, name, preset.BaseURL, provider, preset.Format, preset.ChatPath, preset.ModelsPath, preset.AuthHeader, preset.AuthPrefix,
+	)
+	return id, err
 }
 
 func (s *Server) handleOAuthProvisionConnection(w http.ResponseWriter, r *http.Request) {

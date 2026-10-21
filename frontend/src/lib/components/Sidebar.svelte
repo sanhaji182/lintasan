@@ -15,7 +15,8 @@
 
   const icons: Record<string, any> = {
     overview: LayoutDashboard, quickstart: Rocket, playground: MessageSquare,
-    connections: Link2, models: Brain, providers: Server, routing: GitBranch, observability: BarChart3,
+    connections: Link2, models: Brain, providers: Server, routing: GitBranch,
+    usage: BarChart3, observability: BarChart3,
     keys: Key, teams: Users, users: UserCircle, webhooks: Webhook, memory: Brain,
     mcp: Plug, translator: Globe, plugins: Puzzle, backup: Database, migrate: Upload,
     labs: FlaskConical, settings: Settings, docs: BookOpen,

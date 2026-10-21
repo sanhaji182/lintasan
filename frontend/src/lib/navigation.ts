@@ -26,6 +26,7 @@ export const navigationGroups: NavigationGroup[] = [
     { label: 'Provider Catalog', path: '/dashboard/providers', icon: 'providers', description: 'Browse supported provider presets', keywords: ['provider', 'preset'] },
   ]},
   { label: 'Observe', collapsible: false, items: [
+    { label: 'Usage', path: '/dashboard/usage', icon: 'usage', description: 'Token and request volume across models and accounts', keywords: ['usage', 'tokens', 'volume', 'stats'] },
     { label: 'Analytics', path: '/dashboard/analytics', icon: 'observability', description: 'Requests, usage, savings and logs', keywords: ['observe', 'requests', 'usage', 'logs', 'cost'] },
   ]},
   { label: 'Configure', collapsible: true, items: [
