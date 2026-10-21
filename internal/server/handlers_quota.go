@@ -111,20 +111,26 @@ func (s *Server) handleQuotaProviders(w http.ResponseWriter, r *http.Request) {
 		writeJSONStatus(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	defer rows.Close()
+
+	type connTarget struct {
+		id, name, format, oauthProv, apiKey string
+	}
+	var targets []connTarget
+	for rows.Next() {
+		var it connTarget
+		var isActive int
+		if err := rows.Scan(&it.id, &it.name, &it.format, &it.oauthProv, &it.apiKey, &isActive); err == nil {
+			targets = append(targets, it)
+		}
+	}
+	rows.Close()
 
 	var providers []map[string]any
 	client := &http.Client{Timeout: 12 * time.Second}
 
-	for rows.Next() {
-		var id, name, format, oauthProv, apiKey string
-		var isActive int
-		if err := rows.Scan(&id, &name, &format, &oauthProv, &apiKey, &isActive); err != nil {
-			continue
-		}
-
-		if strings.EqualFold(oauthProv, "antigravity") || strings.EqualFold(format, "antigravity") {
-			token := apiKey
+	for _, it := range targets {
+		if strings.EqualFold(it.oauthProv, "antigravity") || strings.EqualFold(it.format, "antigravity") {
+			token := it.apiKey
 			if s.oauthMgr != nil {
 				tok, errTok := s.oauthMgr.GetActiveToken("antigravity")
 				if errTok == nil && tok != "" {
@@ -134,8 +140,8 @@ func (s *Server) handleQuotaProviders(w http.ResponseWriter, r *http.Request) {
 
 			if token == "" {
 				providers = append(providers, map[string]any{
-					"connection_id": id,
-					"name":          name,
+					"connection_id": it.id,
+					"name":          it.name,
 					"provider":      "antigravity",
 					"error":         "OAuth token unavailable",
 				})
@@ -148,15 +154,15 @@ func (s *Server) handleQuotaProviders(w http.ResponseWriter, r *http.Request) {
 
 			if err != nil {
 				providers = append(providers, map[string]any{
-					"connection_id": id,
-					"name":          name,
+					"connection_id": it.id,
+					"name":          it.name,
 					"provider":      "antigravity",
 					"error":         err.Error(),
 				})
 			} else {
 				providers = append(providers, map[string]any{
-					"connection_id": id,
-					"name":          name,
+					"connection_id": it.id,
+					"name":          it.name,
 					"provider":      "antigravity",
 					"plan":          res.Plan,
 					"quotas":        res.Quotas,
