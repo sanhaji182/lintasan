@@ -5,13 +5,45 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sanhaji182/lintasan-go/internal/antigravity"
 )
 
-// buildConnectionQuota compiles normalized quota/usage data for any supported connection.
+type cachedProviderQuota struct {
+	data      map[string]any
+	fetchedAt time.Time
+}
+
+var providerQuotaCache = struct {
+	sync.RWMutex
+	data map[string]cachedProviderQuota
+}{data: make(map[string]cachedProviderQuota)}
+
+const providerQuotaCacheTTL = 3 * time.Minute
+
+// buildConnectionQuota compiles normalized quota/usage data for any supported connection with in-memory caching.
 func (s *Server) buildConnectionQuota(ctx context.Context, id, name, format, oauthProv, apiKey, baseURL string, force bool) map[string]any {
+	if !force && id != "" {
+		providerQuotaCache.RLock()
+		if c, ok := providerQuotaCache.data[id]; ok && time.Since(c.fetchedAt) < providerQuotaCacheTTL {
+			providerQuotaCache.RUnlock()
+			return c.data
+		}
+		providerQuotaCache.RUnlock()
+	}
+
+	result := s.doBuildConnectionQuota(ctx, id, name, format, oauthProv, apiKey, baseURL, force)
+	if result != nil && id != "" && result["error"] == nil {
+		providerQuotaCache.Lock()
+		providerQuotaCache.data[id] = cachedProviderQuota{data: result, fetchedAt: time.Now()}
+		providerQuotaCache.Unlock()
+	}
+	return result
+}
+
+func (s *Server) doBuildConnectionQuota(ctx context.Context, id, name, format, oauthProv, apiKey, baseURL string, force bool) map[string]any {
 	formatLower := strings.ToLower(format)
 	oauthLower := strings.ToLower(oauthProv)
 	baseLower := strings.ToLower(baseURL)
@@ -406,15 +438,33 @@ func (s *Server) handleQuotaProviders(w http.ResponseWriter, r *http.Request) {
 	}
 	rows.Close()
 
+	results := make([]map[string]any, len(targets))
+	var wg sync.WaitGroup
+	// Concurrency pool to execute upstream quota checks in parallel
+	sem := make(chan struct{}, 10)
+
+	for i, it := range targets {
+		wg.Add(1)
+		go func(idx int, target connTarget) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+			defer cancel()
+
+			quotaData := s.buildConnectionQuota(ctx, target.id, target.name, target.format, target.oauthProv, target.apiKey, target.baseURL, force)
+			if quotaData != nil {
+				results[idx] = quotaData
+			}
+		}(i, it)
+	}
+	wg.Wait()
+
 	var providers []map[string]any
-
-	for _, it := range targets {
-		ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
-		quotaData := s.buildConnectionQuota(ctx, it.id, it.name, it.format, it.oauthProv, it.apiKey, it.baseURL, force)
-		cancel()
-
-		if quotaData != nil {
-			providers = append(providers, quotaData)
+	for _, res := range results {
+		if res != nil {
+			providers = append(providers, res)
 		}
 	}
 

@@ -139,18 +139,26 @@
     loading = true;
     error = '';
     try {
-      const [usageRes, quotaRes, quotaProvidersRes] = await Promise.all([
+      const [usageRes, quotaRes] = await Promise.all([
         api.get<any>('/api/usage'),
-        api.get<any>('/api/quota/stats').catch(() => null),
-        api.get<any>('/api/quota/providers').catch(() => null)
+        api.get<any>('/api/quota/stats').catch(() => null)
       ]);
       data = usageRes?.data || usageRes;
       quotaData = quotaRes?.data?.by_connection || quotaRes?.data || [];
-      quotaProviders = quotaProvidersRes?.providers || [];
     } catch (e: any) {
       error = e.message || 'Failed to load usage data';
+    } finally {
+      loading = false;
     }
-    loading = false;
+
+    // Load live provider quotas in the background so the main dashboard never blocks
+    api.get<any>('/api/quota/providers')
+      .then((res) => {
+        quotaProviders = res?.providers || [];
+      })
+      .catch((e) => {
+        console.warn('Failed to load live quota providers:', e);
+      });
   }
 
   onMount(loadUsage);
