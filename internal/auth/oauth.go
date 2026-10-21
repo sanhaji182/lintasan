@@ -55,37 +55,20 @@ func (m *OAuthManager) CreateSession(provider string) (*OAuthSession, error) {
 }
 
 // GetActiveToken returns the active access token for a provider, if any.
+// If the token is expired or approaching expiration, it automatically refreshes
+// the session using the available refresh token.
 func (m *OAuthManager) GetActiveToken(provider string) (string, error) {
-	var token string
-	var expiresAt string
-	var status string
-
-	err := m.db.Conn().QueryRow(
-		`SELECT access_token, expires_at, status FROM oauth_sessions WHERE provider = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`,
-		provider,
-	).Scan(&token, &expiresAt, &status)
-
-	if err == sql.ErrNoRows {
-		return "", nil
+	if m == nil {
+		return "", fmt.Errorf("oauth manager not configured")
 	}
+	cred, err := m.ResolveUpstreamCredentialFull(provider, true)
 	if err != nil {
-		return "", fmt.Errorf("get active token: %w", err)
+		return "", err
 	}
-
-	// Check expiration
-	if expiresAt != "" {
-		exp, parseErr := time.Parse(time.RFC3339, expiresAt)
-		if parseErr == nil && time.Now().After(exp) {
-			// Mark as expired
-			m.db.Conn().Exec(
-				`UPDATE oauth_sessions SET status = 'expired' WHERE provider = ? AND access_token = ?`,
-				provider, token,
-			)
-			return "", nil
-		}
+	if cred != nil && cred.Token != "" {
+		return cred.Token, nil
 	}
-
-	return token, nil
+	return "", nil
 }
 
 // RefreshToken exchanges refresh_token with the provider when supported.
@@ -97,7 +80,7 @@ func (m *OAuthManager) RefreshToken(provider string) error {
 
 	var sessionID, refreshToken string
 	err := m.db.Conn().QueryRow(
-		`SELECT id, refresh_token FROM oauth_sessions WHERE provider = ? AND status = 'active' ORDER BY datetime(created_at) DESC LIMIT 1`,
+		`SELECT id, refresh_token FROM oauth_sessions WHERE provider = ? AND status IN ('active', 'expired') AND refresh_token != '' ORDER BY datetime(created_at) DESC LIMIT 1`,
 		provider,
 	).Scan(&sessionID, &refreshToken)
 	if err == sql.ErrNoRows {

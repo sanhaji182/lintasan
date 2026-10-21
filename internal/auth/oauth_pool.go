@@ -85,7 +85,14 @@ func (m *OAuthManager) pickOAuthSession(provider string) (*OAuthSession, error) 
 		return nil, err
 	}
 	if len(sessions) == 0 {
-		return nil, nil
+		// Fallback: check for sessions marked 'expired' that still carry a refresh token.
+		// These can be revived on the fly via refreshOAuthSession.
+		expSessions, errExp := m.listExpiredSessionsWithRefresh(provider)
+		if errExp == nil && len(expSessions) > 0 {
+			sessions = expSessions
+		} else {
+			return nil, nil
+		}
 	}
 
 	now := time.Now()
@@ -114,6 +121,38 @@ func (m *OAuthManager) listActiveSessions(provider string) ([]OAuthSession, erro
 		 FROM oauth_sessions WHERE provider = ? AND status = ?
 		 ORDER BY datetime(created_at) DESC, id ASC`,
 		provider, SessionStatusActive,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []OAuthSession
+	for rows.Next() {
+		var s OAuthSession
+		var access, refresh, expiresAt, createdAt, flowMeta sql.NullString
+		if err := rows.Scan(&s.ID, &s.Provider, &access, &refresh, &expiresAt, &s.Status, &createdAt, &flowMeta); err != nil {
+			return nil, err
+		}
+		s.AccessToken = access.String
+		s.RefreshToken = refresh.String
+		s.FlowMeta = flowMeta.String
+		if expiresAt.String != "" {
+			s.ExpiresAt, _ = time.Parse(time.RFC3339, expiresAt.String)
+		}
+		s.CreatedAt = createdAt.String
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+// listExpiredSessionsWithRefresh returns sessions marked 'expired' that still have a refresh token.
+func (m *OAuthManager) listExpiredSessionsWithRefresh(provider string) ([]OAuthSession, error) {
+	rows, err := m.db.Conn().Query(
+		`SELECT id, provider, access_token, refresh_token, expires_at, status, created_at, flow_meta
+		 FROM oauth_sessions WHERE provider = ? AND status = 'expired' AND refresh_token != ''
+		 ORDER BY datetime(created_at) DESC, id ASC`,
+		provider,
 	)
 	if err != nil {
 		return nil, err
