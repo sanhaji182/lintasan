@@ -488,11 +488,11 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request) {
 		strings.EqualFold(formatFromDB, "antigravity") ||
 		strings.Contains(strings.ToLower(base), "cloudcode-pa.googleapis.com") {
 		loadReqBody := `{"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`
-		loadReq, loadErr := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
+		loadReq, loadErr := http.NewRequest("POST", antigravity.AntigravityIDEBaseURL+"/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
 		if loadErr == nil {
 			loadReq.Header.Set("Authorization", "Bearer "+key)
 			loadReq.Header.Set("Content-Type", "application/json")
-			loadReq.Header.Set("User-Agent", "google-api-nodejs-client/9.15.1 vscode-antigravity/1.107.0")
+			loadReq.Header.Set("User-Agent", antigravity.AntigravityIDEUserAgent)
 			c := &http.Client{Timeout: 15 * time.Second}
 			loadResp, errDo := c.Do(loadReq)
 			latency := time.Since(start).Milliseconds()
@@ -791,17 +791,17 @@ func (s *Server) testAntigravityModelOnce(conn *Connection, modelID, token strin
 		}
 	}
 
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: 25 * time.Second}
 
-	// 1. Probe loadCodeAssist to verify token validity and get project id
+	// 1. Probe loadCodeAssist to verify token validity
 	loadReqBody := `{"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`
-	loadReq, err := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
+	loadReq, err := http.NewRequest("POST", antigravity.AntigravityIDEBaseURL+"/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
 	if err != nil {
 		return map[string]any{"success": false, "status": "upstream_error", "message": err.Error()}
 	}
 	loadReq.Header.Set("Authorization", "Bearer "+token)
 	loadReq.Header.Set("Content-Type", "application/json")
-	loadReq.Header.Set("User-Agent", "google-api-nodejs-client/9.15.1 vscode-antigravity/1.107.0")
+	loadReq.Header.Set("User-Agent", antigravity.AntigravityIDEUserAgent)
 
 	loadResp, err := client.Do(loadReq)
 	if err != nil {
@@ -823,19 +823,15 @@ func (s *Server) testAntigravityModelOnce(conn *Connection, modelID, token strin
 		}
 	}
 
-	projectID := "aicode-consumers"
-	var loadData map[string]any
-	if err := json.Unmarshal(loadBody, &loadData); err == nil {
-		if p, ok := loadData["cloudaicompanionProject"].(string); ok && p != "" {
-			projectID = p
-		}
-	}
+	// Use random project ID matching 9router (never use rate-limited 'aicode-consumers')
+	projectID := antigravity.GenerateProjectID()
 
-	// 2. Perform chat probe via v1internal:generateContent
+	// 2. Perform chat probe via v1internal:generateContent to daily-cloudcode-pa.googleapis.com
 	wireModel := antigravity.ResolveUpstreamModel(modelID)
-	genURL := "https://cloudcode-pa.googleapis.com/v1internal:generateContent"
-	genBody := fmt.Sprintf(`{"project":%q,"model":%q,"userAgent":"antigravity","requestId":"agent/agent/1/%s/1","request":{"contents":[{"role":"user","parts":[{"text":"ping"}]}]}}`,
-		projectID, wireModel, wireModel)
+	genURL := antigravity.AntigravityIDEBaseURL + "/v1internal:generateContent"
+	reqID := antigravity.BuildIdeRequestID(wireModel, "agent")
+	genBody := fmt.Sprintf(`{"project":%q,"model":%q,"userAgent":"antigravity","requestId":%q,"request":{"contents":[{"role":"user","parts":[{"text":"ping"}]}]}}`,
+		projectID, wireModel, reqID)
 
 	genReq, err := http.NewRequest("POST", genURL, strings.NewReader(genBody))
 	if err != nil {
@@ -843,7 +839,7 @@ func (s *Server) testAntigravityModelOnce(conn *Connection, modelID, token strin
 	}
 	genReq.Header.Set("Authorization", "Bearer "+token)
 	genReq.Header.Set("Content-Type", "application/json")
-	genReq.Header.Set("User-Agent", "google-api-nodejs-client/9.15.1 vscode-antigravity/1.107.0")
+	genReq.Header.Set("User-Agent", antigravity.AntigravityIDEUserAgent)
 
 	genResp, err := client.Do(genReq)
 	latency := time.Since(start).Milliseconds()

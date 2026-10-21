@@ -4,7 +4,39 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
+
+const (
+	// AntigravityIDEVersion is the official Antigravity IDE Desktop fingerprint.
+	AntigravityIDEVersion = "2.22.0"
+	// AntigravityIDEBaseURL is the daily-cloudcode-pa endpoint used by official Antigravity IDE.
+	AntigravityIDEBaseURL = "https://daily-cloudcode-pa.googleapis.com"
+	// AntigravityIDEUserAgent is the exact user agent expected by Google Cloud Code for Antigravity.
+	AntigravityIDEUserAgent = "antigravity/ide/2.22.0 darwin/arm64"
+)
+
+// GenerateProjectID generates an adjective-noun project id matching 9router.
+func GenerateProjectID() string {
+	adjectives := []string{"useful", "bright", "swift", "calm", "bold", "quick", "keen"}
+	nouns := []string{"fuze", "wave", "spark", "flow", "core", "beam", "pulse"}
+	u := uuid.New().String()
+	hash := int(u[0]) % len(adjectives)
+	hash2 := int(u[1]) % len(nouns)
+	return fmt.Sprintf("%s-%s-%s", adjectives[hash], nouns[hash2], u[:5])
+}
+
+// BuildIdeRequestID generates the 9router agent/<conversationId>/<timestamp>/<trajectoryId>/<step> request id.
+func BuildIdeRequestID(model, requestType string) string {
+	if requestType == "" {
+		requestType = "agent"
+	}
+	trajID := uuid.New().String()
+	now := time.Now().UnixMilli()
+	return fmt.Sprintf("agent/%s/%d/%s/1", requestType, now, trajID)
+}
 
 // Model id bookkeeping mirrors the 9router v0.5.104 registry table.
 // Upstream rows = unique wire ids; parenthesised effort is NOT part of the
@@ -114,14 +146,18 @@ type RequestEnvelope struct {
 //     translation BEFORE this wrapper does anything.
 func WrapGeminiRequest(geminiBody []byte, projectID, model, userEmail, sessionID string) ([]byte, error) {
 	wireModel := ResolveUpstreamModel(model)
+	cleanProj := StripParenthesisedSuffix(projectID)
+	if cleanProj == "" || cleanProj == "aicode-consumers" {
+		cleanProj = GenerateProjectID()
+	}
 	env := RequestEnvelope{
-		Project:   StripParenthesisedSuffix(projectID),
+		Project:   cleanProj,
 		Model:     wireModel,
 		UserAgent: "antigravity",
 		// Omit RequestType — see decolua/9router#3986: Google rejects
 		// agent-bucketed requests with false 429s; the requestId keeps its
 		// existing agent/<...>/<...>/<...>/<step> shape.
-		RequestID: BuildRequestID(projectID, wireModel, "agent", 1),
+		RequestID: BuildIdeRequestID(wireModel, "agent"),
 		Request:   json.RawMessage(geminiBody),
 		UserEmail: userEmail,
 		SessionID: sessionID,

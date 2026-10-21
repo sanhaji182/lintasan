@@ -82,7 +82,7 @@ export const OAUTH_IDE_PRESETS: OAuthIdePreset[] = [
     oauth_provider: 'antigravity',
     name: 'oauth-antigravity',
     label: 'Antigravity (OAuth)',
-    base_url: 'https://cloudcode-pa.googleapis.com',
+    base_url: 'https://daily-cloudcode-pa.googleapis.com',
     format: 'openai',
     domain: 'google.com',
     note: 'Google OAuth + Code Assist — env client id required'

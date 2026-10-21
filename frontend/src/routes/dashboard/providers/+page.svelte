@@ -68,7 +68,7 @@
     {
       id: 'antigravity',
       name: 'Google Antigravity',
-      base_url: 'https://cloudcode-pa.googleapis.com',
+      base_url: 'https://daily-cloudcode-pa.googleapis.com',
       format: 'openai',
       isOAuth: true,
       oauthProvider: 'antigravity',
@@ -244,7 +244,7 @@
           is_active: 1,
           priority: 10,
           format: 'openai',
-          base_url: 'https://cloudcode-pa.googleapis.com',
+          base_url: 'https://daily-cloudcode-pa.googleapis.com',
           created_at: antigravitySession.created_at
         });
         antigravityProvider.activeCount = 1;
