@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/sanhaji182/lintasan-go/internal/antigravity"
 	"github.com/sanhaji182/lintasan-go/internal/cost"
 	"github.com/sanhaji182/lintasan-go/internal/discover"
 	"github.com/sanhaji182/lintasan-go/internal/errfmt"
@@ -481,6 +482,45 @@ func (s *Server) handleConnectionTest(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 
+	// Google Antigravity (cloudcode-pa.googleapis.com) has no /v1/models and rejects
+	// OpenAI-style /v1/chat/completions — probe /v1internal:loadCodeAssist instead.
+	if strings.EqualFold(oauthProv, "antigravity") ||
+		strings.EqualFold(formatFromDB, "antigravity") ||
+		strings.Contains(strings.ToLower(base), "cloudcode-pa.googleapis.com") {
+		loadReqBody := `{"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`
+		loadReq, loadErr := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
+		if loadErr == nil {
+			loadReq.Header.Set("Authorization", "Bearer "+key)
+			loadReq.Header.Set("Content-Type", "application/json")
+			loadReq.Header.Set("User-Agent", "google-api-nodejs-client/9.15.1 vscode-antigravity/1.107.0")
+			c := &http.Client{Timeout: 15 * time.Second}
+			loadResp, errDo := c.Do(loadReq)
+			latency := time.Since(start).Milliseconds()
+			if errDo != nil {
+				e := errfmt.FromNetworkError(errDo)
+				errfmt.Write(w, http.StatusBadGateway, e, nil, map[string]any{
+					"success": false, "latency_ms": latency, "hint": errfmt.HintForMessage(e.Message),
+				})
+				return
+			}
+			defer loadResp.Body.Close()
+			if loadResp.StatusCode == 200 {
+				models := discover.AntigravityModels()
+				msg := fmt.Sprintf("Google Antigravity connected · %d models available · %dms", len(models), latency)
+				errfmt.Write(w, http.StatusOK, nil, map[string]any{"models": models, "models_count": len(models)}, map[string]any{
+					"success": true, "message": msg, "latency_ms": latency, "models_count": len(models), "fallback": "antigravity_codeassist",
+				})
+				return
+			}
+			loadBody, _ := io.ReadAll(loadResp.Body)
+			e := errfmt.FromStatus(loadResp.StatusCode, loadBody, fmt.Sprintf("Antigravity Google API status %d", loadResp.StatusCode))
+			errfmt.Write(w, http.StatusBadGateway, e, nil, map[string]any{
+				"success": false, "latency_ms": latency, "hint": "Please re-authorize via OAuth IDE",
+			})
+			return
+		}
+	}
+
 	// CommandCode Alpha (format=commandcode) has no /v1/models and rejects
 	// OpenAI-style chat on /v1/chat/completions — probe /alpha/generate with
 	// the translated body instead of the generic fetchModels path.
@@ -657,6 +697,15 @@ func (s *Server) testModelOnce(conn *Connection, modelID string) map[string]any 
 
 	start := time.Now()
 
+	// Antigravity does not speak the OpenAI shape: Google Cloud Code Assist expects
+	// envelope-encoded body to /v1internal:generateContent.
+	if strings.EqualFold(conn.OAuthProvider, "antigravity") ||
+		strings.EqualFold(conn.Format, "antigravity") ||
+		strings.Contains(strings.ToLower(conn.BaseURL), "cloudcode-pa.googleapis.com") ||
+		strings.Contains(strings.ToLower(conn.Name), "antigravity") {
+		return s.testAntigravityModelOnce(conn, modelID, key, start)
+	}
+
 	// Qoder does not speak the OpenAI shape: a probe must go through the provider's
 	// own protocol (credential exchange, envelope-encoded body, streamed reply).
 	// Falling through to the generic path below would POST plain JSON to a
@@ -729,6 +778,123 @@ func (s *Server) testModelOnce(conn *Connection, modelID string) map[string]any 
 	return map[string]any{
 		"success": true, "status": "ok", "latency_ms": latency,
 		"http_status": resp.StatusCode, "message": "model responds",
+	}
+}
+
+// testAntigravityModelOnce probes one Google Antigravity model through Google Cloud Code Assist protocol.
+func (s *Server) testAntigravityModelOnce(conn *Connection, modelID, token string, start time.Time) map[string]any {
+	if token == "" {
+		return map[string]any{
+			"success": false,
+			"status":  "auth_error",
+			"message": "no active OAuth token found for Antigravity (please authorize via OAuth IDE)",
+		}
+	}
+
+	client := &http.Client{Timeout: 20 * time.Second}
+
+	// 1. Probe loadCodeAssist to verify token validity and get project id
+	loadReqBody := `{"metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}`
+	loadReq, err := http.NewRequest("POST", "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", strings.NewReader(loadReqBody))
+	if err != nil {
+		return map[string]any{"success": false, "status": "upstream_error", "message": err.Error()}
+	}
+	loadReq.Header.Set("Authorization", "Bearer "+token)
+	loadReq.Header.Set("Content-Type", "application/json")
+	loadReq.Header.Set("User-Agent", "google-api-nodejs-client/9.15.1 vscode-antigravity/1.107.0")
+
+	loadResp, err := client.Do(loadReq)
+	if err != nil {
+		latency := time.Since(start).Milliseconds()
+		return map[string]any{"success": false, "status": "network_error", "latency_ms": latency, "message": err.Error()}
+	}
+	defer loadResp.Body.Close()
+
+	loadBody, _ := io.ReadAll(loadResp.Body)
+	if loadResp.StatusCode == 401 || loadResp.StatusCode == 403 {
+		latency := time.Since(start).Milliseconds()
+		return map[string]any{
+			"success":     false,
+			"status":      "auth_error",
+			"http_status": loadResp.StatusCode,
+			"latency_ms":  latency,
+			"message":     "Antigravity token expired or unauthorized (re-authorize via OAuth IDE)",
+			"body":        truncateBody(loadBody, 400),
+		}
+	}
+
+	projectID := "aicode-consumers"
+	var loadData map[string]any
+	if err := json.Unmarshal(loadBody, &loadData); err == nil {
+		if p, ok := loadData["cloudaicompanionProject"].(string); ok && p != "" {
+			projectID = p
+		}
+	}
+
+	// 2. Perform chat probe via v1internal:generateContent
+	wireModel := antigravity.ResolveUpstreamModel(modelID)
+	genURL := "https://cloudcode-pa.googleapis.com/v1internal:generateContent"
+	genBody := fmt.Sprintf(`{"project":%q,"model":%q,"userAgent":"antigravity","requestId":"agent/agent/1/%s/1","request":{"contents":[{"role":"user","parts":[{"text":"ping"}]}]}}`,
+		projectID, wireModel, wireModel)
+
+	genReq, err := http.NewRequest("POST", genURL, strings.NewReader(genBody))
+	if err != nil {
+		return map[string]any{"success": false, "status": "upstream_error", "message": err.Error()}
+	}
+	genReq.Header.Set("Authorization", "Bearer "+token)
+	genReq.Header.Set("Content-Type", "application/json")
+	genReq.Header.Set("User-Agent", "google-api-nodejs-client/9.15.1 vscode-antigravity/1.107.0")
+
+	genResp, err := client.Do(genReq)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return map[string]any{"success": false, "status": "network_error", "latency_ms": latency, "message": err.Error()}
+	}
+	defer genResp.Body.Close()
+
+	respBytes, _ := io.ReadAll(genResp.Body)
+	bodyStr := truncateBody(respBytes, 400)
+
+	if genResp.StatusCode == 200 {
+		return map[string]any{
+			"success":     true,
+			"status":      "ok",
+			"http_status": 200,
+			"latency_ms":  latency,
+			"message":     fmt.Sprintf("model %s responds (Google Antigravity)", modelID),
+		}
+	}
+
+	if genResp.StatusCode == 429 {
+		return map[string]any{
+			"success":     false,
+			"status":      "rate_limited",
+			"http_status": 429,
+			"latency_ms":  latency,
+			"message":     "Google quota exhausted (429 rate limit)",
+			"body":        bodyStr,
+		}
+	}
+
+	if genResp.StatusCode == 404 {
+		return map[string]any{
+			"success":     false,
+			"status":      "model_not_found",
+			"http_status": 404,
+			"latency_ms":  latency,
+			"message":     fmt.Sprintf("model %q not available on this Google tier", modelID),
+			"body":        bodyStr,
+		}
+	}
+
+	status := classifyModelTestStatus(genResp.StatusCode, bodyStr)
+	return map[string]any{
+		"success":     false,
+		"status":      status,
+		"http_status": genResp.StatusCode,
+		"latency_ms":  latency,
+		"message":     fmt.Sprintf("upstream %s", genResp.Status),
+		"body":        bodyStr,
 	}
 }
 

@@ -126,7 +126,7 @@ func (d *Discoverer) SyncAll() ([]*SyncResult, error) {
 // loadConnection reads a single active connection row as a map.
 func (d *Discoverer) loadConnection(connID string) (map[string]any, error) {
 	row := d.db.Conn().QueryRow(
-		`SELECT id, name, base_url, api_key, format, models_path, auth_header, auth_prefix, extra_headers
+		`SELECT id, name, base_url, api_key, format, models_path, auth_header, auth_prefix, extra_headers, COALESCE(oauth_provider, '')
 		 FROM connections WHERE id = ? AND is_active = 1`, connID)
 
 	conn, err := scanConnection(row)
@@ -139,7 +139,7 @@ func (d *Discoverer) loadConnection(connID string) (map[string]any, error) {
 // loadActiveConnections returns every active connection.
 func (d *Discoverer) loadActiveConnections() ([]map[string]any, error) {
 	rows, err := d.db.Conn().Query(
-		`SELECT id, name, base_url, api_key, format, models_path, auth_header, auth_prefix, extra_headers
+		`SELECT id, name, base_url, api_key, format, models_path, auth_header, auth_prefix, extra_headers, COALESCE(oauth_provider, '')
 		 FROM connections WHERE is_active = 1`)
 	if err != nil {
 		return nil, err
@@ -162,20 +162,24 @@ func scanConnection(scanner interface {
 	Scan(dest ...any) error
 }) (map[string]any, error) {
 	var id, name, baseURL, apiKey, format string
-	var modelsPath, authHeader, authPrefix, extraHeaders sql.NullString
+	var modelsPath, authHeader, authPrefix, extraHeaders, oauthProvider sql.NullString
 
 	err := scanner.Scan(&id, &name, &baseURL, &apiKey, &format,
-		&modelsPath, &authHeader, &authPrefix, &extraHeaders)
+		&modelsPath, &authHeader, &authPrefix, &extraHeaders, &oauthProvider)
 	if err != nil {
 		return nil, err
 	}
 
 	conn := map[string]any{
-		"id":       id,
-		"name":     name,
-		"base_url": baseURL,
-		"api_key":  apiKey,
-		"format":   format,
+		"id":             id,
+		"name":           name,
+		"base_url":       baseURL,
+		"api_key":        apiKey,
+		"format":         format,
+		"oauth_provider": "",
+	}
+	if oauthProvider.Valid {
+		conn["oauth_provider"] = oauthProvider.String
 	}
 	if modelsPath.Valid {
 		conn["models_path"] = modelsPath.String
@@ -275,7 +279,18 @@ func (d *Discoverer) fetchModelsFromProvider(conn map[string]any) ([]ModelInfo, 
 		return models, nil
 	}
 
+	// Antigravity specialized path: Google Cloud Code does not serve /v1/models.
+	// Return the canonical Antigravity model catalogue.
+	oauthProv, _ := conn["oauth_provider"].(string)
+	cname, _ := conn["name"].(string)
+	format, _ := conn["format"].(string)
 	baseURL, _ := conn["base_url"].(string)
+	if strings.EqualFold(oauthProv, "antigravity") ||
+		strings.EqualFold(format, "antigravity") ||
+		strings.Contains(strings.ToLower(baseURL), "cloudcode-pa.googleapis.com") ||
+		strings.Contains(strings.ToLower(cname), "antigravity") {
+		return AntigravityModels(), nil
+	}
 	if baseURL == "" {
 		return d.fallbackModels(conn)
 	}
@@ -451,6 +466,7 @@ func fallbackAppliesTo(format, baseURL string) bool {
 		"openai":      {"api.openai.com"},
 		"anthropic":   {"api.anthropic.com"},
 		"commandcode": {"api.commandcode.ai"},
+		"antigravity": {"cloudcode-pa.googleapis.com"},
 	}
 	for _, h := range vendorHosts[format] {
 		if host == h || strings.HasSuffix(host, "."+h) {
@@ -460,9 +476,41 @@ func fallbackAppliesTo(format, baseURL string) bool {
 	return false
 }
 
+// AntigravityModels returns the canonical static models supported by Google Antigravity.
+func AntigravityModels() []ModelInfo {
+	return []ModelInfo{
+		{ID: "gemini-3.8-flash-high", Name: "Gemini 3.8 Flash (High)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.8-flash-medium", Name: "Gemini 3.8 Flash (Medium) / Default", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.8-flash-low", Name: "Gemini 3.8 Flash (Low)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.7-flash-high", Name: "Gemini 3.7 Flash (High)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.7-flash-medium", Name: "Gemini 3.7 Flash (Medium)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.7-flash-low", Name: "Gemini 3.7 Flash (Low)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.6-flash-high", Name: "Gemini 3.6 Flash (High)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.6-flash-medium", Name: "Gemini 3.6 Flash (Medium)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.6-flash-low", Name: "Gemini 3.6 Flash (Low)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.1-pro-high", Name: "Gemini 3.1 Pro (High)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-3.1-pro-low", Name: "Gemini 3.1 Pro (Low)", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-pro-agent", Name: "Gemini 3.1 Pro (High) / Legacy", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-2.5-pro", Name: "Gemini 2.5 Pro", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash", OwnedBy: "google-antigravity", MaxInputTokens: 1048576, MaxOutputTokens: 8192},
+		{ID: "claude-sonnet-5-5", Name: "Claude Sonnet 5.5 (Thinking)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "claude-sonnet-5-5-high", Name: "Claude Sonnet 5.5 (High)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "claude-sonnet-5-5-medium", Name: "Claude Sonnet 5.5 (Medium)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "claude-sonnet-5-5-low", Name: "Claude Sonnet 5.5 (Low)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "claude-opus-5-5", Name: "Claude Opus 5.5 (Thinking)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "claude-opus-5-5-high", Name: "Claude Opus 5.5 (High)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "claude-opus-5-5-medium", Name: "Claude Opus 5.5 (Medium)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "claude-opus-5-5-low", Name: "Claude Opus 5.5 (Low)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6 (Thinking)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "claude-opus-4-6-thinking", Name: "Claude Opus 4.6 (Thinking)", OwnedBy: "google-antigravity", MaxInputTokens: 200000, MaxOutputTokens: 8192},
+		{ID: "gpt-oss-120b-medium", Name: "GPT-OSS 120B (Medium)", OwnedBy: "google-antigravity", MaxInputTokens: 128000, MaxOutputTokens: 8192},
+	}
+}
+
 // knownModels returns the hardcoded fallback map keyed by format.
 func knownModels() map[string][]ModelInfo {
 	return map[string][]ModelInfo{
+		"antigravity": AntigravityModels(),
 		"commandcode": {
 			{ID: "deepseek/deepseek-v4-pro", Name: "DeepSeek V4 Pro", OwnedBy: "deepseek"},
 			{ID: "deepseek/deepseek-v3", Name: "DeepSeek V3", OwnedBy: "deepseek"},
