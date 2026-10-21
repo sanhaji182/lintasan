@@ -477,7 +477,14 @@
                             {@const colors = getQuotaColor(limit.remainingPercentage ?? 100)}
                             <div class="quota-limit-row">
                               <div class="flex items-center justify-between text-xs mb-1">
-                                <span style="font-weight: 600; color: var(--color-fg-1);">{limit.displayName}</span>
+                                <span class="flex items-center gap-1.5" style="font-weight: 600; color: var(--color-fg-1);">
+                                  {limit.displayName}
+                                  {#if limit.exceeded}
+                                    <span style="background: rgba(239,68,68,0.12); color: #ef4444; border: 1px solid rgba(239,68,68,0.25); padding: 0 4px; border-radius: 4px; font-weight: 700; font-size: 9.5px;">
+                                      EXCEEDED
+                                    </span>
+                                  {/if}
+                                </span>
                                 <span style="font-weight: 700; font-family: var(--font-mono); color: {colors.text}; background: {colors.pill}; padding: 1px 7px; border-radius: 6px; border: 1px solid {colors.border}; font-size: 11px;">
                                   {(limit.remainingPercentage ?? 100).toFixed(1)}%
                                 </span>
@@ -492,15 +499,26 @@
                               </div>
 
                               <div class="flex items-center justify-between text-[11px] mt-1" style="color: var(--color-fg-3);">
-                                <span>
-                                  {#if limit.total > 0}
-                                    {limit.used.toLocaleString()} / {limit.total.toLocaleString()} units
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                  {#if limit.isCreditBalance || limit.currency === 'USD' || limit.window === 'credits'}
+                                    <span style="font-weight: 600; color: var(--color-fg-1);">
+                                      ${(limit.remaining != null ? limit.remaining : Math.max(0, (limit.total || 0) - (limit.used || 0))).toFixed(2)} / ${Number(limit.total || 0).toFixed(2)} {limit.currency || 'USD'}
+                                    </span>
+                                    {#if limit.used > 0}
+                                      <span style="color: var(--color-fg-3); font-size: 10.5px;">
+                                        (Used ${Number(limit.used).toFixed(2)})
+                                      </span>
+                                    {/if}
+                                  {:else if limit.total > 0}
+                                    <span>
+                                      {Number(limit.used).toLocaleString()} / {Number(limit.total).toLocaleString()}
+                                    </span>
                                   {:else if limit.description}
-                                    {limit.description}
+                                    <span>{limit.description}</span>
                                   {:else}
-                                    Active
+                                    <span>Active</span>
                                   {/if}
-                                </span>
+                                </div>
                                 {#if limit.resetAt}
                                   <span class="flex items-center gap-1 font-medium" style="color: var(--color-fg-2);">
                                     <Clock size={11} /> {limit.resetAt.includes('T') ? 'Reset in ' + formatCountdown(limit.resetAt) : limit.resetAt}

@@ -12,10 +12,11 @@ import (
 
 // RateWindow represents a usage window (5h, weekly, daily, etc.)
 type RateWindow struct {
-	Name     string  `json:"name"`     // e.g., "5-hour", "weekly", "daily"
-	Used     float64 `json:"used"`     // Requests used in window
-	Cap      float64 `json:"cap"`      // Max requests in window
-	Exceeded bool    `json:"exceeded"` // Whether window limit was hit
+	Name     string  `json:"name"`               // e.g., "5-hour", "weekly", "daily"
+	Used     float64 `json:"used"`               // Requests used in window
+	Cap      float64 `json:"cap"`                // Max requests in window
+	Exceeded bool    `json:"exceeded"`           // Whether window limit was hit
+	ResetAt  string  `json:"reset_at,omitempty"` // RFC3339 formatted reset timestamp
 }
 
 // UsageStats represents request-level usage statistics.
@@ -28,21 +29,46 @@ type UsageStats struct {
 
 // BalanceInfo represents the credit/usage information from a provider.
 type BalanceInfo struct {
-	Balance      string `json:"balance"`         // Current balance (e.g., "$95.20" or "9520 credits")
-	TotalUsed    string `json:"total_used"`      // Total amount used
-	Currency     string `json:"currency"`        // USD, credits, etc.
-	PlanType     string `json:"plan_type"`       // prepaid, subscription, free, etc.
-	RateInfo     string `json:"rate_info"`       // Legacy: flat rate info string (for non-CC providers)
-	ProviderType string `json:"provider_type"`   // deepseek, openai, commandcode, etc.
-	UpdatedAt    string `json:"updated_at"`      // When this info was fetched
-	Error        string `json:"error,omitempty"` // Error message if fetch failed
-
-	// Structured fields (populated for CommandCode, empty for others)
+	Balance       string       `json:"balance"`       // Current balance (e.g., "$95.20" or "9520 credits")
+	TotalUsed     string       `json:"total_used"`    // Total amount used
+	Currency      string       `json:"currency"`      // USD, credits, etc.
+	PlanType      string       `json:"plan_type"`     // prepaid, subscription, free, etc.
+	RateInfo      string       `json:"rate_info"`     // Legacy: flat rate info string (for non-CC providers)
+	ProviderType  string       `json:"provider_type"` // deepseek, openai, commandcode, etc.
+	UpdatedAt     string       `json:"updated_at"`    // When this info was fetched
+	Error         string       `json:"error,omitempty"` // Error message if fetch failed
 	RateWindows   []RateWindow `json:"rate_windows,omitempty"`
 	Usage         *UsageStats  `json:"usage,omitempty"`
-	BillingReset  string       `json:"billing_reset,omitempty"` // e.g., "Jul 28"
+	BillingReset  string       `json:"billing_reset,omitempty"` // RFC3339 or short date
 	ExpiresAt     string       `json:"expires_at,omitempty"`
 	DaysRemaining int          `json:"days_remaining,omitempty"`
+	RemainingNum  float64      `json:"remaining_num,omitempty"`
+	CapNum        float64      `json:"cap_num,omitempty"`
+	UsedNum       float64      `json:"used_num,omitempty"`
+}
+
+var commandCodePlanCaps = map[string]float64{
+	"individual-go":       10.0,
+	"individual-go-v1":    10.0,
+	"individual-goat":     70.0,
+	"individual-pro":      30.0,
+	"individual-pro-v1":   80.0,
+	"individual-provider": 15.0,
+	"individual-max":      150.0,
+	"individual-ultra":    300.0,
+	"teams-pro":           40.0,
+}
+
+var commandCodePlanNames = map[string]string{
+	"individual-go":       "Go",
+	"individual-go-v1":    "Go",
+	"individual-goat":     "GOAT",
+	"individual-pro":      "Pro",
+	"individual-pro-v1":   "Pro",
+	"individual-provider": "Provider",
+	"individual-max":      "Max",
+	"individual-ultra":    "Ultra",
+	"teams-pro":           "Teams Pro",
 }
 
 // balanceCache caches balance info per connection ID to avoid spamming providers.
@@ -265,9 +291,9 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 			if json.Unmarshal(r.sub, &sub) == nil {
 				info.PlanType = sub.Data.PlanID
 				if sub.Data.CurrentPeriodEnd != "" {
+					info.BillingReset = sub.Data.CurrentPeriodEnd
 					if t, err := time.Parse(time.RFC3339, sub.Data.CurrentPeriodEnd); err == nil {
-						info.BillingReset = t.Format("Jan 2")
-						info.RateInfo = "Resets " + info.BillingReset
+						info.RateInfo = "Resets " + t.Format("Jan 2")
 					}
 				}
 			}
@@ -287,25 +313,57 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 						Used     float64 `json:"used"`
 						Cap      float64 `json:"cap"`
 						Exceeded bool    `json:"exceeded"`
+						ResetAt  int64   `json:"resetAt"`
 					} `json:"fiveHour"`
 					Weekly struct {
 						Used     float64 `json:"used"`
 						Cap      float64 `json:"cap"`
 						Exceeded bool    `json:"exceeded"`
+						ResetAt  int64   `json:"resetAt"`
 					} `json:"weekly"`
 				} `json:"windowLimits"`
 			}
 			if err := json.Unmarshal(r.credit, &cred); err == nil {
-				total := cred.Credits.MonthlyCredits + cred.Credits.PurchasedCredits + cred.Credits.FreeCredits
-				info.Balance = fmt.Sprintf("$%.2f", total)
+				rem := cred.Credits.MonthlyCredits + cred.Credits.PurchasedCredits + cred.Credits.FreeCredits
+				info.RemainingNum = rem
+				info.Balance = fmt.Sprintf("$%.2f", rem)
 				info.Currency = "USD"
+
+				planKey := strings.ToLower(strings.TrimSpace(info.PlanType))
+				capVal := commandCodePlanCaps[planKey]
+				if capVal > 0 {
+					info.CapNum = capVal
+					usedVal := capVal - rem
+					if usedVal < 0 {
+						usedVal = 0
+					}
+					info.UsedNum = usedVal
+				} else {
+					info.CapNum = rem
+					info.UsedNum = 0
+				}
 
 				// Structured rate windows
 				wl := cred.WindowLimits
 				if wl.Limited {
+					var reset5h, resetWeekly string
+					if wl.FiveHour.ResetAt > 0 {
+						if wl.FiveHour.ResetAt > 1e12 {
+							reset5h = time.UnixMilli(wl.FiveHour.ResetAt).UTC().Format(time.RFC3339)
+						} else {
+							reset5h = time.Unix(wl.FiveHour.ResetAt, 0).UTC().Format(time.RFC3339)
+						}
+					}
+					if wl.Weekly.ResetAt > 0 {
+						if wl.Weekly.ResetAt > 1e12 {
+							resetWeekly = time.UnixMilli(wl.Weekly.ResetAt).UTC().Format(time.RFC3339)
+						} else {
+							resetWeekly = time.Unix(wl.Weekly.ResetAt, 0).UTC().Format(time.RFC3339)
+						}
+					}
 					info.RateWindows = []RateWindow{
-						{Name: "5-hour", Used: wl.FiveHour.Used, Cap: wl.FiveHour.Cap, Exceeded: wl.FiveHour.Exceeded},
-						{Name: "weekly", Used: wl.Weekly.Used, Cap: wl.Weekly.Cap, Exceeded: wl.Weekly.Exceeded},
+						{Name: "5-hour", Used: wl.FiveHour.Used, Cap: wl.FiveHour.Cap, Exceeded: wl.FiveHour.Exceeded, ResetAt: reset5h},
+						{Name: "weekly", Used: wl.Weekly.Used, Cap: wl.Weekly.Cap, Exceeded: wl.Weekly.Exceeded, ResetAt: resetWeekly},
 					}
 					// Legacy flat string (kept for backward compat)
 					info.RateInfo += fmt.Sprintf(" · 5h: %d/%d · week: %d/%d",
@@ -330,6 +388,12 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 			}
 			if json.Unmarshal(r.usage, &usage) == nil {
 				info.TotalUsed = fmt.Sprintf("$%.4f", usage.TotalCredits)
+				if info.CapNum <= 0 || info.CapNum == info.RemainingNum {
+					if usage.TotalCredits > 0 {
+						info.UsedNum = usage.TotalCredits
+						info.CapNum = info.RemainingNum + usage.TotalCredits
+					}
+				}
 				info.Usage = &UsageStats{
 					TotalRequests: usage.TotalCount,
 					TotalTokens:   usage.TotalTokens,

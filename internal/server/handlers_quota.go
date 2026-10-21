@@ -81,6 +81,41 @@ func (s *Server) buildConnectionQuota(ctx context.Context, id, name, format, oau
 		quotas := make(map[string]any)
 		var limits []map[string]any
 
+		// 1. Primary Credits Balance Row
+		capVal := info.CapNum
+		usedVal := info.UsedNum
+		remVal := info.RemainingNum
+		remPct := 100.0
+		if capVal > 0 {
+			remPct = (remVal / capVal) * 100.0
+			if remPct > 100.0 {
+				remPct = 100.0
+			}
+			if remPct < 0.0 {
+				remPct = 0.0
+			}
+		} else if remVal > 0 {
+			remPct = 100.0
+		}
+
+		credItem := map[string]any{
+			"displayName":         fmt.Sprintf("Credits Balance (%s)", info.Currency),
+			"window":              "credits",
+			"used":                usedVal,
+			"total":               capVal,
+			"remaining":           remVal,
+			"remainingPercentage": remPct,
+			"isCreditBalance":     true,
+			"currency":            info.Currency,
+			"description":         fmt.Sprintf("$%.2f remaining of $%.2f (used $%.2f)", remVal, capVal, usedVal),
+		}
+		if info.BillingReset != "" {
+			credItem["resetAt"] = info.BillingReset
+		}
+		limits = append(limits, credItem)
+		quotas["credits"] = credItem
+
+		// 2. Rolling Rate Windows (5-hour, weekly)
 		for _, win := range info.RateWindows {
 			remPct := 100.0
 			if win.Cap > 0 {
@@ -96,36 +131,29 @@ func (s *Server) buildConnectionQuota(ctx context.Context, id, name, format, oau
 				"used":                win.Used,
 				"total":               win.Cap,
 				"remainingPercentage": remPct,
+				"exceeded":            win.Exceeded,
 				"description":         fmt.Sprintf("Window: %s (used %.1f of %.0f)", win.Name, win.Used, win.Cap),
 			}
-			if info.BillingReset != "" {
+			if win.ResetAt != "" {
+				limitItem["resetAt"] = win.ResetAt
+			} else if info.BillingReset != "" {
 				limitItem["resetAt"] = info.BillingReset
 			}
 			limits = append(limits, limitItem)
 			quotas[win.Name] = limitItem
 		}
 
-		if info.Balance != "" {
-			limits = append(limits, map[string]any{
-				"displayName":         fmt.Sprintf("Credits Balance (%s)", info.Currency),
-				"window":              "credits",
-				"used":                0,
-				"total":               0,
-				"remainingPercentage": 100.0,
-				"description":         fmt.Sprintf("Balance: %s (Total Used: %s) · %s", info.Balance, info.TotalUsed, info.RateInfo),
-				"resetAt":             info.BillingReset,
-			})
+		planName := info.PlanType
+		if name, ok := commandCodePlanNames[strings.ToLower(planName)]; ok {
+			planName = name
+		} else if planName == "" {
+			planName = "Command Code"
 		}
 
 		group := map[string]any{
 			"name":        "Command Code Rate Windows & Credits",
-			"description": fmt.Sprintf("Subscription reset: %s · %s", info.BillingReset, info.RateInfo),
+			"description": fmt.Sprintf("Plan: %s · Period ends: %s", planName, info.BillingReset),
 			"limits":      limits,
-		}
-
-		planName := info.PlanType
-		if planName == "" {
-			planName = "Command Code"
 		}
 
 		return map[string]any{

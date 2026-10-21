@@ -60,3 +60,18 @@ func TestParseKiloBalanceZero(t *testing.T) {
 		t.Errorf("balance = %q, want $0.00", info.Balance)
 	}
 }
+
+func TestCommandCodePlanCaps(t *testing.T) {
+	if commandCodePlanCaps["individual-go"] != 10.0 {
+		t.Errorf("individual-go cap = %v, want 10.0", commandCodePlanCaps["individual-go"])
+	}
+	if commandCodePlanCaps["individual-goat"] != 70.0 {
+		t.Errorf("individual-goat cap = %v, want 70.0", commandCodePlanCaps["individual-goat"])
+	}
+	if commandCodePlanCaps["individual-pro"] != 30.0 {
+		t.Errorf("individual-pro cap = %v, want 30.0", commandCodePlanCaps["individual-pro"])
+	}
+	if commandCodePlanNames["individual-go"] != "Go" {
+		t.Errorf("individual-go name = %q, want Go", commandCodePlanNames["individual-go"])
+	}
+}
