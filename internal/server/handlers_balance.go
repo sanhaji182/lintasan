@@ -459,7 +459,7 @@ func parseKiloBalance(body []byte) BalanceInfo {
 }
 
 func fetchDeepseekBalance(apiKey string) BalanceInfo {
-	req, _ := http.NewRequest("GET", "https://api.deepseek.com/api/user/balance", nil)
+	req, _ := http.NewRequest("GET", "https://api.deepseek.com/user/balance", nil)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
 

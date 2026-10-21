@@ -2,7 +2,8 @@
   import TabNav from '$lib/components/TabNav.svelte';
   const __tabs = [
     { label: 'Requests', path: '/dashboard/analytics' },
-    { label: 'Usage & Quota', path: '/dashboard/usage' },
+    { label: 'Usage', path: '/dashboard/usage' },
+    { label: 'Quota Tracker', path: '/dashboard/quota' },
     { label: 'Savings', path: '/dashboard/savings' },
     { label: 'Logs', path: '/dashboard/logs' },
     { label: 'Metrics', path: '/dashboard/observability' }
@@ -360,6 +361,14 @@
               <RefreshCw size={12} class={refreshingAllQuota ? 'spinning' : ''} />
               <span>Refresh All</span>
             </button>
+
+            <a
+              href="/dashboard/quota"
+              class="btn-secondary flex items-center gap-1.5"
+              style="padding: 5px 12px; font-size: 11px; font-weight: 600; text-decoration: none; color: var(--color-primary); border-color: rgba(99, 102, 241, 0.3);"
+            >
+              <span>Full View →</span>
+            </a>
           </div>
         </div>
 

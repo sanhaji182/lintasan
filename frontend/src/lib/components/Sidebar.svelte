@@ -3,7 +3,7 @@
   import {
     LayoutDashboard, Link2, GitBranch, BarChart3, Key, Users, UserCircle, Webhook,
     Database, Settings, Puzzle, MessageSquare, BookOpen, Brain, Globe, Server,
-    Sun, Moon, Upload, Plug, Rocket, FlaskConical, ChevronDown
+    Sun, Moon, Upload, Plug, Rocket, FlaskConical, ChevronDown, Gauge
   } from 'lucide-svelte';
   import { theme } from '$lib/stores/theme';
   import LogoMark from '$lib/components/LogoMark.svelte';
@@ -16,7 +16,7 @@
   const icons: Record<string, any> = {
     overview: LayoutDashboard, quickstart: Rocket, playground: MessageSquare,
     connections: Link2, models: Brain, providers: Server, routing: GitBranch,
-    usage: BarChart3, observability: BarChart3,
+    usage: BarChart3, quota: Gauge, observability: BarChart3,
     keys: Key, teams: Users, users: UserCircle, webhooks: Webhook, memory: Brain,
     mcp: Plug, translator: Globe, plugins: Puzzle, backup: Database, migrate: Upload,
     labs: FlaskConical, settings: Settings, docs: BookOpen,

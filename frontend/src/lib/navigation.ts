@@ -27,6 +27,7 @@ export const navigationGroups: NavigationGroup[] = [
   ]},
   { label: 'Observe', collapsible: false, items: [
     { label: 'Usage', path: '/dashboard/usage', icon: 'usage', description: 'Token and request volume across models and accounts', keywords: ['usage', 'tokens', 'volume', 'stats'] },
+    { label: 'Quota Tracker', path: '/dashboard/quota', icon: 'quota', description: 'Real-time upstream account quotas and limits', keywords: ['quota', 'limits', 'antigravity', 'commandcode', 'qoder', 'balance'] },
     { label: 'Analytics', path: '/dashboard/analytics', icon: 'observability', description: 'Requests, usage, savings and logs', keywords: ['observe', 'requests', 'usage', 'logs', 'cost'] },
   ]},
   { label: 'Configure', collapsible: true, items: [
@@ -54,7 +55,7 @@ export const navigationItems = navigationGroups.flatMap(group =>
 const relatedRoutes: Record<string, string[]> = {
   '/dashboard/connections': ['/dashboard/discover', '/dashboard/oauth-ide'],
   '/dashboard/routing': ['/dashboard/fallback'],
-  '/dashboard/analytics': ['/dashboard/usage', '/dashboard/savings', '/dashboard/logs', '/dashboard/observability'],
+  '/dashboard/analytics': ['/dashboard/usage', '/dashboard/quota', '/dashboard/savings', '/dashboard/logs', '/dashboard/observability'],
 };
 
 export function routeIsActive(itemPath: string, pathname: string): boolean {

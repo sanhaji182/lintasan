@@ -19,6 +19,7 @@ import { page } from '$app/state';
     '/dashboard/fallback': 'Fallback',
     '/dashboard/logs': 'Logs',
     '/dashboard/usage': 'Usage',
+    '/dashboard/quota': 'Quota Tracker',
     '/dashboard/analytics': 'Analytics',
     '/dashboard/observability': 'Observability',
     '/dashboard/memory': 'Memory',

@@ -2,7 +2,8 @@
   import TabNav from '$lib/components/TabNav.svelte';
   const __tabs = [
     { label: 'Requests', path: '/dashboard/analytics' },
-    { label: 'Usage & Quota', path: '/dashboard/usage' },
+    { label: 'Usage', path: '/dashboard/usage' },
+    { label: 'Quota Tracker', path: '/dashboard/quota' },
     { label: 'Savings', path: '/dashboard/savings' },
     { label: 'Logs', path: '/dashboard/logs' },
     { label: 'Metrics', path: '/dashboard/observability' }
