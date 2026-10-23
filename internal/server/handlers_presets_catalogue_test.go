@@ -64,6 +64,27 @@ func TestBuiltinPresetsHaveNoDuplicates(t *testing.T) {
 	}
 }
 
+// TestMuseMuse2APIPreset pins the sidecar integration: muse2api exposes
+// muse.ai behind an OpenAI-compatible API on the default local port.
+func TestMuseMuse2APIPreset(t *testing.T) {
+	for _, p := range builtinPresetCatalogue(t) {
+		if p.Name != "Muse (muse2api)" {
+			continue
+		}
+		if p.BaseURL != "http://127.0.0.1:18610/v1" {
+			t.Errorf("base URL = %q, want http://127.0.0.1:18610/v1", p.BaseURL)
+		}
+		if p.Format != "openai" {
+			t.Errorf("format = %q, want openai", p.Format)
+		}
+		if p.Category != "local" {
+			t.Errorf("category = %q, want local", p.Category)
+		}
+		return
+	}
+	t.Fatal("Muse (muse2api) preset is missing")
+}
+
 // The importer resolves a competitor's provider id against these presets, and
 // that lookup is what restores an endpoint the export omitted. If the aliases a
 // preset answers to ever stop covering the spellings a competitor uses, the

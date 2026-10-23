@@ -220,6 +220,12 @@ func seedCatalogue() []Preset {
 		{Name: "Replicate", Domain: "replicate.com", BaseURL: "https://api.replicate.com/v1", Format: "openai", KeyLabel: "API Key", Category: "aggregator"},
 		{Name: "Perplexity", Domain: "perplexity.ai", BaseURL: "https://api.perplexity.ai", Format: "openai", KeyLabel: "API Key", Category: "search"},
 		{Name: "Ollama", Domain: "ollama.com", BaseURL: "http://localhost:11434/v1", Format: "openai", KeyLabel: "API Key (optional)", Category: "local"},
+		// muse2api is a separate local sidecar that exposes muse.ai as an
+		// OpenAI-compatible API using a Chromium/CDP browser driver (its direct
+		// HTTP driver is not implemented upstream yet). Chat and images route
+		// through this connection; Lintasan has no /v1/videos equivalent, so
+		// muse.ai video generation is not proxied. See README "Provider Presets".
+		{Name: "Muse (muse2api)", Domain: "muse.ai", BaseURL: "http://127.0.0.1:18610/v1", Format: "openai", KeyLabel: "muse2api API Key", Category: "local"},
 		// Endpoints below were confirmed by a live GET /v1/models against the
 		// provider before being added here, so the importer can restore
 		// connections that a competitor's export leaves without a base URL.

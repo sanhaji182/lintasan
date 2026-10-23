@@ -606,10 +606,18 @@ Lintasan ships with built-in provider presets and supports custom providers. Maj
 | **High-Speed** | Groq · Together AI · Fireworks AI · Cerebras · NVIDIA NIM |
 | **Chinese** | GLM/Zhipu · Kimi/Moonshot · MiniMax · Qwen/Alibaba · SiliconFlow |
 | **Indonesia** | Sumopod · Apertis AI |
-| **Self-Hosted** | Ollama · vLLM · LM Studio |
+| **Self-Hosted** | Ollama · vLLM · LM Studio · Muse (via muse2api) |
 | **Specialized** | Perplexity · Cohere · DeepInfra · Stability AI · fal.ai |
 
 Plus any custom OpenAI-compatible endpoint — just provide a base URL and API key.
+
+### Muse via muse2api (sidecar)
+
+The built-in **Muse (muse2api)** preset points at [`muse2api`](https://github.com/www222fff/muse2api), a separate local gateway for muse.ai. muse2api drives the muse.ai web app through Chromium/CDP (its direct HTTP driver is still reserved upstream), so run it on the same host as Lintasan:
+
+1. Run muse2api with `MUSE2API_DRIVER=browser` and import your muse.ai cookies (`hatch_sess`, `hatch_gw`, `hatch_vml`, `hatch_native_auth_device`).
+2. In Lintasan, add a connection from the **Muse (muse2api)** preset (`http://127.0.0.1:18610/v1`) and use the muse2api API key.
+3. Chat and image generation route through Lintasan normally. `/v1/videos` has no Lintasan equivalent yet, so muse.ai video tasks are not proxied.
 
 ---
 
