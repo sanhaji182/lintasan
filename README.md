@@ -622,7 +622,7 @@ The built-in **Muse (muse2api)** preset points at [`muse2api`](https://github.co
 
 Chat and image generation route through Lintasan normally. `/v1/videos` has no Lintasan equivalent yet, so muse.ai video tasks are not proxied.
 
-For the complete walkthrough — systemd unit, environment files, cookie formats, connection setup, curl tests, troubleshooting, and key rotation — see **[docs/muse2api-tutorial.md](docs/muse2api-tutorial.md)**.
+For the complete walkthrough — systemd unit, environment files, cookie formats, connection setup, curl tests, troubleshooting, and key rotation — see **[docs/muse2api-tutorial.md](docs/muse2api-tutorial.md)**. The optional Chrome extension in [`tools/muse-cookie-extension`](tools/muse-cookie-extension) automates cookie capture with a one-time import token.
 
 ---
 

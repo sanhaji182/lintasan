@@ -22,6 +22,8 @@ package server
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -32,8 +34,11 @@ import (
 )
 
 const (
-	museMaxBodyBytes = 2 << 20 // 2 MiB
-	museSetupHint    = "Set LINTASAN_MUSE2API_ADMIN_KEY (and optionally LINTASAN_MUSE2API_URL) on the Lintasan server, then restart it."
+	museMaxBodyBytes    = 2 << 20 // 2 MiB
+	museImportMaxBytes  = 128 << 10
+	museImportTokenTTL  = 10 * time.Minute
+	museImportTokenPref = "museimp_"
+	museSetupHint       = "Set LINTASAN_MUSE2API_ADMIN_KEY (and optionally LINTASAN_MUSE2API_URL) on the Lintasan server, then restart it."
 )
 
 var museAccountIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
@@ -81,6 +86,168 @@ func museError(w http.ResponseWriter, status int, message string) {
 		"error": message,
 		"hint":  museSetupHint,
 	})
+}
+
+// setMuseImportCORS is applied to the extension import endpoint and its
+// preflight. It is token-authenticated and does not use cookies, so a wildcard
+// origin is safe here; credentials are deliberately not allowed.
+func setMuseImportCORS(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+	w.Header().Set("Access-Control-Max-Age", "600")
+	w.Header().Set("Cache-Control", "no-store")
+}
+
+func bearerFromHeader(r *http.Request) string {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+}
+
+func (s *Server) pruneMuseImportTokensLocked(now time.Time) {
+	for token, expires := range s.museImportTokens {
+		if !now.Before(expires) {
+			delete(s.museImportTokens, token)
+		}
+	}
+}
+
+func (s *Server) newMuseImportToken() (string, time.Time, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", time.Time{}, err
+	}
+	token := museImportTokenPref + hex.EncodeToString(b)
+	expires := time.Now().Add(museImportTokenTTL)
+
+	s.museImportMu.Lock()
+	defer s.museImportMu.Unlock()
+	if s.museImportTokens == nil {
+		s.museImportTokens = make(map[string]time.Time)
+	}
+	s.pruneMuseImportTokensLocked(time.Now())
+	s.museImportTokens[token] = expires
+	return token, expires, nil
+}
+
+// museImportTokenValid peeks at a token without consuming it. The middleware
+// uses it so the handler remains the single place that consumes the token.
+func (s *Server) museImportTokenValid(token string) bool {
+	if token == "" {
+		return false
+	}
+	s.museImportMu.Lock()
+	defer s.museImportMu.Unlock()
+	expires, ok := s.museImportTokens[token]
+	if !ok {
+		return false
+	}
+	now := time.Now()
+	if !now.Before(expires) {
+		delete(s.museImportTokens, token)
+		return false
+	}
+	return true
+}
+
+func (s *Server) consumeMuseImportToken(token string) bool {
+	if token == "" {
+		return false
+	}
+	s.museImportMu.Lock()
+	defer s.museImportMu.Unlock()
+	expires, ok := s.museImportTokens[token]
+	delete(s.museImportTokens, token)
+	return ok && time.Now().Before(expires)
+}
+
+// handleMuseImportToken mints a short-lived, single-use token for the browser
+// extension. The token cannot call any other endpoint.
+func (s *Server) handleMuseImportToken(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAdmin(w, r); !ok {
+		return
+	}
+	if !s.museConfigured() {
+		museError(w, http.StatusServiceUnavailable, "muse sidecar is not configured")
+		return
+	}
+	token, expires, err := s.newMuseImportToken()
+	if err != nil {
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "failed to generate import token"})
+		return
+	}
+	writeJSON(w, map[string]any{
+		"token":      token,
+		"expires_at": expires.Unix(),
+		"expires_in": int(museImportTokenTTL.Seconds()),
+	})
+}
+
+// handleMuseBrowserImport is the extension-facing endpoint. The middleware has
+// already validated the one-time token for this path; this handler consumes it,
+// validates the payload, and forwards to muse2api with the server-side admin key.
+func (s *Server) handleMuseBrowserImport(w http.ResponseWriter, r *http.Request) {
+	setMuseImportCORS(w)
+	if !s.museConfigured() {
+		museError(w, http.StatusServiceUnavailable, "muse sidecar is not configured")
+		return
+	}
+	if !s.consumeMuseImportToken(bearerFromHeader(r)) {
+		writeJSONStatus(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired import token"})
+		return
+	}
+
+	limited := http.MaxBytesReader(w, r.Body, museImportMaxBytes)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "request body too large or unreadable"})
+		return
+	}
+	var payload struct {
+		Label   string          `json:"label"`
+		Cookies json.RawMessage `json:"cookies"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil || len(payload.Cookies) == 0 || string(payload.Cookies) == "null" {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "label/cookies payload is invalid"})
+		return
+	}
+	forwarded, err := json.Marshal(payload)
+	if err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "label/cookies payload is invalid"})
+		return
+	}
+
+	resp, data, err := s.museDo(r, http.MethodPost, "/admin/accounts", forwarded)
+	if err != nil {
+		writeJSONStatus(w, http.StatusBadGateway, map[string]any{
+			"error":  "muse2api unreachable",
+			"detail": err.Error(),
+		})
+		return
+	}
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		writeJSONStatus(w, http.StatusBadGateway, map[string]any{
+			"error": "muse2api rejected the admin key",
+			"hint":  "check LINTASAN_MUSE2API_ADMIN_KEY",
+		})
+	case resp.StatusCode >= 500:
+		writeJSONStatus(w, http.StatusBadGateway, map[string]any{
+			"error":           "muse2api upstream error",
+			"upstream_status": resp.StatusCode,
+		})
+	default:
+		ct := resp.Header.Get("Content-Type")
+		if ct == "" {
+			ct = "application/json"
+		}
+		w.Header().Set("Content-Type", ct)
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(data)
+	}
 }
 
 // handleMuseStatus is deliberately 200 even when the sidecar is down: the

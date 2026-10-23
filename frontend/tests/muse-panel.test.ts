@@ -116,6 +116,16 @@ describe('Muse accounts panel', () => {
     });
   });
 
+  it('generates a one-time token for the browser extension', async () => {
+    mocks.post.mockResolvedValueOnce({ token: 'museimp_testtoken', expires_at: 123, expires_in: 600 });
+    await renderPage();
+
+    await fireEvent.click(await screen.findByRole('button', { name: /Generate import token/i }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/muse/import-token', {}));
+    expect(await screen.findByText('museimp_testtoken')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Copy/i })).toBeInTheDocument();
+  });
+
   it('shows setup instructions when the sidecar is not configured', async () => {
     mocks.get.mockImplementation(async (path: string) => {
       if (path === '/api/muse/status') {

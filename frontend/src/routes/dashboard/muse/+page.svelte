@@ -66,6 +66,12 @@
     meta?: Record<string, unknown>;
   }
 
+  interface MuseImportToken {
+    token: string;
+    expires_at: number;
+    expires_in: number;
+  }
+
   let status = $state<MuseStatus | null>(null);
   let accounts = $state<MuseAccount[]>([]);
   let loading = $state(true);
@@ -78,6 +84,8 @@
   let importing = $state(false);
   let copiedSetup = $state('');
   let quotaResult = $state<Record<string, string>>({});
+  let importToken = $state('');
+  let generatingToken = $state(false);
 
   const configured = $derived(status?.configured === true);
   const reachable = $derived(status?.configured === true && status?.reachable === true && status?.ok === true);
@@ -298,6 +306,20 @@
     }
   }
 
+  async function generateImportToken() {
+    generatingToken = true;
+    error = '';
+    try {
+      const res = await api.post<MuseImportToken>('/api/muse/import-token', {});
+      importToken = res.token;
+      showToast('Import token generated — valid for 10 minutes, single use', 'success', 5000);
+    } catch (e: any) {
+      error = e?.message || 'Failed to generate import token';
+    } finally {
+      generatingToken = false;
+    }
+  }
+
   onMount(load);
 </script>
 
@@ -430,6 +452,38 @@
           </button>
         </div>
       </form>
+
+      <div class="extension-box">
+        <div class="extension-head">
+          <Sparkles size={16} />
+          <strong>Automatic import with the browser extension</strong>
+        </div>
+        <p class="muted small">
+          Load <code>tools/muse-cookie-extension</code> in Chrome (Developer mode → Load unpacked), log in to
+          muse.ai, then paste a one-time token there. The extension reads the four <code>hatch_*</code> cookies and
+          posts them here; it never sees the muse2api admin key.
+        </p>
+        {#if importToken}
+          <div class="token-row">
+            <code class="token-value">{importToken}</code>
+            <button type="button" class="copy-chip" onclick={() => copySetup(importToken, 'import-token')}>
+              {#if copiedSetup === 'import-token'}<Check size={12} />{:else}<Copy size={12} />{/if} Copy
+            </button>
+          </div>
+          <div class="token-actions">
+            <span class="muted small">Valid ~10 minutes · single use · cannot access other endpoints</span>
+            <button type="button" class="btn-secondary-sm" onclick={generateImportToken} disabled={generatingToken}>
+              {generatingToken ? 'Generating…' : 'New token'}
+            </button>
+          </div>
+        {:else}
+          <div class="form-actions">
+            <button type="button" class="btn-secondary-sm" onclick={generateImportToken} disabled={generatingToken}>
+              {generatingToken ? 'Generating…' : 'Generate import token'}
+            </button>
+          </div>
+        {/if}
+      </div>
     </section>
 
     <section class="card accounts-card">
@@ -813,6 +867,45 @@
     display: flex;
     justify-content: flex-end;
     margin-top: 10px;
+  }
+  .extension-box {
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--color-border);
+  }
+  .extension-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--color-fg-0);
+    margin-bottom: 6px;
+  }
+  .extension-head :global(svg) {
+    color: var(--color-primary);
+  }
+  .token-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 10px 0 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg-body);
+  }
+  .token-value {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+  .token-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
   }
   .btn-primary-sm,
   .btn-secondary-sm,

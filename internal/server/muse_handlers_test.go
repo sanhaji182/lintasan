@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sanhaji182/lintasan-go/internal/auth"
+	"github.com/sanhaji182/lintasan-go/internal/config"
 )
 
 func museAdminRequest(method, target string, body string) *http.Request {
@@ -196,5 +197,144 @@ func TestMuseConfiguredValidation(t *testing.T) {
 				t.Errorf("museConfigured() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestMuseImportTokenIsAdminOnly(t *testing.T) {
+	s, _ := newMuseProxy(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("token generation must not call upstream")
+	})
+
+	rec := httptest.NewRecorder()
+	s.handleMuseImportToken(rec, museAdminRequest(http.MethodPost, "/api/muse/import-token", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	out := decodeMuse(t, rec)
+	token, _ := out["token"].(string)
+	if !strings.HasPrefix(token, museImportTokenPref) {
+		t.Fatalf("token %q missing prefix", token)
+	}
+	if out["expires_in"].(float64) != museImportTokenTTL.Seconds() {
+		t.Errorf("expires_in = %v", out["expires_in"])
+	}
+
+	rec = httptest.NewRecorder()
+	s.handleMuseImportToken(rec, httptest.NewRequest(http.MethodPost, "/api/muse/import-token", nil))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin status = %d, want 403", rec.Code)
+	}
+}
+
+func TestMuseBrowserImportConsumesToken(t *testing.T) {
+	var gotAuth, gotBody string
+	s, _ := newMuseProxy(t, func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{"account":{"id":"acc_ext"},"missing_cookies":[]}`))
+	})
+	token, _, err := s.newMuseImportToken()
+	if err != nil {
+		t.Fatalf("new token: %v", err)
+	}
+
+	body := `{"label":"ext","cookies":{"hatch_sess":"x","hatch_gw":"y","hatch_vml":"z","hatch_native_auth_device":"w"}}`
+	req := httptest.NewRequest(http.MethodPost, "/muse/import", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.handleMuseBrowserImport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("import status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Error("missing CORS header")
+	}
+	if gotAuth != "Bearer muse-admin-secret" {
+		t.Errorf("upstream auth = %q", gotAuth)
+	}
+	if !strings.Contains(gotBody, `"hatch_sess":"x"`) || !strings.Contains(gotBody, `"label":"ext"`) {
+		t.Errorf("forwarded body = %s", gotBody)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/muse/import", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	s.handleMuseBrowserImport(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("reused token status = %d, want 401", rec.Code)
+	}
+}
+
+func TestMuseImportTokenExpires(t *testing.T) {
+	s, _ := newMuseProxy(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("expired token must not reach upstream")
+	})
+	token, _, err := s.newMuseImportToken()
+	if err != nil {
+		t.Fatalf("new token: %v", err)
+	}
+	s.museImportMu.Lock()
+	s.museImportTokens[token] = time.Now().Add(-time.Minute)
+	s.museImportMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodPost, "/muse/import", strings.NewReader(`{"cookies":{"hatch_sess":"x"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.handleMuseBrowserImport(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestMuseImportEndpointMiddleware(t *testing.T) {
+	s, ts := newTestServer(t, &config.Config{Port: 0, MasterKey: "test-master"})
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"account":{"id":"acc_mw"},"missing_cookies":[]}`))
+	}))
+	t.Cleanup(upstream.Close)
+	s.museBaseURL = upstream.URL
+	s.museAdminKey = "muse-admin-secret"
+	s.museClient = upstream.Client()
+
+	// Preflight must be reachable without a token.
+	req, _ := http.NewRequest(http.MethodOptions, ts.URL+"/muse/import", nil)
+	req.Header.Set("Origin", "chrome-extension://test")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("preflight: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want 204", resp.StatusCode)
+	}
+
+	// POST without a token stays closed.
+	resp, err = http.Post(ts.URL+"/muse/import", "application/json", strings.NewReader(`{"cookies":{"hatch_sess":"x"}}`))
+	if err != nil {
+		t.Fatalf("no-token post: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no-token status = %d, want 401", resp.StatusCode)
+	}
+
+	// A valid token passes middleware and is consumed by the handler.
+	token, _, err := s.newMuseImportToken()
+	if err != nil {
+		t.Fatalf("new token: %v", err)
+	}
+	req, _ = http.NewRequest(http.MethodPost, ts.URL+"/muse/import",
+		strings.NewReader(`{"label":"ext","cookies":{"hatch_sess":"x","hatch_gw":"y","hatch_vml":"z","hatch_native_auth_device":"w"}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("token post: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("token post status = %d, want 200", resp.StatusCode)
 	}
 }

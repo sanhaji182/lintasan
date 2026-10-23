@@ -59,6 +59,11 @@ type Server struct {
 	museBaseURL  string
 	museAdminKey string
 	museClient   *http.Client
+
+	// One-time import tokens for the browser extension. They authenticate only
+	// POST /muse/import (cookie upload) and expire after museImportTokenTTL.
+	museImportMu     sync.Mutex
+	museImportTokens map[string]time.Time
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
@@ -98,6 +103,7 @@ func New(cfg *config.Config, database *db.DB) *Server {
 			return http.ErrUseLastResponse
 		},
 	}
+	s.museImportTokens = make(map[string]time.Time)
 	s.oauthMgr = auth.NewOAuthManager(database)
 	s.proxy = NewProxyHandler(cfg, database)
 	s.proxy.SetOAuthManager(s.oauthMgr)
@@ -326,6 +332,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/muse/accounts/{id}/reset", s.handleMuseAccountReset)
 	s.mux.HandleFunc("GET /api/muse/accounts/{id}/quota", s.handleMuseAccountQuota)
 
+	// One-time token for the browser extension. The extension cannot hold a
+	// dashboard JWT or the muse2api admin key, so an admin mints a short-lived
+	// token scoped to POST /muse/import.
+	s.mux.HandleFunc("POST /api/muse/import-token", s.handleMuseImportToken)
+	s.mux.HandleFunc("POST /muse/import", s.handleMuseBrowserImport)
+
 	// Preset Category Management (CRUD)
 	s.mux.HandleFunc("GET /api/preset-categories", s.handleGetPresetCategories)
 	s.mux.HandleFunc("POST /api/preset-categories", s.handleCreatePresetCategory)
@@ -494,6 +506,26 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		// --- ACTIVE state: fail-CLOSED. ---
+
+		// Browser-extension cookie import. This is the ONLY non-JWT entry point:
+		// it is path-limited to POST /muse/import and authenticated by a
+		// one-time admin-issued token, never by a general bypass.
+		if path == "/muse/import" {
+			setMuseImportCORS(w)
+			switch {
+			case r.Method == http.MethodOptions:
+				w.WriteHeader(http.StatusNoContent)
+				return
+			case r.Method == http.MethodPost && s.museImportTokenValid(bearerFromHeader(r)):
+				next.ServeHTTP(w, r)
+				return
+			default:
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{"error": "invalid or missing import token"})
+				return
+			}
+		}
 
 		// Login is always reachable so users can obtain a token.
 		if path == "/api/auth/login" && r.Method == http.MethodPost {

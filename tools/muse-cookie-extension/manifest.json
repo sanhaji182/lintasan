@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Lintasan — Muse Cookie Bridge",
+  "version": "0.1.0",
+  "description": "Capture muse.ai session cookies and import them into a Lintasan Muse panel using a one-time token.",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": ["https://muse.ai/*", "https://*.muse.ai/*"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "action": {
+    "default_title": "Muse Cookie Bridge",
+    "default_popup": "popup.html"
+  }
+}

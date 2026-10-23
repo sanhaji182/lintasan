@@ -237,6 +237,24 @@ meneruskan ke muse2api `POST /admin/accounts` dengan admin key server-side.
 Cookie tidak disimpan oleh Lintasan; muse2api menyimpannya di `data/accounts.json`
 dan profil Chrome.
 
+### Import otomatis dengan ekstensi Chrome
+
+Jika tidak ingin menyalin cookie manual:
+
+1. Di panel Muse, klik **Generate import token**. Token berlaku ±10 menit,
+   sekali pakai, dan **hanya** bisa dipakai untuk import cookie.
+2. Muat ekstensi dari folder [`tools/muse-cookie-extension`](../tools/muse-cookie-extension):
+   buka `chrome://extensions` → aktifkan **Developer mode** → **Load unpacked**
+   → pilih folder tersebut.
+3. Login ke muse.ai di browser yang sama.
+4. Buka ekstensi, isi URL Lintasan, paste token, dan klik **Capture & import**.
+   Browser mungkin meminta izin akses ke origin Lintasan.
+5. Kembali ke panel Muse dan klik **Renew session**.
+
+Ekstensi hanya membaca empat cookie `hatch_*`, mengirimnya langsung ke Lintasan
+dengan token, dan tidak pernah melihat admin key muse2api. Token tidak disimpan
+di extension; jika import gagal, generate token baru.
+
 ---
 
 ## 8. Buat connection di Lintasan

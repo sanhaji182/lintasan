@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Muse Cookie Bridge</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --fg: #0f172a;
+        --muted: #64748b;
+        --border: #e2e8f0;
+        --primary: #3b5bdb;
+        --primary-light: #eef2ff;
+        --success: #059669;
+        --error: #dc2626;
+        --warning: #d97706;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111a2d;
+          --fg: #e2e8f0;
+          --muted: #94a3b8;
+          --border: #24324a;
+          --primary: #7c9cff;
+          --primary-light: #18253d;
+          --success: #34d399;
+          --error: #f87171;
+          --warning: #fbbf24;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 340px;
+        margin: 0;
+        padding: 14px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      h1 { margin: 0 0 4px; font-size: 15px; }
+      p { margin: 0 0 8px; color: var(--muted); font-size: 11.5px; }
+      label { display: block; margin: 9px 0 3px; font-size: 11px; font-weight: 600; color: var(--muted); }
+      input {
+        width: 100%;
+        padding: 7px 9px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--bg);
+        color: var(--fg);
+        font: inherit;
+      }
+      input:focus { outline: 2px solid var(--primary-light); border-color: var(--primary); }
+      button {
+        width: 100%;
+        margin-top: 12px;
+        padding: 9px 12px;
+        border: none;
+        border-radius: 8px;
+        background: var(--primary);
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
+      #status {
+        min-height: 18px;
+        margin-top: 10px;
+        padding: 8px 9px;
+        border-radius: 7px;
+        border: 1px solid var(--border);
+        background: var(--primary-light);
+        font-size: 11.5px;
+        white-space: pre-wrap;
+      }
+      #status:empty { display: none; }
+      #status.ok { border-color: color-mix(in srgb, var(--success) 35%, var(--border)); color: var(--success); }
+      #status.err { border-color: color-mix(in srgb, var(--error) 35%, var(--border)); color: var(--error); }
+      #status.warn { border-color: color-mix(in srgb, var(--warning) 35%, var(--border)); color: var(--warning); }
+      .foot { margin-top: 10px; font-size: 10.5px; color: var(--muted); }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    </style>
+  </head>
+  <body>
+    <h1>Muse Cookie Bridge</h1>
+    <p>Log in to <strong>muse.ai</strong> in this browser first. The extension reads only the four hatch session cookies.</p>
+
+    <label for="base">Lintasan URL</label>
+    <input id="base" type="url" placeholder="https://lintasan.sans.biz.id" autocomplete="url" />
+
+    <label for="token">One-time import token</label>
+    <input id="token" type="password" placeholder="museimp_…" autocomplete="off" spellcheck="false" />
+
+    <label for="label">Account label (optional)</label>
+    <input id="label" type="text" placeholder="muse-main" autocomplete="off" />
+
+    <button id="run" type="button">Capture &amp; import</button>
+    <div id="status" role="status" aria-live="polite"></div>
+    <div class="foot">Token: single use, ~10 minutes. Cookies are sent directly to your Lintasan server and are not stored by this extension.</div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
