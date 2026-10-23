@@ -310,17 +310,17 @@
           <div class="setting-info">
             <div class="flex items-center gap-2">
               <KeyRound size={14} style="color: #7c3aed;" />
-              <span style="font-size: 13px; font-weight: 500; color: var(--color-fg-0);">OAuth IDE (lab)</span>
+              <span style="font-size: 13px; font-weight: 500; color: var(--color-fg-0);">OAuth Providers (lab)</span>
             </div>
             <span style="font-size: 12px; color: var(--color-fg-3);">
-              IDE OAuth flows (Accounts / OAuth IDE). Admin-only; no server restart. Client IDs still via env.
+              IDE OAuth flows (Accounts / OAuth Providers). Admin-only; no server restart. Client IDs still via env.
             </span>
           </div>
           <button
             class="toggle-btn"
             class:active={settings.oauth_ide_enabled ?? false}
-            aria-label={`OAuth IDE lab: ${(settings.oauth_ide_enabled ?? false) ? 'enabled' : 'disabled'}`}
-            title={`OAuth IDE ${(settings.oauth_ide_enabled ?? false) ? 'enabled' : 'disabled'}`}
+            aria-label={`OAuth Providers lab: ${(settings.oauth_ide_enabled ?? false) ? 'enabled' : 'disabled'}`}
+            title={`OAuth Providers ${(settings.oauth_ide_enabled ?? false) ? 'enabled' : 'disabled'}`}
             onclick={() => settings.oauth_ide_enabled = !(settings.oauth_ide_enabled ?? false)}
           >
             <div class="toggle-track">

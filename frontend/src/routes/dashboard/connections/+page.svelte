@@ -1563,7 +1563,7 @@
           </label>
           {#if formUsesOAuth}
             <div class="input-field" style="font-size: 12px; color: var(--color-fg-2); padding: 10px 12px; background: var(--color-bg-body);">
-              Uses OAuth IDE session for <code>{form.oauth_provider}</code> — authorize on <a href="/dashboard/oauth-ide">OAuth IDE</a> first.
+              Uses OAuth IDE session for <code>{form.oauth_provider}</code> — authorize on <a href="/dashboard/oauth-ide">OAuth Providers</a> first.
               <button type="button" class="btn-secondary" style="margin-left: 8px; padding: 2px 8px; font-size: 11px;" onclick={() => { form.oauth_provider = ''; }}>Clear OAuth</button>
             </div>
           {:else}

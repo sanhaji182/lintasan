@@ -72,7 +72,7 @@
       format: 'openai',
       isOAuth: true,
       oauthProvider: 'antigravity',
-      description: 'Google Cloud Code Assist & Gemini models via OAuth IDE',
+      description: 'Google Cloud Code Assist & Gemini models via OAuth Providers',
       models: [
         { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro', provider: 'Google Antigravity', context_window: 1048576, max_tokens: 8192, input_price_per_1m: 0, output_price_per_1m: 0, capabilities: ['chat', 'vision', 'tools', 'streaming'] },
         { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'Google Antigravity', context_window: 1048576, max_tokens: 8192, input_price_per_1m: 0, output_price_per_1m: 0, capabilities: ['chat', 'vision', 'tools', 'streaming'] },

@@ -13,7 +13,7 @@ export const helpContent: Record<string, string> = {
     '<strong>Experimental</strong> — Fitur eksperimental yang masih dalam pengembangan. Aktifkan dengan hati-hati — beberapa fitur mungkin belum stabil untuk production.',
 
   '/dashboard/oauth-ide':
-    '<strong>OAuth IDE</strong> — Experimental OAuth flow untuk IDE agents. Mendukung Claude Code, Codex, Copilot, Cline, dan lainnya. LAB — gunakan dengan pemahaman risiko.',
+    '<strong>OAuth Providers</strong> — Hubungkan akun subscription (Claude Code, Codex, Copilot, Cline, xAI, dan lainnya) lewat OAuth, cek kesehatan akun, lalu <em>wire</em> ke koneksi gateway. Experimental — hanya gunakan akun yang Anda berwenang menghubungkan.',
 
   '/dashboard/discover':
     '<strong>Discover</strong> — Temukan free dan public provider API secara otomatis. Scan provider yang tersedia dan tambahkan langsung ke koneksi Anda.',

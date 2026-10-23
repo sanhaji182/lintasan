@@ -36,7 +36,7 @@ import { page } from '$app/state';
     '/dashboard/mcp': 'MCP Server',
     '/dashboard/savings': 'Cost Savings',
     '/dashboard/translator': 'Format Translator',
-    '/dashboard/oauth-ide': 'OAuth IDE',
+    '/dashboard/oauth-ide': 'OAuth Providers',
     '/dashboard/qoder-connections': 'Qoder Connections',
   };
 
