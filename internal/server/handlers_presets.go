@@ -344,85 +344,22 @@ func seedCatalogue() []Preset {
 //     is base_url, not name — a rename changes the name, so matching on name
 //     would insert a duplicate rather than update. Manual (non-builtin)
 //     presets are never touched, so a user's own edits are safe.
+//
+// The same logic runs at startup, so a deploy makes new built-ins available
+// without waiting for the dashboard to call this endpoint.
 func (s *Server) handleSeedBuiltinPresets(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 		return
 	}
 
-	builtins := seedCatalogue()
-
-	// oldName -> currentName for presets that have been renamed. Matching the
-	// old name first is what lets a rename update the existing row instead of
-	// inserting a second one under the new name.
-	renames := map[string]string{
-		"gitlawb":                     "GitLawb",
-		"Alibaba Model Studio (Intl)": "Alibaba Model Studio Intl",
-		"GLM (China)":                 "GLM China",
-	}
-
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	inserted := 0
-	updated := 0
-	skipped := 0
-	for _, p := range builtins {
-		// Find the existing row, preferring the current name, then a prior
-		// name, then the endpoint. base_url is the stable identity.
-		var id string
-		var isBuiltin int
-		row := s.db.Conn().QueryRow(
-			`SELECT id, is_builtin FROM provider_presets
-			   WHERE lower(name) = lower(?)
-			      OR lower(name) = lower(?)
-			      OR lower(rtrim(base_url, '/')) = lower(rtrim(?, '/'))
-			   LIMIT 1`,
-			p.Name, oldNameFor(renames, p.Name), p.BaseURL,
-		)
-		if err := row.Scan(&id, &isBuiltin); err == nil && id != "" {
-			if isBuiltin == 1 {
-				// Refresh a built-in in place: name and category only. Never
-				// the base_url — that is the identity we matched on — and
-				// never a manual preset.
-				if _, err := s.db.Conn().Exec(
-					`UPDATE provider_presets SET name = ?, category = ?, updated_at = ? WHERE id = ? AND is_builtin = 1`,
-					p.Name, p.Category, now, id,
-				); err == nil {
-					updated++
-				}
-			} else {
-				skipped++ // manual preset shares the endpoint; leave it alone
-			}
-			continue
-		}
-
-		newID, _ := generatePresetID()
-		_, err := s.db.Conn().Exec(`
-			INSERT INTO provider_presets (id, name, domain, base_url, format, key_label, category, is_builtin, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
-		`, newID, p.Name, p.Domain, p.BaseURL, p.Format, p.KeyLabel, p.Category, now, now)
-		if err == nil {
-			inserted++
-		}
-	}
-
+	inserted, updated, skipped := SeedBuiltinPresets(s.db)
 	writeJSON(w, map[string]any{
 		"success":  true,
 		"inserted": inserted,
 		"updated":  updated,
 		"skipped":  skipped,
 	})
-}
-
-// oldNameFor returns the previous name of a preset if it was renamed, so the
-// seeder can find and update the existing row. Returns the current name when
-// there is no rename, which makes the OR clause a harmless no-op.
-func oldNameFor(renames map[string]string, current string) string {
-	for old, cur := range renames {
-		if cur == current {
-			return old
-		}
-	}
-	return current
 }
 
 // generatePresetID generates a random ID

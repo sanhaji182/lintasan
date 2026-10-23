@@ -135,6 +135,30 @@ func TestSeedBuiltinPresets_ReportsCounts(t *testing.T) {
 	}
 }
 
+// Repeated startup seeding must be read-mostly: a second run on an unchanged
+// catalogue inserts and updates nothing (and therefore does not churn
+// updated_at on every reboot).
+func TestSeedBuiltinPresets_IsIdempotent(t *testing.T) {
+	s := newRESTTestServer(t)
+
+	inserted, _, _ := SeedBuiltinPresets(s.db)
+	if inserted != len(seedCatalogue()) {
+		t.Fatalf("first seed inserted %d, want %d", inserted, len(seedCatalogue()))
+	}
+	inserted, updated, _ := SeedBuiltinPresets(s.db)
+	if inserted != 0 || updated != 0 {
+		t.Errorf("second seed inserted=%d updated=%d, want 0/0", inserted, updated)
+	}
+
+	var count int
+	if err := s.db.Conn().QueryRow("SELECT COUNT(*) FROM provider_presets").Scan(&count); err != nil {
+		t.Fatalf("count presets: %v", err)
+	}
+	if count != len(seedCatalogue()) {
+		t.Errorf("preset rows = %d, want %d", count, len(seedCatalogue()))
+	}
+}
+
 // Every preset's category must be a registered category key, otherwise the UI
 // cannot label it. Eight presets were pointing at free-tier/coding before those
 // categories existed.

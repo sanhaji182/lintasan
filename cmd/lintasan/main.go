@@ -60,6 +60,12 @@ func main() {
 			}
 			defer database.Close()
 
+			// Bring built-in provider presets up to the current catalogue on
+			// every boot. Idempotent: unchanged rows are not rewritten.
+			if inserted, updated, _ := server.SeedBuiltinPresets(database); inserted > 0 || updated > 0 {
+				fmt.Printf("Provider presets synced: %d inserted, %d updated\n", inserted, updated)
+			}
+
 			startPprofIfEnabled()
 
 			// MITM bridge is now owned by the server (started only when
