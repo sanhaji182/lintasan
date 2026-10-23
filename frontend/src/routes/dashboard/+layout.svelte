@@ -37,6 +37,7 @@ import { page } from '$app/state';
     '/dashboard/savings': 'Cost Savings',
     '/dashboard/translator': 'Format Translator',
     '/dashboard/oauth-ide': 'OAuth Providers',
+    '/dashboard/muse': 'Muse Accounts',
     '/dashboard/qoder-connections': 'Qoder Connections',
   };
 

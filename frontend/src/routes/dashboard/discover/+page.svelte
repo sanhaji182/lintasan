@@ -3,7 +3,8 @@
   const __tabs = [
     { label: 'Accounts', path: '/dashboard/connections' },
     { label: 'Discover Free', path: '/dashboard/discover' },
-    { label: 'OAuth Providers', path: '/dashboard/oauth-ide' }
+    { label: 'OAuth Providers', path: '/dashboard/oauth-ide' },
+    { label: 'Muse', path: '/dashboard/muse' }
   ];
   import { onMount } from 'svelte';
   import { api } from '$lib/api';

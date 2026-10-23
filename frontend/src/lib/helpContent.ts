@@ -15,6 +15,9 @@ export const helpContent: Record<string, string> = {
   '/dashboard/oauth-ide':
     '<strong>OAuth Providers</strong> — Hubungkan akun subscription (Claude Code, Codex, Copilot, Cline, xAI, dan lainnya) lewat OAuth, cek kesehatan akun, lalu <em>wire</em> ke koneksi gateway. Experimental — hanya gunakan akun yang Anda berwenang menghubungkan.',
 
+  '/dashboard/muse':
+    '<strong>Muse Accounts</strong> — Kelola akun muse.ai untuk sidecar muse2api: impor cookie, renew/reset sesi, dan pantau status pool. Admin key muse2api tetap di server Lintasan dan tidak pernah dikirim ke browser.',
+
   '/dashboard/discover':
     '<strong>Discover</strong> — Temukan free dan public provider API secara otomatis. Scan provider yang tersedia dan tambahkan langsung ke koneksi Anda.',
 

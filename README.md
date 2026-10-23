@@ -615,9 +615,12 @@ Plus any custom OpenAI-compatible endpoint — just provide a base URL and API k
 
 The built-in **Muse (muse2api)** preset points at [`muse2api`](https://github.com/www222fff/muse2api), a separate local gateway for muse.ai. muse2api drives the muse.ai web app through Chromium/CDP (its direct HTTP driver is still reserved upstream), so run it on the same host as Lintasan:
 
-1. Run muse2api with `MUSE2API_DRIVER=browser` and import your muse.ai cookies (`hatch_sess`, `hatch_gw`, `hatch_vml`, `hatch_native_auth_device`).
-2. In Lintasan, add a connection from the **Muse (muse2api)** preset (`http://127.0.0.1:18610/v1`) and use the muse2api API key.
-3. Chat and image generation route through Lintasan normally. `/v1/videos` has no Lintasan equivalent yet, so muse.ai video tasks are not proxied.
+1. Run muse2api with `MUSE2API_DRIVER=browser`.
+2. On the Lintasan server, set `LINTASAN_MUSE2API_ADMIN_KEY` to muse2api's admin key and optionally `LINTASAN_MUSE2API_URL` (default `http://127.0.0.1:18610`). Restart Lintasan.
+3. Open **Dashboard → Connections → Muse** to import muse.ai cookies and manage accounts. The admin key is injected server-side; it never reaches the browser.
+4. Add a connection from the **Muse (muse2api)** preset and use the muse2api API key.
+
+Chat and image generation route through Lintasan normally. `/v1/videos` has no Lintasan equivalent yet, so muse.ai video tasks are not proxied.
 
 ---
 

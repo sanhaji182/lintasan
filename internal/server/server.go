@@ -53,6 +53,12 @@ type Server struct {
 	startTime      time.Time              // server boot timestamp, used by /health
 	accessLogStore *logging.LogStore      // in-memory access log ring buffer
 	comboMu        sync.Mutex             // serializes combo read-check-write mutations
+
+	// muse2api sidecar admin proxy. The admin key is server-side only; the
+	// dashboard calls /api/muse/* and never sees it. See muse_handlers.go.
+	museBaseURL  string
+	museAdminKey string
+	museClient   *http.Client
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
@@ -70,6 +76,28 @@ func New(cfg *config.Config, database *db.DB) *Server {
 	s.metrics.RegisterCollector(cacheCollector)
 	s.metrics.RegisterCollector(responsesCollector)
 	s.metrics.RegisterCollector(metrics.RuntimeCollector)
+
+	// muse2api sidecar admin proxy. Configuration is env-only so the admin key
+	// is never stored in or exposed through the dashboard database.
+	museBase := strings.TrimRight(strings.TrimSpace(os.Getenv("LINTASAN_MUSE2API_URL")), "/")
+	if museBase == "" {
+		museBase = strings.TrimRight(strings.TrimSpace(os.Getenv("MUSE2API_URL")), "/")
+	}
+	if museBase == "" {
+		museBase = "http://127.0.0.1:18610"
+	}
+	museKey := strings.TrimSpace(os.Getenv("LINTASAN_MUSE2API_ADMIN_KEY"))
+	if museKey == "" {
+		museKey = strings.TrimSpace(os.Getenv("MUSE2API_ADMIN_KEY"))
+	}
+	s.museBaseURL = museBase
+	s.museAdminKey = museKey
+	s.museClient = &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	s.oauthMgr = auth.NewOAuthManager(database)
 	s.proxy = NewProxyHandler(cfg, database)
 	s.proxy.SetOAuthManager(s.oauthMgr)
@@ -286,6 +314,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PUT /api/presets/{id}", s.handleUpdatePreset)
 	s.mux.HandleFunc("DELETE /api/presets/{id}", s.handleDeletePreset)
 	s.mux.HandleFunc("POST /api/presets/seed", s.handleSeedBuiltinPresets)
+
+	// Muse sidecar (muse2api) admin proxy — allowlisted paths only, admin-only.
+	s.mux.HandleFunc("GET /api/muse/status", s.handleMuseStatus)
+	s.mux.HandleFunc("GET /api/muse/accounts", s.handleMuseAccountsList)
+	s.mux.HandleFunc("POST /api/muse/accounts", s.handleMuseAccountCreate)
+	s.mux.HandleFunc("POST /api/muse/accounts/import", s.handleMuseAccountsImport)
+	s.mux.HandleFunc("PATCH /api/muse/accounts/{id}", s.handleMuseAccountUpdate)
+	s.mux.HandleFunc("DELETE /api/muse/accounts/{id}", s.handleMuseAccountDelete)
+	s.mux.HandleFunc("POST /api/muse/accounts/{id}/renew", s.handleMuseAccountRenew)
+	s.mux.HandleFunc("POST /api/muse/accounts/{id}/reset", s.handleMuseAccountReset)
+	s.mux.HandleFunc("GET /api/muse/accounts/{id}/quota", s.handleMuseAccountQuota)
 
 	// Preset Category Management (CRUD)
 	s.mux.HandleFunc("GET /api/preset-categories", s.handleGetPresetCategories)
