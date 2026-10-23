@@ -13,7 +13,13 @@
   import { showToast } from '$lib/toast';
   import { OAUTH_IDE_PRESETS, type OAuthIdePreset } from '$lib/oauthIdePresets';
   import { brandForProvider, logoPaths } from '$lib/oauthIdeBrands';
-  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers, ChevronRight, ChevronDown, Zap, CheckCircle2, AlertCircle, TriangleAlert } from 'lucide-svelte';
+  import {
+    wireState,
+    wireStateLabel,
+    type OAuthAccountsResponse,
+    type OAuthProviderAccounts
+  } from '$lib/oauthAccounts';
+  import { Link2, Plus, TestTube2, RefreshCw, Trash2, ToggleLeft, ToggleRight, X, Search, Check, Sparkles, Settings, Edit2, Pencil, Save, FolderTree, Eye, EyeOff, Copy, Box, Cpu, ShieldAlert, Layers, ChevronRight, ChevronDown, Zap, CheckCircle2, AlertCircle, TriangleAlert, FlaskConical } from 'lucide-svelte';
 
   let connections = $state<any[]>([]);
   let loading = $state(true);
@@ -71,9 +77,11 @@
 
   let oauthIdeEnabled = $state(false);
   let oauthSessions = $state<{ provider: string; status: string }[]>([]);
+  let oauthAccountProviders = $state<OAuthProviderAccounts[]>([]);
   let wiringOAuth = $state('');
   let oauthExpanded = $state(false);
   let presetsExpanded = $state(false);
+  let connectionsLoadedAt = $state<number | null>(null);
 
   // Connection search/filter state
   let searchQuery = $state('');
@@ -388,7 +396,17 @@
     }
     // Set labels after grouping
     for (const g of groups.values()) {
-      g.label = providerDisplayName(g.key, g.connections);
+      // A pool group is keyed by pool_id, not by provider. Using the common
+      // name prefix there produced labels like "Open" for a pool holding
+      // "OpenAI Production" and "OpenAI Backup"; derive the provider from the
+      // base URL instead and mark it as a pool.
+      const isPoolGroup = g.key !== '' && g.connections.every((c) => c.pool_id === g.key);
+      if (isPoolGroup) {
+        const providerKey = extractProvider(g.baseURL);
+        g.label = `${providerDisplayName(providerKey, g.connections)} pool`;
+      } else {
+        g.label = providerDisplayName(g.key, g.connections);
+      }
     }
     return [...groups.values()];
   });
@@ -453,6 +471,40 @@
     formats: [...new Set(connections.map(c => c.format))].length,
     pools: pools.length
   });
+
+  const activeOAuthSessions = $derived(oauthSessions.filter((s) => s.status === 'active'));
+
+  const oauthBannerProviders = $derived.by(() => {
+    const providers = [...new Set(activeOAuthSessions.map((s) => s.provider))];
+    return providers.map((provider) => ({
+      provider,
+      sessions: activeOAuthSessions.filter((s) => s.provider === provider).length,
+      rollup: oauthAccountProviders.find((p) => p.provider === provider)
+    }));
+  });
+
+  function formatLabel(format: string): string {
+    switch ((format || '').toLowerCase()) {
+      case 'openai':
+        return 'OpenAI-compatible';
+      case 'anthropic':
+        return 'Anthropic';
+      case 'gemini':
+        return 'Gemini';
+      case 'commandcode':
+        return 'CommandCode';
+      case 'qoder':
+        return 'Qoder';
+      case 'windsurf':
+        return 'Windsurf';
+      default:
+        return format || 'unknown';
+    }
+  }
+
+  function oauthProviderLabel(provider: string): string {
+    return brandForProvider(provider).company || provider;
+  }
 
   // Categories as a key→{label,icon,color} map (derived from API state)
   const categoryMap = $derived(
@@ -526,15 +578,23 @@
     try {
       const st = await api.get<{ enabled?: boolean }>('/api/oauth/status');
       oauthIdeEnabled = !!st.enabled;
-      if (st.enabled) {
-        const sess = await api.get<{ data: { provider: string; status: string }[] }>('/api/oauth/sessions');
-        oauthSessions = sess.data ?? [];
-      } else {
+      if (!st.enabled) {
         oauthSessions = [];
+        oauthAccountProviders = [];
+        return;
+      }
+      const sess = await api.get<{ data: { provider: string; status: string }[] }>('/api/oauth/sessions');
+      oauthSessions = sess.data ?? [];
+      try {
+        const accounts = await api.get<OAuthAccountsResponse>('/api/oauth/accounts');
+        oauthAccountProviders = accounts.providers ?? [];
+      } catch {
+        oauthAccountProviders = [];
       }
     } catch {
       oauthIdeEnabled = false;
       oauthSessions = [];
+      oauthAccountProviders = [];
     }
   }
 
@@ -756,6 +816,7 @@
     try {
       const res = await api.get<any>('/api/connections');
       connections = res.data || [];
+      connectionsLoadedAt = Date.now();
     } catch (e: any) { error = e.message; }
     finally { loading = false; }
   }
@@ -1386,68 +1447,78 @@
 
 
 <div style="animation: fadeInUp 0.4s ease-out;">
-  <section class="connections-intro" aria-labelledby="connections-title">
-    <div>
-      <span>Provider lifecycle</span>
-      <h2 id="connections-title">Accounts, credentials, and models in one place.</h2>
-      <p>Scan provider readiness first, then expand only the account or model details you need.</p>
+  <section class="conn-header" aria-labelledby="connections-title">
+    <div class="conn-header-icon">
+      <Link2 size={22} />
     </div>
-    <a href="/dashboard/quickstart">Connection guide <ChevronRight size={14} /></a>
+    <div class="conn-header-text">
+      <h1 id="connections-title">
+        Connections
+        <span class="conn-header-pill">{summary.active} active</span>
+      </h1>
+      <p>API keys and OAuth sessions that make provider models routable. Add an account, test it, then enable what you trust.</p>
+    </div>
+    <div class="conn-header-actions">
+      {#if connectionsLoadedAt}
+        <span class="conn-updated">Updated {new Date(connectionsLoadedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+      {/if}
+      <a href="/dashboard/quickstart" class="conn-guide-link">Connection guide <ChevronRight size={14} /></a>
+    </div>
   </section>
-  <!-- Summary strip -->
-  <div class="conn-stats-bar">
-    <div class="stat-pill">
-      <span class="stat-pill-label">Total</span>
-      <span class="stat-pill-val">{summary.total}</span>
-    </div>
-    <div class="stat-pill">
-      <span class="stat-pill-label">Active</span>
-      <span class="stat-pill-val active">{summary.active}</span>
-    </div>
-    {#if summary.inactive > 0}
-      <div class="stat-pill">
-        <span class="stat-pill-label">Inactive</span>
-        <span class="stat-pill-val inactive">{summary.inactive}</span>
+
+  <div class="stats-strip">
+    {#each [
+      { label: 'Total', value: summary.total, tone: 'neutral', hint: 'All connections on this gateway.' },
+      { label: 'Active', value: summary.active, tone: 'ok', hint: 'Enabled connections that can serve requests.' },
+      { label: 'Inactive', value: summary.inactive, tone: summary.inactive > 0 ? 'warn' : 'neutral', hint: 'Connections currently disabled.' },
+      { label: 'Formats', value: summary.formats, tone: 'ready', hint: 'Distinct wire formats (OpenAI-compatible, Anthropic, Gemini, …).' },
+      { label: 'Pools', value: summary.pools, tone: 'ready', hint: 'Load-balancing pools grouping several keys.' }
+    ] as stat}
+      <div class="stat-cell" title={stat.hint}>
+        <div class="stat-value {stat.tone}">{stat.value}</div>
+        <div class="stat-label">{stat.label}</div>
       </div>
-    {/if}
-    <div class="stat-pill">
-      <span class="stat-pill-label">Formats</span>
-      <span class="stat-pill-val">{summary.formats}</span>
-    </div>
-    <div class="stat-pill">
-      <span class="stat-pill-label">Pools</span>
-      <span class="stat-pill-val">{summary.pools}</span>
-    </div>
+    {/each}
   </div>
 
-  <!-- Connected OAuth Sessions Banner -->
-  {#if oauthSessions.some(s => s.status === 'active')}
-    <div class="card mb-4" style="padding: 12px 18px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.03); border-radius: 10px;">
-      <div class="flex items-center justify-between flex-wrap gap-2">
-        <div class="flex items-center gap-2">
-          <Sparkles size={16} style="color: var(--color-primary);" />
-          <strong style="font-size: 13px; color: var(--color-fg-0);">Connected OAuth Sessions</strong>
-          <span class="badge" style="background: rgba(34,197,94,0.12); color: #22c55e; font-size: 11px;">
-            {oauthSessions.filter(s => s.status === 'active').length} Active
+  {#if oauthBannerProviders.length > 0}
+    <section class="oauth-banner" aria-label="Connected OAuth providers">
+      <div class="oauth-banner-head">
+        <div class="oauth-banner-title">
+          <Sparkles size={16} />
+          <strong>OAuth Providers</strong>
+          <span class="lab-chip"><FlaskConical size={11} /> Experimental</span>
+          <span class="oauth-banner-count">
+            {activeOAuthSessions.length} active session{activeOAuthSessions.length === 1 ? '' : 's'}
           </span>
         </div>
-        <a href="/dashboard/oauth-ide" class="flex items-center gap-1" style="font-size: 11px; color: var(--color-primary); font-weight: 600; text-decoration: none;">
+        <a href="/dashboard/oauth-ide" class="conn-guide-link">
           Manage in OAuth Providers <ChevronRight size={13} />
         </a>
       </div>
-      <div class="flex flex-wrap gap-2 mt-2">
-        {#each oauthSessions.filter(s => s.status === 'active') as sess}
-          <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; font-size: 12px;">
-            <div style="width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,0.4);"></div>
-            <strong style="color: var(--color-fg-0); text-transform: capitalize;">{sess.provider}</strong>
-            <span style="color: var(--color-fg-3); font-family: var(--font-mono); font-size: 11px;">
-              {sess.access_token ? sess.access_token.slice(0, 8) + '…' : 'Active'}
-            </span>
-            <span class="badge" style="font-size: 10px; background: rgba(59,130,246,0.1); color: var(--color-primary);">Auto-wired</span>
+      <div class="oauth-banner-list">
+        {#each oauthBannerProviders as entry}
+          {@const brand = brandForProvider(entry.provider)}
+          {@const state = wireState(entry.rollup)}
+          <div class="oauth-banner-item">
+            <span class="oauth-brand-dot" style="background: {brand.color}; box-shadow: 0 0 6px {brand.color};"></span>
+            <div class="oauth-banner-item-main">
+              <strong>{oauthProviderLabel(entry.provider)}</strong>
+              <span class="oauth-banner-sub">
+                {entry.rollup
+                  ? `${entry.rollup.active} active · ${entry.rollup.expiring} expiring${entry.rollup.restricted > 0 ? ` · ${entry.rollup.restricted} restricted` : ''}`
+                  : `${entry.sessions} session${entry.sessions === 1 ? '' : 's'} active`}
+              </span>
+            </div>
+            {#if entry.rollup}
+              <span class="wire-chip {state}">{wireStateLabel(entry.rollup)}</span>
+            {:else}
+              <span class="wire-chip">Session active</span>
+            {/if}
           </div>
         {/each}
       </div>
-    </div>
+    </section>
   {/if}
 
   <!-- Toolbar: Title + Search + Actions -->
@@ -1498,6 +1569,7 @@
         <input
           class="input-field conn-search-input"
           placeholder="Search name, key, url, pool..."
+          aria-label="Search connections"
           bind:value={searchQuery}
         />
         {#if searchQuery}
@@ -1525,6 +1597,11 @@
       </div>
     </div>
   </div>
+
+  <p class="conn-help">
+    A green dot means the connection can serve requests. <strong>Pools</strong> load-balance several keys; OAuth accounts
+    are managed on <a href="/dashboard/oauth-ide">OAuth Providers</a>.
+  </p>
 
   {#if bulkMode}
     <div class="bulk-selection-bar" role="region" aria-label="Bulk selection controls">
@@ -1705,6 +1782,7 @@
       </div>
       <textarea
         class="input-field"
+        aria-label="Curl command"
         bind:value={curlText}
         placeholder="curl https://api.example.com/v1/chat/completions -H Authorization: Bearer *** -H Content-Type: application/json -d 'JSON_BODY'"
         style="width: 100%; min-height: 100px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; resize: vertical;"
@@ -1752,6 +1830,7 @@
             <input
               class="input-field"
               placeholder="Search presets..."
+              aria-label="Search presets"
               bind:value={presetSearch}
               style="padding-left: 28px; font-size: 11px; padding-top: 4px; padding-bottom: 4px;"
             />
@@ -2073,6 +2152,12 @@
   {:else if connections.length === 0}
     <div class="card" style="text-align: center;">
       <EmptyState title="No connections" description="Pick a provider above to add your first LLM connection." />
+      <div class="empty-actions">
+        <button class="btn-primary" onclick={() => (showForm = true)}><Plus size={14} /> Add provider API</button>
+        <button class="btn-secondary" onclick={() => { showCurlImport = true; curlResult = null; }}><Copy size={14} /> Import curl</button>
+        <a class="btn-secondary" href="/dashboard/discover"><Sparkles size={14} /> Discover free</a>
+        <a class="btn-secondary" href="/dashboard/oauth-ide"><Link2 size={14} /> OAuth Providers</a>
+      </div>
       <div style="margin-top: 16px; padding: 14px 18px; background: var(--color-bg-body); border-radius: 10px; text-align: left; font-size: 12px; color: var(--color-fg-2); line-height: 1.6;">
         <div style="font-weight: 600; margin-bottom: 6px; color: var(--color-fg-0); display: flex; align-items: center; gap: 6px;"><Layers size={14} style="color: var(--color-primary);" /> Why use pools?</div>
         <ul style="margin: 0; padding-left: 18px; list-style: disc;">
@@ -2122,7 +2207,7 @@
                   <div class="group-title-row">
                     <span class="conn-group-label">{group.label}</span>
                     {#each [...group.formats] as fmt}
-                      <span class="badge conn-format-badge">{fmt}</span>
+                      <span class="badge conn-format-badge" title="Wire format: {fmt}">{formatLabel(fmt)}</span>
                     {/each}
                     <span class="conn-group-count">{group.connections.length} {group.connections.length === 1 ? 'account' : 'accounts'}</span>
                   </div>
@@ -2212,6 +2297,7 @@
                       <input
                         class="input-field group-subsearch-input"
                         placeholder="Filter keys in {group.label} (name, key, pool)..."
+                        aria-label="Filter accounts in {group.label}"
                         bind:value={groupSearch[group.key]}
                       />
                       {#if groupSearch[group.key]}
@@ -2236,7 +2322,7 @@
                     <div class="conn-row-main">
                       <span class="conn-status-dot" class:active={conn.is_active} title={conn.is_active ? 'Active' : 'Inactive'}></span>
                       <span class="conn-row-name" title={conn.name}>{conn.name}</span>
-                      <span class="badge conn-priority-badge" title="Priority">P{conn.priority}</span>
+                      <span class="badge conn-priority-badge" title="Routing priority {conn.priority}">P{conn.priority}</span>
                       {#if conn.pool_id}
                         <span class="badge conn-pool-badge" title="Pool: {conn.pool_id}">{conn.pool_id}</span>
                       {/if}
@@ -2263,7 +2349,13 @@
                           </button>
                         </div>
                       {:else if conn.oauth_provider}
-                        <span class="conn-card-oauth">OAuth:{conn.oauth_provider}</span>
+                        <a
+                          class="conn-card-oauth"
+                          href="/dashboard/oauth-ide"
+                          title="Managed by OAuth Providers — open the lab to re-authenticate or wire it"
+                        >
+                          <Sparkles size={11} /> OAuth · {oauthProviderLabel(conn.oauth_provider)}
+                        </a>
                       {/if}
 
                       {#if balances[conn.id]?.rate_windows?.length}
@@ -2363,7 +2455,9 @@
                             {#if !conn.pool_id}
                               <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; poolEditText = conn.pool_id || ''; editingPool = conn.id; }}><Layers size={13} /> Edit Pool</button>
                             {/if}
-                            <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={13} /> Copy Full Key</button>
+                            {#if !conn.oauth_provider}
+                              <button class="conn-dropdown-item" onclick={async () => { openMenuConnId = null; try { await navigator.clipboard.writeText(conn.api_key || ''); showToast('API key copied', 'success', 2000); } catch { showToast('Copy failed', 'error'); } }}><Copy size={13} /> Copy Full Key</button>
+                            {/if}
                             <div class="conn-dropdown-divider"></div>
                             <button class="conn-dropdown-item conn-dropdown-danger" onclick={() => { openMenuConnId = null; deleteConn(conn.id); }}><Trash2 size={13} /> Delete</button>
                           </div>
@@ -2562,6 +2656,7 @@
             <input
               class="input-field"
               placeholder="Search models (id, name, owner)..."
+              aria-label="Search models"
               bind:value={modelsSearch}
               style="padding-left: 32px; font-size: 12px; padding-top: 7px; padding-bottom: 7px; width: 100%;"
             />
@@ -2880,11 +2975,76 @@
 </div>
 
 <style>
-  .connections-intro { display:flex;align-items:flex-end;justify-content:space-between;gap:20px;margin:8px 0 20px;padding:20px 22px;border:1px solid var(--color-border);border-radius:var(--radius-lg);background:linear-gradient(120deg,var(--color-primary-light),var(--color-bg-card) 62%); }
-  .connections-intro span { color:var(--color-primary);font-size:10px;font-weight:750;letter-spacing:.08em;text-transform:uppercase; }
-  .connections-intro h2 { max-width:680px;margin:5px 0 4px;color:var(--color-fg-0);font-size:clamp(21px,2.5vw,30px);font-weight:650;letter-spacing:-.035em;line-height:1.15; }
-  .connections-intro p { margin:0;color:var(--color-fg-2);font-size:12px; }
-  .connections-intro a { display:inline-flex;align-items:center;gap:5px;flex-shrink:0;color:var(--color-primary);font-size:12px;font-weight:650;text-decoration:none; }
+  .conn-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin: 8px 0 20px;
+  }
+  .conn-header-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .conn-header-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .conn-header-text h1 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin: 0;
+    color: var(--color-fg-0);
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+  .conn-header-text p {
+    margin: 4px 0 0;
+    color: var(--color-fg-3);
+    font-size: 13px;
+  }
+  .conn-header-pill {
+    font-size: 10px;
+    font-weight: 650;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(5, 150, 105, 0.25);
+    background: var(--color-success-light);
+    color: var(--color-success);
+  }
+  .conn-header-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .conn-updated {
+    font-size: 11px;
+    color: var(--color-fg-3);
+    white-space: nowrap;
+  }
+  .conn-guide-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--color-primary);
+    font-size: 12px;
+    font-weight: 650;
+    text-decoration: none;
+    white-space: nowrap;
+  }
   .oauth-lab-card {
     padding: 16px 20px;
     border-color: rgba(139, 92, 246, 0.28);
@@ -3239,39 +3399,168 @@
   .group-actions-menu-container {
     position: relative;
   }
-  .conn-stats-bar {
+  .stats-strip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--color-border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .stat-cell {
+    background: var(--color-bg-card);
+    padding: 14px 16px;
+    text-align: center;
+  }
+  .stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+  }
+  .stat-value.neutral {
+    color: var(--color-fg-0);
+  }
+  .stat-value.ready {
+    color: var(--color-primary);
+  }
+  .stat-value.ok {
+    color: var(--color-success);
+  }
+  .stat-value.warn {
+    color: var(--color-warning);
+  }
+  .stat-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--color-fg-3);
+    letter-spacing: 0.5px;
+    margin-top: 2px;
+    text-transform: uppercase;
+  }
+  .oauth-banner {
+    border: 1px solid rgba(59, 91, 219, 0.22);
+    background: linear-gradient(120deg, var(--color-primary-light), var(--color-bg-card) 70%);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 16px;
+  }
+  .oauth-banner-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .oauth-banner-title {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 16px;
-    overflow-x: auto;
-    padding-bottom: 2px;
+    flex-wrap: wrap;
+    color: var(--color-fg-0);
+    font-size: 13px;
   }
-  .stat-pill {
+  .oauth-banner-title :global(svg) {
+    color: var(--color-primary);
+  }
+  .lab-chip {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 650;
+    padding: 2px 7px;
+    border-radius: 999px;
     background: var(--color-bg-card);
     border: 1px solid var(--color-border);
-    border-radius: 8px;
-    padding: 8px 16px;
-    white-space: nowrap;
+    color: var(--color-fg-2);
   }
-  .stat-pill-label {
+  .oauth-banner-count {
     font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
     color: var(--color-fg-3);
     font-weight: 600;
   }
-  .stat-pill-val {
-    font-size: 14px;
-    font-weight: 700;
-    color: var(--color-fg-0);
-    font-family: var(--font-mono);
+  .oauth-banner-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
-  .stat-pill-val.active { color: var(--color-success); }
-  .stat-pill-val.inactive { color: var(--color-error); }
+  .oauth-banner-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-card);
+    border-radius: 9px;
+    min-width: 220px;
+  }
+  .oauth-brand-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .oauth-banner-item-main {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1;
+    min-width: 0;
+  }
+  .oauth-banner-item-main strong {
+    font-size: 12px;
+    color: var(--color-fg-0);
+  }
+  .oauth-banner-sub {
+    font-size: 10.5px;
+    color: var(--color-fg-3);
+  }
+  .wire-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-hover);
+    color: var(--color-fg-3);
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .wire-chip.healthy {
+    border-color: rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.1);
+    color: #15803d;
+  }
+  .wire-chip.error {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.1);
+    color: #b45309;
+  }
+  .conn-help {
+    margin: -6px 0 14px;
+    font-size: 11.5px;
+    color: var(--color-fg-3);
+  }
+  .conn-help a {
+    color: var(--color-primary);
+    font-weight: 600;
+  }
+  .empty-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+    margin: 14px 0 18px;
+  }
+  .empty-actions a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    text-decoration: none;
+  }
   .conn-grid {
     display: grid;
     grid-template-columns: 1fr;
@@ -3606,8 +3895,17 @@
     text-overflow: ellipsis;
   }
   .conn-card-oauth {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: 11px;
-    color: var(--color-purple);
+    font-weight: 600;
+    color: var(--color-primary);
+    text-decoration: none;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--color-primary-light);
+    border: 1px solid rgba(59, 91, 219, 0.2);
   }
   .conn-card-meta-row {
     display: flex;
@@ -3868,8 +4166,9 @@
 
   /* Responsive */
   @media (max-width: 640px) {
-    .connections-intro { align-items:flex-start; flex-direction:column; padding:17px; }
-    .connections-intro a { min-height:44px; align-items:center; }
+    .conn-header-actions { flex-basis: 100%; justify-content: space-between; }
+    .stats-strip { grid-template-columns: repeat(2, 1fr); }
+    .oauth-banner-item { min-width: 100%; }
     .conn-toolbar {
       flex-direction: column;
       align-items: stretch;
