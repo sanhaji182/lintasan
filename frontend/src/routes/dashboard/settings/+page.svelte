@@ -4,7 +4,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import {
     Settings as SettingsIcon, Save, Shield, Zap, Globe, Server,
-    Key, RotateCcw, Gauge, Wifi, Lock, Link, KeyRound
+    Key, RotateCcw, Gauge, Wifi, Lock, Link, KeyRound, Sparkles, ChevronRight
   } from 'lucide-svelte';
   import { showToast } from '$lib/toast';
 
@@ -197,6 +197,50 @@
   {#if loading}
     <Spinner />
   {:else}
+    <!-- Account Connection shortcuts -->
+    <div class="card" style="animation: fadeInUp 0.3s ease-out;">
+      <div class="flex items-center gap-2.5" style="margin-bottom: 14px;">
+        <div
+          class="flex items-center justify-center rounded-lg"
+          style="width: 32px; height: 32px; background: var(--color-primary-light);"
+        >
+          <Link size={16} style="color: var(--color-primary);" />
+        </div>
+        <div>
+          <div style="font-size: 14px; font-weight: 600; color: var(--color-fg-0);">Account Connection</div>
+          <div style="font-size: 12px; color: var(--color-fg-3);">
+            Quick access to provider credentials, OAuth sessions, and the Muse cookie pool.
+          </div>
+        </div>
+      </div>
+
+      <div class="shortcut-grid">
+        <a href="/dashboard/muse" class="shortcut">
+          <span class="shortcut-icon"><Sparkles size={16} /></span>
+          <span class="shortcut-text">
+            <strong>Muse Accounts</strong>
+            <small>Import cookies and manage muse2api sessions</small>
+          </span>
+          <span class="shortcut-chev"><ChevronRight size={16} /></span>
+        </a>
+        <a href="/dashboard/connections" class="shortcut">
+          <span class="shortcut-icon"><Server size={16} /></span>
+          <span class="shortcut-text">
+            <strong>Connections</strong>
+            <small>API keys, pools, and provider routing</small>
+          </span>
+          <span class="shortcut-chev"><ChevronRight size={16} /></span>
+        </a>
+        <a href="/dashboard/oauth-ide" class="shortcut">
+          <span class="shortcut-icon"><Lock size={16} /></span>
+          <span class="shortcut-text">
+            <strong>OAuth Providers</strong>
+            <small>Subscription logins and wire status</small>
+          </span>
+          <span class="shortcut-chev"><ChevronRight size={16} /></span>
+        </a>
+      </div>
+    </div>
     <!-- Success/Error messages -->
     {#if success}
       <div
@@ -775,5 +819,62 @@
   }
   .toggle-btn.active .toggle-thumb {
     left: 23px;
+  }
+  .shortcut-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 10px;
+  }
+  .shortcut {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-bg-body);
+    text-decoration: none;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .shortcut:hover {
+    border-color: var(--color-primary);
+    background: var(--color-primary-light);
+  }
+  .shortcut-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--color-bg-card);
+    color: var(--color-primary);
+    flex-shrink: 0;
+  }
+  .shortcut-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1;
+    min-width: 0;
+  }
+  .shortcut-text strong {
+    font-size: 12.5px;
+    font-weight: 650;
+    color: var(--color-fg-0);
+  }
+  .shortcut-text small {
+    font-size: 11px;
+    color: var(--color-fg-3);
+    line-height: 1.35;
+  }
+  .shortcut-chev {
+    color: var(--color-fg-3);
+    flex-shrink: 0;
+  }
+  @media (max-width: 640px) {
+    .shortcut-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
