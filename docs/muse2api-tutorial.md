@@ -190,6 +190,15 @@ sudo systemctl restart lintasan
 Fallback yang didukung: jika `LINTASAN_MUSE2API_*` kosong, Lintasan membaca
 `MUSE2API_ADMIN_KEY` / `MUSE2API_URL` dari environment.
 
+Remote browser login memakai port CDP Chromium sidecar. Default-nya
+`http://127.0.0.1:19210` (sama dengan `MUSE2API_CDP_PORT`). Jika berbeda, set:
+
+```bash
+LINTASAN_MUSE2API_CDP_URL=http://127.0.0.1:19210
+```
+
+Endpoint CDP hanya boleh loopback; Lintasan menolak URL non-loopback.
+
 Verifikasi di dashboard:
 
 - **Settings → Account Connection** menampilkan pintasan Muse Accounts,
@@ -236,6 +245,30 @@ Di balik layar, panel memanggil `POST /api/muse/accounts` di Lintasan, yang
 meneruskan ke muse2api `POST /admin/accounts` dengan admin key server-side.
 Cookie tidak disimpan oleh Lintasan; muse2api menyimpannya di `data/accounts.json`
 dan profil Chrome.
+
+### Login otomatis lewat remote browser
+
+Cara paling sedikit langkah: login langsung dari panel.
+
+1. Di **Muse Accounts**, klik **Open remote login**.
+2. Browser sementara (Chromium headless, context incognito terisolasi) terbuka di modal.
+3. Login ke muse.ai di dalam modal: email/telepon, lalu kode OTP. Klik area browser
+   dan ketik seperti biasa; klik tombol di halaman lewat mouse.
+4. Saat empat cookie `hatch_*` terdeteksi, Lintasan otomatis membuat akun di
+   muse2api, menutup context, dan memuat daftar akun.
+5. Klik **Renew session** jika ingin memvalidasi ulang sesi.
+
+Catatan:
+
+- Password/OTP diketik langsung ke halaman muse.ai di browser server; Lintasan
+  tidak menerima atau menyimpannya.
+- Context bersifat sementara dan dibuang setelah import; cookie tidak masuk ke
+  profil Chrome default muse2api.
+- Sesi login dibatasi 15 menit dan satu sesi aktif per admin.
+- Modal menampilkan frame screenshot (~2.5 fps), bukan video; input mouse dan
+  keyboard diteruskan ke halaman.
+- Jika panel melaporkan CDP tidak terjangkau, pastikan `muse2api` (dan Chromium-nya)
+  berjalan serta `LINTASAN_MUSE2API_CDP_URL` benar.
 
 ### Import otomatis dengan ekstensi Chrome
 

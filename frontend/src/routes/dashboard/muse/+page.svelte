@@ -6,7 +6,7 @@
     { label: 'OAuth Providers', path: '/dashboard/oauth-ide' },
     { label: 'Muse', path: '/dashboard/muse' }
   ];
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import { showToast } from '$lib/toast';
@@ -23,7 +23,8 @@
     RotateCw,
     RotateCcw,
     Plus,
-    ShieldAlert
+    ShieldAlert,
+    Monitor
   } from 'lucide-svelte';
 
   interface MusePool {
@@ -86,6 +87,29 @@
   let quotaResult = $state<Record<string, string>>({});
   let importToken = $state('');
   let generatingToken = $state(false);
+
+  type BrowserLoginState = {
+    open: boolean;
+    id: string;
+    status: string;
+    error: string;
+    width: number;
+    height: number;
+    frame: boolean;
+    starting: boolean;
+  };
+  let browserLogin = $state<BrowserLoginState>({
+    open: false,
+    id: '',
+    status: '',
+    error: '',
+    width: 1280,
+    height: 900,
+    frame: false,
+    starting: false
+  });
+  let browserCanvas: HTMLCanvasElement | undefined = $state();
+  let browserAbort: AbortController | null = null;
 
   const configured = $derived(status?.configured === true);
   const reachable = $derived(status?.configured === true && status?.reachable === true && status?.ok === true);
@@ -320,6 +344,224 @@
     }
   }
 
+  function resetBrowserLogin() {
+    browserLogin = {
+      open: false,
+      id: '',
+      status: '',
+      error: '',
+      width: 1280,
+      height: 900,
+      frame: false,
+      starting: false
+    };
+  }
+
+  function closeBrowserLogin() {
+    const id = browserLogin.id;
+    browserAbort?.abort();
+    browserAbort = null;
+    resetBrowserLogin();
+    if (id) {
+      api.delete(`/api/muse/browser/sessions/${encodeURIComponent(id)}`).catch(() => {});
+    }
+  }
+
+  function finishBrowserLogin() {
+    closeBrowserLogin();
+    void load();
+  }
+
+  async function startBrowserLogin() {
+    resetBrowserLogin();
+    browserLogin = {
+      open: true,
+      id: '',
+      status: 'Starting an isolated browser…',
+      error: '',
+      width: 1280,
+      height: 900,
+      frame: false,
+      starting: true
+    };
+    try {
+      const res = await api.post<any>('/api/muse/browser/sessions', {
+        label: importLabel.trim() || 'muse-browser'
+      });
+      browserLogin.id = res.session_id;
+      browserLogin.width = Number(res.width) || 1280;
+      browserLogin.height = Number(res.height) || 900;
+      browserLogin.starting = false;
+      browserLogin.status = 'Loading muse.ai…';
+      await tick();
+      browserCanvas?.focus();
+      await openBrowserStream(res.stream_url);
+    } catch (e: any) {
+      browserLogin.starting = false;
+      browserLogin.status = '';
+      browserLogin.error = e?.message || 'Failed to start the login browser';
+    }
+  }
+
+  async function openBrowserStream(url: string) {
+    const token = localStorage.getItem('lintasan_token') || '';
+    browserAbort = new AbortController();
+    try {
+      const res = await fetch(url, {
+        headers: { Authorization: 'Bearer ' + token, Accept: 'text/event-stream' },
+        signal: browserAbort.signal
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || `stream failed (HTTP ${res.status})`);
+      }
+      if (!res.body) throw new Error('stream body is unavailable');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let split = buffer.indexOf('\n\n');
+        while (split >= 0) {
+          const chunk = buffer.slice(0, split);
+          buffer = buffer.slice(split + 2);
+          for (const line of chunk.split('\n')) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+              handleBrowserEvent(JSON.parse(line.slice(6)));
+            } catch {
+              // Ignore malformed keep-alive/metadata lines.
+            }
+          }
+          split = buffer.indexOf('\n\n');
+        }
+      }
+      if (browserLogin.open && !browserLogin.error) {
+        browserLogin.status = 'Browser stream ended.';
+      }
+    } catch (e: any) {
+      if (e?.name === 'AbortError') return;
+      browserLogin.error = e?.message || 'Browser stream failed';
+    }
+  }
+
+  function handleBrowserEvent(ev: any) {
+    if (!browserLogin.open) return;
+    switch (ev?.type) {
+      case 'connected':
+        browserLogin.status = 'Connected. Waiting for muse.ai…';
+        break;
+      case 'frame':
+        drawBrowserFrame(ev);
+        break;
+      case 'status':
+        browserLogin.status = ev.message || browserLogin.status;
+        break;
+      case 'imported': {
+        const id = ev?.account?.id ? `: ${ev.account.id}` : '';
+        showToast(`Muse account imported${id}`, 'success', 5000);
+        finishBrowserLogin();
+        break;
+      }
+      case 'error':
+        browserLogin.error = ev.error || 'Remote login failed';
+        browserLogin.status = '';
+        break;
+      case 'closed':
+        browserLogin.status = ev.message || 'Session closed.';
+        break;
+    }
+  }
+
+  function drawBrowserFrame(ev: any) {
+    const canvas = browserCanvas;
+    if (!canvas || !ev?.data) return;
+    const width = Number(ev.w) || browserLogin.width;
+    const height = Number(ev.h) || browserLogin.height;
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    const image = new Image();
+    image.onload = () => {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.drawImage(image, 0, 0);
+      if (!browserLogin.frame) browserLogin.frame = true;
+    };
+    image.src = 'data:image/jpeg;base64,' + ev.data;
+  }
+
+  function browserPoint(event: MouseEvent): { x: number; y: number } {
+    const canvas = browserCanvas;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
+    const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
+    return {
+      x: Math.max(0, Math.min(canvas.width - 1, x)),
+      y: Math.max(0, Math.min(canvas.height - 1, y))
+    };
+  }
+
+  async function sendBrowserInput(payload: Record<string, unknown>) {
+    if (!browserLogin.id) return;
+    try {
+      await api.post(`/api/muse/browser/sessions/${encodeURIComponent(browserLogin.id)}/input`, payload);
+    } catch (e: any) {
+      if (!browserLogin.error) {
+        browserLogin.error = e?.message || 'Browser input failed';
+      }
+    }
+  }
+
+  function onBrowserMouseDown(event: MouseEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    browserCanvas?.focus();
+    const point = browserPoint(event);
+    void sendBrowserInput({ type: 'mouse', event: 'pressed', ...point, button: 'left', clickCount: 1 });
+  }
+
+  function onBrowserMouseUp(event: MouseEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const point = browserPoint(event);
+    void sendBrowserInput({ type: 'mouse', event: 'released', ...point, button: 'left', clickCount: 1 });
+  }
+
+  const browserSpecialKeys = new Set([
+    'Enter',
+    'Tab',
+    'Backspace',
+    'Escape',
+    'Delete',
+    'ArrowLeft',
+    'ArrowUp',
+    'ArrowRight',
+    'ArrowDown',
+    'Home',
+    'End'
+  ]);
+
+  function onBrowserKeyDown(event: KeyboardEvent) {
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      void sendBrowserInput({ type: 'text', text: event.key });
+      return;
+    }
+    if (browserSpecialKeys.has(event.key)) {
+      event.preventDefault();
+      void sendBrowserInput({ type: 'key', key: event.key });
+    }
+  }
+
+  function onBrowserPaste(event: ClipboardEvent) {
+    const text = event.clipboardData?.getData('text') || '';
+    if (!text) return;
+    event.preventDefault();
+    void sendBrowserInput({ type: 'text', text });
+  }
+
   onMount(load);
 </script>
 
@@ -428,6 +670,22 @@
         </div>
         <KeyRound size={18} class="muted" />
       </div>
+
+      <div class="browser-login-row">
+        <div>
+          <div class="browser-login-title"><Monitor size={15} /> Login with browser (automatic)</div>
+          <p class="muted small">
+            A temporary browser opens here. Log in to muse.ai; the four cookies are captured and imported
+            automatically — no extension, no token, no copy/paste. Uses the label below if set.
+          </p>
+        </div>
+        <button type="button" class="btn-primary-sm" onclick={startBrowserLogin}>
+          <Monitor size={14} /> Open remote login
+        </button>
+      </div>
+
+      <p class="divider-label muted small">or paste cookies manually</p>
+
       <form onsubmit={(e) => { e.preventDefault(); importAccount(); }}>
         <label class="field-label" for="muse-label">Label (optional)</label>
         <input id="muse-label" class="input-field" bind:value={importLabel} placeholder="e.g. muse-main" autocomplete="off" />
@@ -595,6 +853,49 @@
         </div>
       {/if}
     </section>
+  {/if}
+
+  {#if browserLogin.open}
+    <div class="browser-modal" role="dialog" aria-modal="true" aria-labelledby="muse-browser-title">
+      <div class="browser-shell">
+        <div class="browser-head">
+          <div>
+            <div id="muse-browser-title" class="browser-title">Login muse.ai</div>
+            <div class="muted small">Temporary browser on the server · cookies imported automatically</div>
+          </div>
+          <button type="button" class="btn-ghost-sm" onclick={closeBrowserLogin}>Close</button>
+        </div>
+        {#if browserLogin.error}
+          <div class="error-banner" role="alert">
+            <CircleAlert size={16} /><span>{browserLogin.error}</span>
+          </div>
+        {/if}
+        <div class="browser-stage">
+          <canvas
+            bind:this={browserCanvas}
+            width={browserLogin.width}
+            height={browserLogin.height}
+            tabindex="0"
+            aria-label="Remote muse.ai login browser"
+            onmousedown={onBrowserMouseDown}
+            onmouseup={onBrowserMouseUp}
+            onkeydown={onBrowserKeyDown}
+            onpaste={onBrowserPaste}
+          ></canvas>
+          {#if !browserLogin.frame}
+            <div class="browser-wait">
+              <Spinner />
+              <span>{browserLogin.starting ? 'Starting browser…' : 'Loading muse.ai…'}</span>
+            </div>
+          {/if}
+        </div>
+        <div class="browser-status" role="status" aria-live="polite">{browserLogin.status}</div>
+        <p class="muted small">
+          Click inside the browser area, then type. Login (email/phone + code) goes directly to muse.ai; Lintasan never
+          receives your password or OTP.
+        </p>
+      </div>
+    </div>
   {/if}
 </div>
 
@@ -907,6 +1208,100 @@
     gap: 8px;
     flex-wrap: wrap;
   }
+  .browser-login-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 12px;
+    margin-bottom: 8px;
+    border: 1px solid rgba(59, 91, 219, 0.22);
+    background: var(--color-primary-light);
+    border-radius: 10px;
+  }
+  .browser-login-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    font-weight: 650;
+    color: var(--color-fg-0);
+  }
+  .browser-login-title :global(svg) {
+    color: var(--color-primary);
+  }
+  .divider-label {
+    text-align: center;
+    margin: 8px 0 2px;
+  }
+  .browser-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(15, 23, 42, 0.68);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+  }
+  .browser-shell {
+    width: min(1100px, 100%);
+    max-height: 94vh;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    box-shadow: 0 20px 50px rgba(15, 23, 42, 0.28);
+  }
+  .browser-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .browser-title {
+    font-size: 15px;
+    font-weight: 650;
+    color: var(--color-fg-0);
+  }
+  .browser-stage {
+    position: relative;
+    flex: 1;
+    min-height: 280px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0b1220;
+    border-radius: 10px;
+    overflow: auto;
+  }
+  .browser-stage canvas {
+    display: block;
+    max-width: 100%;
+    max-height: 72vh;
+    outline: none;
+    cursor: default;
+  }
+  .browser-wait {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: rgba(11, 18, 32, 0.72);
+    color: #cbd5e1;
+    font-size: 12px;
+  }
+  .browser-status {
+    font-size: 11.5px;
+    color: var(--color-fg-2);
+    min-height: 16px;
+  }
   .btn-primary-sm,
   .btn-secondary-sm,
   .btn-ghost-danger {
@@ -1118,6 +1513,17 @@
     .sidecar-url {
       margin-left: 0;
       flex-basis: 100%;
+    }
+    .browser-modal {
+      padding: 0;
+    }
+    .browser-shell {
+      height: 100vh;
+      max-height: 100vh;
+      border-radius: 0;
+    }
+    .browser-stage canvas {
+      max-height: 64vh;
     }
   }
 </style>

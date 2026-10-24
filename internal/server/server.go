@@ -64,6 +64,13 @@ type Server struct {
 	// POST /muse/import (cookie upload) and expire after museImportTokenTTL.
 	museImportMu     sync.Mutex
 	museImportTokens map[string]time.Time
+
+	// Remote browser login: an isolated browser context inside the sidecar's
+	// Chromium. The user logs into muse.ai through screenshot frames; cookies
+	// are captured automatically. See muse_browser.go.
+	museCDPURL          string
+	museBrowserMu       sync.Mutex
+	museBrowserSessions map[string]*museBrowserSession
 }
 
 func New(cfg *config.Config, database *db.DB) *Server {
@@ -104,6 +111,17 @@ func New(cfg *config.Config, database *db.DB) *Server {
 		},
 	}
 	s.museImportTokens = make(map[string]time.Time)
+
+	museCDP := strings.TrimRight(strings.TrimSpace(os.Getenv("LINTASAN_MUSE2API_CDP_URL")), "/")
+	if museCDP == "" {
+		museCDP = strings.TrimRight(strings.TrimSpace(os.Getenv("MUSE2API_CDP_URL")), "/")
+	}
+	if museCDP == "" {
+		museCDP = "http://127.0.0.1:19210"
+	}
+	s.museCDPURL = museCDP
+	s.museBrowserSessions = make(map[string]*museBrowserSession)
+
 	s.oauthMgr = auth.NewOAuthManager(database)
 	s.proxy = NewProxyHandler(cfg, database)
 	s.proxy.SetOAuthManager(s.oauthMgr)
@@ -337,6 +355,12 @@ func (s *Server) routes() {
 	// token scoped to POST /muse/import.
 	s.mux.HandleFunc("POST /api/muse/import-token", s.handleMuseImportToken)
 	s.mux.HandleFunc("POST /muse/import", s.handleMuseBrowserImport)
+
+	// Remote muse.ai login through an isolated CDP browser context.
+	s.mux.HandleFunc("POST /api/muse/browser/sessions", s.handleMuseBrowserStart)
+	s.mux.HandleFunc("GET /api/muse/browser/sessions/{id}/stream", s.handleMuseBrowserStream)
+	s.mux.HandleFunc("POST /api/muse/browser/sessions/{id}/input", s.handleMuseBrowserInput)
+	s.mux.HandleFunc("DELETE /api/muse/browser/sessions/{id}", s.handleMuseBrowserCancel)
 
 	// Preset Category Management (CRUD)
 	s.mux.HandleFunc("GET /api/preset-categories", s.handleGetPresetCategories)

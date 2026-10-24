@@ -22,6 +22,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -422,7 +423,11 @@ func (s *Server) forwardMuse(w http.ResponseWriter, r *http.Request, method, ups
 }
 
 func (s *Server) museDo(r *http.Request, method, upstreamPath string, body []byte) (*http.Response, []byte, error) {
-	req, err := http.NewRequestWithContext(r.Context(), method, s.museBase()+upstreamPath, bytes.NewReader(body))
+	return s.museDoContext(r.Context(), method, upstreamPath, body)
+}
+
+func (s *Server) museDoContext(ctx context.Context, method, upstreamPath string, body []byte) (*http.Response, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, method, s.museBase()+upstreamPath, bytes.NewReader(body))
 	if err != nil {
 		return nil, nil, err
 	}

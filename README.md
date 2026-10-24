@@ -617,7 +617,7 @@ The built-in **Muse (muse2api)** preset points at [`muse2api`](https://github.co
 
 1. Run muse2api with `MUSE2API_DRIVER=browser`.
 2. On the Lintasan server, set `LINTASAN_MUSE2API_ADMIN_KEY` to muse2api's admin key and optionally `LINTASAN_MUSE2API_URL` (default `http://127.0.0.1:18610`). Restart Lintasan.
-3. Open **Settings → Account Connection → Muse Accounts** (or **Connections → Muse**) to import muse.ai cookies and manage accounts. The admin key is injected server-side; it never reaches the browser.
+3. Open **Settings → Account Connection → Muse Accounts** (or **Connections → Muse**) and click **Open remote login** to log in to muse.ai in an isolated server browser. Cookies are captured and imported automatically; a manual cookie form and a Chrome extension are also available. The admin key is injected server-side; it never reaches the browser.
 4. Add a connection from the **Muse (muse2api)** preset and use the muse2api API key.
 
 Chat and image generation route through Lintasan normally. `/v1/videos` has no Lintasan equivalent yet, so muse.ai video tasks are not proxied.
