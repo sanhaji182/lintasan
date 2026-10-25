@@ -449,6 +449,26 @@
 
   let form = $state({ name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '' as string, pool_id: '' as string });
 
+  // Guided add flow: a preset prefills everything except the key, so the form
+  // only asks for a key by default. Advanced fields stay behind a toggle.
+  let activePreset = $state<{ name: string; domain: string } | null>(null);
+  let formKeyLabel = $state('API Key');
+  let formAdvanced = $state(false);
+  const isMusePreset = $derived(!!activePreset && /muse/i.test(activePreset.name));
+  const presetHelpURL = $derived(
+    activePreset && activePreset.domain && !/^(localhost|127\.|0\.0\.0\.0|\[?::1\]?)/i.test(activePreset.domain)
+      ? `https://${activePreset.domain}`
+      : ''
+  );
+  let createdResult = $state<{
+    id: string;
+    name: string;
+    muse: boolean;
+    syncing: boolean;
+    models: number | null;
+    syncFailed: boolean;
+  } | null>(null);
+
   // Test-before-save state for the new-connection form
   let testingForm = $state(false);
   // Rich result envelope: backend returns {data, error, hint, latency_ms, success, message}
@@ -562,6 +582,9 @@
       oauth_provider: p.oauth_provider,
       pool_id: ''
     };
+    activePreset = null;
+    formKeyLabel = 'API Key';
+    formAdvanced = true;
     testResult = null;
     showForm = true;
     setTimeout(() => {
@@ -612,9 +635,41 @@
     }
   }
 
+  function openPresetPicker() {
+    createdResult = null;
+    presetsExpanded = true;
+    setTimeout(() => {
+      document.getElementById('preset-catalog')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  }
+
+  function startCustomForm() {
+    createdResult = null;
+    activePreset = null;
+    formKeyLabel = 'API Key';
+    formAdvanced = true;
+    form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '', pool_id: '' };
+    testResult = null;
+    showForm = true;
+    setTimeout(() => {
+      document.getElementById('add-connection-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  }
+
+  function resetForm() {
+    form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '', pool_id: '' };
+    activePreset = null;
+    formKeyLabel = 'API Key';
+    formAdvanced = false;
+    testResult = null;
+    testingForm = false;
+    testBounce = false;
+  }
+
   function pickPreset(preset: any) {
+    const slug = preset.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
     form = {
-      name: preset.name.toLowerCase().replace(/\s+/g, '-'),
+      name: slug,
       base_url: preset.base_url,
       api_key: '',
       format: preset.format,
@@ -622,6 +677,9 @@
       oauth_provider: '',
       pool_id: ''
     };
+    activePreset = { name: preset.name, domain: preset.domain };
+    formKeyLabel = preset.key_label || 'API Key';
+    formAdvanced = false;
     testResult = null; // reset prior test result when picking a new preset
     showForm = true;
     setTimeout(() => {
@@ -1399,21 +1457,39 @@
       setTimeout(() => { testBounce = false; }, 600);
       return;
     }
+    const savedName = form.name;
+    const savedBaseURL = form.base_url;
+    const muse = isMusePreset || /muse/i.test(savedName) || /muse2api|:18610/.test(savedBaseURL);
     try {
-      await api.post<any>('/api/connections', form);
+      const res = await api.post<any>('/api/connections', form);
+      const id = res?.id || res?.data?.id || '';
       await fetchConnections();
       showForm = false;
-      form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '', pool_id: '' };
-      testResult = null;
+      resetForm();
+      if (id) void finishCreatedConnection(id, savedName, muse);
     } catch (e: any) { error = e.message; }
+  }
+
+  // After create: import models automatically and show a "what next" card.
+  async function finishCreatedConnection(id: string, name: string, muse: boolean) {
+    createdResult = { id, name, muse, syncing: true, models: null, syncFailed: false };
+    try {
+      await api.post('/api/models/sync/' + id);
+      await fetchConnections();
+      const conn = connections.find(c => c.id === id);
+      if (createdResult?.id === id) {
+        createdResult = { ...createdResult, syncing: false, models: conn?.models_count ?? null };
+      }
+    } catch {
+      if (createdResult?.id === id) {
+        createdResult = { ...createdResult, syncing: false, syncFailed: true };
+      }
+    }
   }
 
   function cancelForm() {
     showForm = false;
-    form = { name: '', base_url: '', api_key: '', format: 'openai', priority: 1, oauth_provider: '', pool_id: '' };
-    testResult = null;
-    testingForm = false;
-    testBounce = false;
+    resetForm();
   }
 
   // --- Curl Import ---
@@ -1590,9 +1666,9 @@
         <button bind:this={addMenuButton} class="btn-primary conn-toolbar-btn" onclick={toggleAddMenu} onkeydown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); toggleAddMenu(); } }} aria-haspopup="menu" aria-expanded={addMenuOpen}><Plus size={15} /><span class="conn-toolbar-btn-label">Add</span><ChevronDown size={13}/></button>
         {#if addMenuOpen}
           <div class="conn-dropdown add-menu" role="menu" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); closeAddMenu(); } }}>
-            <button bind:this={firstAddMenuItem} class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; showForm=true; }}><Link2 size={13}/> Provider API</button>
+            <button bind:this={firstAddMenuItem} class="conn-dropdown-item add-menu-primary" role="menuitem" onclick={() => { addMenuOpen=false; openPresetPicker(); }}><Sparkles size={13}/> Choose a provider</button>
+            <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; startCustomForm(); }}><Link2 size={13}/> Custom provider (advanced)</button>
             <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; showCurlImport=true; curlResult=null; }}><Copy size={13}/> Import curl</button>
-            <button class="conn-dropdown-item" role="menuitem" onclick={() => { addMenuOpen=false; presetsExpanded=true; }}><Sparkles size={13}/> Provider preset</button>
           </div>
         {/if}
       </div>
@@ -1619,25 +1695,42 @@
   {#if showForm}
     <div id="add-connection-form" class="card mb-5" style="animation: fadeInScale 0.3s ease-out;">
       <div class="flex items-center justify-between mb-4">
-        <h3 style="font-size: 15px; font-weight: 600; color: var(--color-fg-0); margin: 0;">
-          {form.name ? `New: ${form.name}` : 'New Connection'}
-        </h3>
+        <div>
+          <h3 style="font-size: 15px; font-weight: 600; color: var(--color-fg-0); margin: 0;">
+            {form.name ? `New: ${form.name}` : 'New Connection'}
+          </h3>
+          <p class="form-subtitle">Paste the provider's API key, then test it before saving.</p>
+        </div>
         <button class="btn-secondary" style="padding: 4px 10px; font-size: 12px;" onclick={cancelForm}>
           <X size={14} /> Cancel
         </button>
       </div>
+      {#if activePreset}
+        <div class="guided-provider">
+          <img
+            src={faviconUrl(activePreset.domain, 32)}
+            alt=""
+            width="24" height="24"
+            class="guided-provider-icon"
+            onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+          />
+          <div class="guided-provider-meta">
+            <strong>{activePreset.name}</strong>
+            <code>{form.base_url}</code>
+          </div>
+          <button type="button" class="btn-secondary" style="padding: 4px 10px; font-size: 11px;" onclick={openPresetPicker}>
+            Change
+          </button>
+        </div>
+      {/if}
       <div class="grid grid-cols-1 md:grid-cols-2" style="gap: 12px;">
         <div>
-          <label for="connection-name" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">Name</label>
+          <label for="connection-name" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">Connection name</label>
           <input id="connection-name" class="input-field" bind:value={form.name} placeholder="My Provider" />
         </div>
         <div>
-          <label for="connection-base-url" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">Base URL</label>
-          <input id="connection-base-url" class="input-field" bind:value={form.base_url} placeholder="https://api.openai.com/v1" />
-        </div>
-        <div>
           <label for="connection-api-key" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">
-            {formUsesOAuth ? 'API Key (OAuth session)' : 'API Key'}
+            {formUsesOAuth ? 'API Key (OAuth session)' : formKeyLabel}
           </label>
           {#if formUsesOAuth}
             <div class="input-field" style="font-size: 12px; color: var(--color-fg-2); padding: 10px 12px; background: var(--color-bg-body);">
@@ -1645,38 +1738,66 @@
               <button type="button" class="btn-secondary" style="margin-left: 8px; padding: 2px 8px; font-size: 11px;" onclick={() => { form.oauth_provider = ''; }}>Clear OAuth</button>
             </div>
           {:else}
-            <input id="connection-api-key" class="input-field" type="password" bind:value={form.api_key} placeholder="sk-..." />
+            <input id="connection-api-key" class="input-field" type="password" bind:value={form.api_key} placeholder="Paste your API key" />
+            {#if activePreset}
+              {#if isMusePreset}
+                <a class="field-help" href="/dashboard/muse">Manage Muse accounts →</a>
+              {:else if presetHelpURL}
+                <a class="field-help" href={presetHelpURL} target="_blank" rel="noopener">Where do I get this key? →</a>
+              {/if}
+            {/if}
           {/if}
         </div>
-        <div>
-          <label for="connection-format" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">Format</label>
-          <select id="connection-format" class="input-field" bind:value={form.format}>
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="gemini">Gemini</option>
-          </select>
-        </div>
-        <div>
-          <label for="connection-pool-id" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">
-            Pool ID <span style="font-size: 10px; color: var(--color-fg-3); font-weight: 400;">(optional — group multiple API keys for load balancing)</span>
-          </label>
-          <div style="display: flex; align-items: center; gap: 6px; background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; padding: 2px 2px 2px 10px;">
-            <Layers size={14} style="color: var(--color-fg-3); flex-shrink: 0;" />
-            <input id="connection-pool-id" class="input-field" bind:value={form.pool_id} placeholder="e.g. openai-prod" style="border: none; padding: 6px 4px; background: transparent; flex: 1; min-width: 0;" />
-            {#if pools.length > 0}
-              <select
-                style="font-size: 11px; padding: 6px 8px; border: none; border-left: 1px solid var(--color-border); border-radius: 0; background: transparent; color: var(--color-fg-2); cursor: pointer; font-family: var(--font-mono); width: auto; flex-shrink: 0;"
-                onchange={(e: Event) => { form.pool_id = (e.target as HTMLSelectElement).value; }}
-              >
-                <option value="">pick existing…</option>
-                {#each pools as p}
-                  <option value={p.pool_id}>{p.pool_id}</option>
-                {/each}
-              </select>
-            {/if}
+        {#if !activePreset || formAdvanced}
+          <div>
+            <label for="connection-base-url" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">Base URL</label>
+            <input id="connection-base-url" class="input-field" bind:value={form.base_url} placeholder="https://api.openai.com/v1" />
           </div>
-        </div>
+          <div>
+            <label for="connection-format" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">Format</label>
+            <select id="connection-format" class="input-field" bind:value={form.format}>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="gemini">Gemini</option>
+            </select>
+          </div>
+          <div style="grid-column: 1 / -1;">
+            <label for="connection-pool-id" style="font-size: 12px; font-weight: 500; color: var(--color-fg-2); display: block; margin-bottom: 4px;">
+              Pool ID <span style="font-size: 10px; color: var(--color-fg-3); font-weight: 400;">(optional — group multiple API keys for load balancing)</span>
+            </label>
+            <div style="display: flex; align-items: center; gap: 6px; background: var(--color-bg-card); border: 1px solid var(--color-border); border-radius: 8px; padding: 2px 2px 2px 10px;">
+              <Layers size={14} style="color: var(--color-fg-3); flex-shrink: 0;" />
+              <input id="connection-pool-id" class="input-field" bind:value={form.pool_id} placeholder="e.g. openai-prod" style="border: none; padding: 6px 4px; background: transparent; flex: 1; min-width: 0;" />
+              {#if pools.length > 0}
+                <select
+                  style="font-size: 11px; padding: 6px 8px; border: none; border-left: 1px solid var(--color-border); border-radius: 0; background: transparent; color: var(--color-fg-2); cursor: pointer; font-family: var(--font-mono); width: auto; flex-shrink: 0;"
+                  onchange={(e: Event) => { form.pool_id = (e.target as HTMLSelectElement).value; }}
+                >
+                  <option value="">pick existing…</option>
+                  {#each pools as p}
+                    <option value={p.pool_id}>{p.pool_id}</option>
+                  {/each}
+                </select>
+              {/if}
+            </div>
+          </div>
+        {/if}
       </div>
+      {#if activePreset}
+        <div style="margin-top: 10px;">
+          <button type="button" class="advanced-toggle" onclick={() => (formAdvanced = !formAdvanced)} aria-expanded={formAdvanced}>
+            {formAdvanced ? 'Hide advanced settings' : 'Advanced settings'}
+            <ChevronDown size={12} style="transform: rotate({formAdvanced ? 180 : 0}deg); transition: transform .15s ease;" />
+          </button>
+        </div>
+      {/if}
+      {#if isMusePreset}
+        <div class="provider-note">
+          <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--color-success); flex-shrink: 0;"></span>
+          Muse accounts are managed on the Muse page — after saving, log in remotely or import cookies there.
+          <a href="/dashboard/muse">Open Muse accounts →</a>
+        </div>
+      {/if}
       <!-- Test result banner — rich OpenAI-standard error display -->
       {#if testResult}
         <div style="margin-top: 12px; border-radius: 10px; overflow: hidden; border: 1px solid {testResult.success ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)'}; background: {testResult.success ? 'rgba(16,185,129,0.04)' : 'rgba(239,68,68,0.04)'};">
@@ -1771,6 +1892,37 @@
     </div>
   {/if}
 
+  {#if createdResult}
+    <div class="card created-card" role="status">
+      <div class="created-icon"><CheckCircle2 size={18} /></div>
+      <div class="created-body">
+        <strong>{createdResult.name} connected</strong>
+        <p class="muted small">
+          {#if createdResult.syncing}
+            Importing models from the provider…
+          {:else if createdResult.syncFailed}
+            Connection saved. Run “Sync Models” from the connection menu to retry the import.
+          {:else if createdResult.models != null}
+            {createdResult.models} model(s) ready to use.
+          {:else}
+            Connection ready.
+          {/if}
+          {#if createdResult.muse}
+            Muse accounts are managed separately — log in or import cookies on the Muse page.
+          {/if}
+        </p>
+        <div class="created-actions">
+          {#if createdResult.muse}
+            <a class="btn-primary" href="/dashboard/muse">Open Muse accounts</a>
+          {/if}
+          <a class="btn-secondary" href="/dashboard/playground">Open Playground</a>
+          <a class="btn-secondary" href="/dashboard/keys">Create API key</a>
+          <button class="btn-secondary" onclick={() => (createdResult = null)}>Dismiss</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- Curl Import -->
   {#if showCurlImport}
     <div class="card mb-5" style="animation: fadeInScale 0.3s ease-out;">
@@ -1818,12 +1970,12 @@
   <!-- Quick Helpers bar (optional accordions) -->
   {#if presetsExpanded}
     <!-- Provider Preset Catalog (Toggled via Toolbar) -->
-    <div class="card mb-5" style="padding: 0; overflow: hidden; animation: fadeInScale 0.25s ease-out;">
+    <div id="preset-catalog" class="card mb-5" style="padding: 0; overflow: hidden; animation: fadeInScale 0.25s ease-out;">
       <div style="padding: 14px 20px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; background: var(--color-bg-body);">
         <div class="flex items-center gap-2">
           <Sparkles size={16} style="color: var(--color-primary);" />
-          <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Quick Provider Presets</h3>
-          <span style="font-size: 11px; color: var(--color-fg-3);">Click any card to pre-fill the connection form</span>
+          <h3 style="font-size: 14px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Choose a provider</h3>
+          <span style="font-size: 11px; color: var(--color-fg-3);">Pick one — only the API key is needed</span>
         </div>
         <div class="flex items-center gap-2">
           <div class="relative" style="width: 200px;">
@@ -2152,22 +2304,30 @@
     <Spinner />
   {:else if connections.length === 0}
     <div class="card" style="text-align: center;">
-      <EmptyState title="No connections" description="Pick a provider above to add your first LLM connection." />
+      <EmptyState title="No connections yet" description="Choose a provider, paste its API key, and Lintasan will verify the connection and import its models." />
       <div class="empty-actions">
-        <button class="btn-primary" onclick={() => (showForm = true)}><Plus size={14} /> Add provider API</button>
+        <button class="btn-primary" onclick={openPresetPicker}><Sparkles size={14} /> Choose a provider</button>
+        <button class="btn-secondary" onclick={startCustomForm}><Link2 size={14} /> Custom provider</button>
         <button class="btn-secondary" onclick={() => { showCurlImport = true; curlResult = null; }}><Copy size={14} /> Import curl</button>
-        <a class="btn-secondary" href="/dashboard/discover"><Sparkles size={14} /> Discover free</a>
-        <a class="btn-secondary" href="/dashboard/oauth-ide"><Link2 size={14} /> OAuth Providers</a>
       </div>
-      <div style="margin-top: 16px; padding: 14px 18px; background: var(--color-bg-body); border-radius: 10px; text-align: left; font-size: 12px; color: var(--color-fg-2); line-height: 1.6;">
-        <div style="font-weight: 600; margin-bottom: 6px; color: var(--color-fg-0); display: flex; align-items: center; gap: 6px;"><Layers size={14} style="color: var(--color-primary);" /> Why use pools?</div>
-        <ul style="margin: 0; padding-left: 18px; list-style: disc;">
-          <li><strong>Load balance</strong> across multiple API keys for the same provider</li>
-          <li><strong>Auto failover</strong> — if one key gets rate-limited, the next takes over</li>
-          <li><strong>Priority draining</strong> — drain primary accounts first, fallback last</li>
-          <li>Group connections by provider model line (e.g. <code style="background: var(--color-bg-3); padding: 1px 4px; border-radius: 3px;">openai-prod</code>, <code style="background: var(--color-bg-3); padding: 1px 4px; border-radius: 3px;">anthropic-us</code>)</li>
-        </ul>
+      <div class="empty-steps">
+        <div class="empty-step">
+          <span class="empty-step-num">1</span>
+          <div><strong>Choose a provider preset</strong><p>OpenAI, Anthropic, Gemini, local sidecars, and more.</p></div>
+        </div>
+        <div class="empty-step">
+          <span class="empty-step-num">2</span>
+          <div><strong>Paste the API key</strong><p>Each preset links to where the key lives. Nothing else to fill in.</p></div>
+        </div>
+        <div class="empty-step">
+          <span class="empty-step-num">3</span>
+          <div><strong>Test, save, done</strong><p>Lintasan verifies the key and imports the model list automatically.</p></div>
+        </div>
       </div>
+      <p class="empty-foot">
+        Advanced options like <a href="/dashboard/oauth-ide">OAuth providers</a> and
+        <a href="/dashboard/discover">free provider discovery</a> are available too.
+      </p>
     </div>
   {:else}
     <!-- Connection Cards -->
@@ -3561,6 +3721,173 @@
     align-items: center;
     gap: 6px;
     text-decoration: none;
+  }
+  .empty-steps {
+    display: grid;
+    gap: 10px;
+    max-width: 520px;
+    margin: 0 auto;
+    text-align: left;
+  }
+  .empty-step {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-bg-body);
+  }
+  .empty-step-num {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: 700;
+    background: var(--color-primary-light);
+    color: var(--color-primary);
+  }
+  .empty-step strong {
+    font-size: 12.5px;
+    color: var(--color-fg-0);
+  }
+  .empty-step p {
+    margin: 2px 0 0;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--color-fg-2);
+  }
+  .empty-foot {
+    margin: 16px 0 0;
+    font-size: 11px;
+    color: var(--color-fg-3);
+  }
+  .empty-foot a {
+    color: var(--color-primary);
+    font-weight: 600;
+  }
+  .form-subtitle {
+    margin: 2px 0 0;
+    font-size: 11.5px;
+    color: var(--color-fg-3);
+  }
+  .guided-provider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: var(--color-bg-body);
+  }
+  .guided-provider-icon {
+    border-radius: 5px;
+    flex-shrink: 0;
+  }
+  .guided-provider-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    flex: 1;
+  }
+  .guided-provider-meta strong {
+    font-size: 12.5px;
+    color: var(--color-fg-0);
+  }
+  .guided-provider-meta code {
+    font-size: 10.5px;
+    color: var(--color-fg-3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .field-help {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 10.5px;
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+  .field-help:hover {
+    text-decoration: underline;
+  }
+  .advanced-toggle {
+    all: unset;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-fg-2);
+  }
+  .advanced-toggle:hover {
+    color: var(--color-primary);
+  }
+  .provider-note {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+    padding: 9px 12px;
+    border-radius: 9px;
+    border: 1px dashed var(--color-border);
+    background: var(--color-bg-body);
+    font-size: 11px;
+    color: var(--color-fg-2);
+  }
+  .provider-note a {
+    color: var(--color-primary);
+    font-weight: 600;
+    margin-left: auto;
+  }
+  .created-card {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    border-color: rgba(16, 185, 129, 0.35);
+  }
+  .created-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    background: var(--color-success-light);
+    color: var(--color-success);
+  }
+  .created-body {
+    min-width: 0;
+    flex: 1;
+  }
+  .created-body strong {
+    font-size: 13px;
+    color: var(--color-fg-0);
+  }
+  .created-body p {
+    margin: 2px 0 0;
+  }
+  .created-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-top: 9px;
+  }
+  .created-actions a {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+  }
+  .add-menu-primary {
+    font-weight: 600;
+    color: var(--color-primary);
   }
   .conn-grid {
     display: grid;
