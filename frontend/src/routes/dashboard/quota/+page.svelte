@@ -13,6 +13,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
   import {
     Layers, RefreshCw, Search, Clock, Cpu, Server, Activity, ShieldCheck, AlertCircle
   } from 'lucide-svelte';
@@ -183,24 +184,18 @@
 
 <div style="animation: fadeInUp 0.4s ease-out;">
   <!-- Header -->
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-5">
-    <div>
-      <div class="flex items-center gap-2 mb-1">
-        <h2 style="font-size: 20px; font-weight: 700; color: var(--color-fg-0); margin: 0;">Quota Tracker</h2>
-        <span style="font-size: 10px; font-weight: 700; letter-spacing: 0.04em; padding: 2px 7px; border-radius: 12px; background: rgba(16, 185, 129, 0.12); color: var(--color-success); border: 1px solid rgba(16, 185, 129, 0.25);">
-          LIVE UPSTREAM
-        </span>
-      </div>
-      <p style="font-size: 13px; color: var(--color-fg-2); margin: 0;">
-        Real-time upstream rolling windows, weekly caps, and credit balances across connected provider accounts (9Router parity).
-      </p>
-    </div>
-
-    <div class="flex items-center gap-2 flex-wrap">
+  <PageHeader
+    icon={Activity}
+    eyebrow="Live upstream"
+    title="Quota Tracker"
+    description="Real-time upstream rolling windows, weekly caps, and credit balances across connected provider accounts."
+  >
+    {#snippet actions()}
       <div style="position: relative;">
         <input
           type="text"
           placeholder="Search account or ID..."
+          aria-label="Search quota accounts"
           bind:value={quotaSearch}
           style="padding: 6px 12px 6px 30px; font-size: 12px; border-radius: 8px; border: 1px solid var(--color-border); background: var(--color-bg-card); color: var(--color-fg-0); width: 200px;"
         />
@@ -217,8 +212,8 @@
         <RefreshCw size={13} class={refreshingAllQuota ? 'spinning' : ''} />
         <span>Refresh All</span>
       </button>
-    </div>
-  </div>
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
     <div class="card flex items-center justify-center py-16">

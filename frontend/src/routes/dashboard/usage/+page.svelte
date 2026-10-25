@@ -12,6 +12,7 @@
   import { api } from '$lib/api';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
   import { BarChart3, ChartColumn, DollarSign, Database, Server, RefreshCw, AlertCircle, Search, Activity, Zap, Cpu, Layers } from 'lucide-svelte';
 
   let data = $state<any>(null);
@@ -146,12 +147,13 @@
 
 <div style="animation: fadeInUp 0.4s ease-out;">
   <!-- Header with Period Controls (ala 9router) -->
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-5">
-    <div>
-      <h2 style="font-size: 20px; font-weight: 700; color: var(--color-fg-0); margin: 0 0 4px 0;">Usage & Quotas</h2>
-      <p style="font-size: 13px; color: var(--color-fg-2); margin: 0;">Comprehensive breakdown of tokens, request volume, and connected accounts.</p>
-    </div>
-    <div class="flex items-center gap-2">
+  <PageHeader
+    icon={ChartColumn}
+    eyebrow="Observability"
+    title="Usage & Quotas"
+    description="Comprehensive breakdown of tokens, request volume, and connected accounts."
+  >
+    {#snippet actions()}
       <div style="display: inline-flex; border: 1px solid var(--color-border); border-radius: 8px; overflow: hidden; background: var(--color-bg-card);">
         {#each [
           { key: 'today', label: 'Today' },
@@ -171,8 +173,8 @@
       <button class="btn-secondary flex items-center gap-1.5" onclick={loadUsage} disabled={loading} style="padding: 6px 12px; font-size: 12px;">
         <RefreshCw size={13} class={loading ? 'spinning' : ''} /> Refresh
       </button>
-    </div>
-  </div>
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
     <Spinner />

@@ -4,6 +4,7 @@
   import { confirmAction } from '$lib/confirm';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
+  import PageHeader from '$lib/components/PageHeader.svelte';
   import {
     Puzzle, Store, Sparkles, Settings, Trash2, Power,
     PowerOff, Search, Download, Tag, ChevronRight,
@@ -242,16 +243,12 @@
 
 <div style="display: flex; flex-direction: column; gap: 24px;">
   <!-- Header -->
-  <div class="flex items-center justify-between">
-    <div>
-      <h2 style="font-size: 20px; font-weight: 700; color: var(--color-fg-0); letter-spacing: -0.3px;">
-        Plugin Management
-      </h2>
-      <p style="font-size: 13px; color: var(--color-fg-2); margin-top: 2px;">
-        Extend your gateway with plugins, browse the store, or generate with AI
-      </p>
-    </div>
-  </div>
+  <PageHeader
+    icon={Puzzle}
+    eyebrow="Extensions"
+    title="Plugin Management"
+    description="Extend your gateway with plugins, browse the store, or generate one with AI."
+  />
 
   <!-- Tabs -->
   <div class="card" style="padding: 0; overflow: hidden;">
