@@ -1069,7 +1069,10 @@
                         <span class="health-dot {account.health}" aria-hidden="true"></span>
                         <div class="account-primary">
                           <div class="account-health-row">
-                            <span class="session-provider">{healthLabel(account.health)}</span>
+                            <strong class="account-identity" title={account.account_label || undefined}>
+                              {account.account_label || `Account ${account.id.slice(0, 8)}…`}
+                            </strong>
+                            <span class="health-chip {account.health}">{healthLabel(account.health)}</span>
                             {#if account.masked_token}
                               <code class="masked-token" title="Masked token — secrets are never shown">{account.masked_token}</code>
                             {/if}
@@ -1084,6 +1087,18 @@
                             {#if account.created_at}<span>· Added {formatAge(account.created_at)}</span>{/if}
                             <span>· ID {account.id.slice(0, 8)}…</span>
                           </div>
+                          {#if account.health !== 'revoked'}
+                            <div class="account-usage">
+                              {#if account.provider === 'antigravity'}
+                                <a href="/dashboard/quota" class="link-sm">View quota &amp; limits</a>
+                              {:else}
+                                <span>
+                                  Per-account usage isn't tracked by Lintasan;
+                                  <a href="/dashboard/usage">see gateway usage</a>.
+                                </span>
+                              {/if}
+                            </div>
+                          {/if}
                         </div>
                       </div>
                       <div class="session-actions">
@@ -1572,11 +1587,6 @@
     align-items: center;
     flex: 1;
     min-width: 140px;
-  }
-  .session-provider {
-    font-weight: 700;
-    font-size: 14px;
-    text-transform: lowercase;
   }
   .session-status {
     font-size: 11px;
@@ -2111,9 +2121,42 @@
     align-items: center;
     gap: 8px;
   }
-  .account-row .session-provider {
-    text-transform: none;
+  .account-identity {
     font-size: 13px;
+    font-weight: 750;
+    color: var(--color-fg-0);
+    overflow-wrap: anywhere;
+  }
+  .health-chip {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--color-bg-hover);
+    color: var(--color-fg-2);
+  }
+  .health-chip.healthy {
+    background: var(--color-success-light);
+    color: var(--color-success);
+  }
+  .health-chip.expiring,
+  .health-chip.restricted {
+    background: var(--color-warning-light);
+    color: var(--color-warning);
+  }
+  .health-chip.expired,
+  .health-chip.revoked {
+    background: var(--color-error-light);
+    color: var(--color-error);
+  }
+  .account-usage {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--color-fg-3);
+  }
+  .account-usage a {
+    color: var(--color-primary);
+    font-weight: 600;
   }
   .account-hint {
     font-size: 11px;

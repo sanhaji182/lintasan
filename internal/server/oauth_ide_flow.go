@@ -1,8 +1,10 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/sanhaji182/lintasan-go/internal/auth"
 	"github.com/sanhaji182/lintasan-go/internal/oauthide"
@@ -46,13 +48,13 @@ func exchangeOAuthCallback(provider, code, redirectURI, pkceVerifier, oauthState
 		if err != nil {
 			return "", "", 0, "", err
 		}
-		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, "", nil
+		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, oauthIDTokenMeta(tok.IDToken), nil
 	case "claude":
 		tok, err := oauthide.ExchangeClaudeToken(code, redirectURI, pkceVerifier, oauthState)
 		if err != nil {
 			return "", "", 0, "", err
 		}
-		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, "", nil
+		return tok.AccessToken, tok.RefreshToken, tok.ExpiresIn, oauthIDTokenMeta(tok.IDToken), nil
 	case "codex":
 		tok, meta, err := oauthide.ExchangeCodexToken(code, redirectURI, pkceVerifier)
 		if err != nil {
@@ -75,4 +77,15 @@ func exchangeOAuthCallback(provider, code, redirectURI, pkceVerifier, oauthState
 		a, r, e, err := exchangeIdeOAuthCodeLegacy(provider, code, redirectURI)
 		return a, r, e, "", err
 	}
+}
+
+// oauthIDTokenMeta keeps the id_token so the accounts API can surface the
+// signed-in identity (email/name) without another provider round-trip.
+func oauthIDTokenMeta(idToken string) string {
+	idToken = strings.TrimSpace(idToken)
+	if idToken == "" {
+		return ""
+	}
+	meta, _ := json.Marshal(map[string]string{"id_token": idToken})
+	return string(meta)
 }

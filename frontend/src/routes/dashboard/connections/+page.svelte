@@ -18,6 +18,7 @@
   import {
     wireState,
     wireStateLabel,
+    type OAuthAccount,
     type OAuthAccountsResponse,
     type OAuthProviderAccounts
   } from '$lib/oauthAccounts';
@@ -80,6 +81,7 @@
   let oauthIdeEnabled = $state(false);
   let oauthSessions = $state<{ provider: string; status: string }[]>([]);
   let oauthAccountProviders = $state<OAuthProviderAccounts[]>([]);
+  let oauthAccountRows = $state<OAuthAccount[]>([]);
   let wiringOAuth = $state('');
   let oauthExpanded = $state(false);
   let presetsExpanded = $state(false);
@@ -506,7 +508,11 @@
     return providers.map((provider) => ({
       provider,
       sessions: activeOAuthSessions.filter((s) => s.provider === provider).length,
-      rollup: oauthAccountProviders.find((p) => p.provider === provider)
+      rollup: oauthAccountProviders.find((p) => p.provider === provider),
+      labels: oauthAccountRows
+        .filter((account) => account.provider === provider && account.health !== 'revoked' && account.account_label)
+        .map((account) => account.account_label as string)
+        .slice(0, 3)
     }));
   });
 
@@ -618,13 +624,16 @@
       try {
         const accounts = await api.get<OAuthAccountsResponse>('/api/oauth/accounts');
         oauthAccountProviders = accounts.providers ?? [];
+        oauthAccountRows = accounts.accounts ?? [];
       } catch {
         oauthAccountProviders = [];
+        oauthAccountRows = [];
       }
     } catch {
       oauthIdeEnabled = false;
       oauthSessions = [];
       oauthAccountProviders = [];
+      oauthAccountRows = [];
     }
   }
 
@@ -1603,6 +1612,9 @@
             <div class="oauth-banner-item-main">
               <strong>{oauthProviderLabel(entry.provider)}</strong>
               <span class="oauth-banner-sub">
+                {#if entry.labels.length}
+                  <span class="oauth-banner-accounts" title={entry.labels.join(', ')}>{entry.labels.join(', ')}</span> ·
+                {/if}
                 {entry.rollup
                   ? `${entry.rollup.active} active · ${entry.rollup.expiring} expiring${entry.rollup.restricted > 0 ? ` · ${entry.rollup.restricted} restricted` : ''}`
                   : `${entry.sessions} session${entry.sessions === 1 ? '' : 's'} active`}
@@ -3704,6 +3716,10 @@
   .oauth-banner-sub {
     font-size: 10.5px;
     color: var(--color-fg-3);
+  }
+  .oauth-banner-accounts {
+    color: var(--color-fg-1);
+    font-weight: 650;
   }
   .wire-chip {
     display: inline-flex;

@@ -796,6 +796,12 @@
               {#if quotaResult[a.id]}
                 <p class="quota-result"><strong>Quota:</strong> <code>{quotaResult[a.id]}</code></p>
               {/if}
+              {#if !capabilities.quota}
+                <p class="quota-note muted small">
+                  muse2api does not report quota or credit limits yet. The success, failure, and last-used counters above
+                  come from the sidecar; see <a href="/dashboard/usage">gateway usage</a> for request and token totals.
+                </p>
+              {/if}
 
               <div class="account-actions">
                 {#if capabilities.renew_session}
@@ -1458,6 +1464,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .quota-note {
+    margin: 8px 0 0;
+    font-size: 11px;
+    line-height: 1.45;
   }
   .quota-result {
     margin: 0 0 8px;

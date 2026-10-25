@@ -6,6 +6,7 @@ export interface OAuthAccount {
   created_at?: string;
   expires_at?: string;
   masked_token?: string;
+  account_label?: string;
 }
 
 export interface OAuthProviderAccounts {

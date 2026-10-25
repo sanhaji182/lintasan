@@ -166,7 +166,7 @@ describe('OAuth IDE one-click provider flow', () => {
       if (path === '/api/oauth/accounts') {
         return {
           enabled: true,
-          accounts: [{ id: 'account-1', provider: 'codex', status: 'active', health: 'healthy' }],
+          accounts: [{ id: 'account-1', provider: 'codex', status: 'active', health: 'healthy', account_label: 'person@example.com' }],
           providers: [{ provider: 'codex', name: 'Codex', active: 1, expiring: 0, restricted: 0, expired: 0, revoked: 0, total: 1, wired: false }]
         };
       }
@@ -175,5 +175,6 @@ describe('OAuth IDE one-click provider flow', () => {
 
     render(OAuthIdePage);
     expect(await screen.findByRole('button', { name: /^Add another Codex account$/i })).toBeInTheDocument();
+    expect(await screen.findByText('person@example.com')).toBeInTheDocument();
   });
 });

@@ -76,6 +76,7 @@ type TokenJSON struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int    `json:"expires_in"`
+	IDToken      string `json:"id_token"`
 }
 
 // ExchangeXAIToken PKCE code exchange (public client).

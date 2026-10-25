@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -22,13 +24,14 @@ import (
 
 // oauthAccountView is one account as shown to the dashboard. No secrets.
 type oauthAccountView struct {
-	ID          string `json:"id"`
-	Provider    string `json:"provider"`
-	Status      string `json:"status"`
-	Health      string `json:"health"` // healthy | expiring | restricted | expired | revoked
-	CreatedAt   string `json:"created_at,omitempty"`
-	ExpiresAt   string `json:"expires_at,omitempty"`
-	MaskedToken string `json:"masked_token,omitempty"`
+	ID           string `json:"id"`
+	Provider     string `json:"provider"`
+	Status       string `json:"status"`
+	Health       string `json:"health"` // healthy | expiring | restricted | expired | revoked
+	CreatedAt    string `json:"created_at,omitempty"`
+	ExpiresAt    string `json:"expires_at,omitempty"`
+	MaskedToken  string `json:"masked_token,omitempty"`
+	AccountLabel string `json:"account_label,omitempty"`
 }
 
 // oauthProviderView is the per-provider roll-up the dashboard groups on.
@@ -69,7 +72,7 @@ func (s *Server) handleOAuthAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.db.Conn().Query(
-		`SELECT id, provider, access_token, status, created_at, COALESCE(expires_at,'')
+		`SELECT id, provider, access_token, status, created_at, COALESCE(expires_at,''), COALESCE(flow_meta,'')
 		 FROM oauth_sessions ORDER BY provider ASC, datetime(created_at) DESC`)
 	if err != nil {
 		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "query failed"})
@@ -81,19 +84,20 @@ func (s *Server) handleOAuthAccounts(w http.ResponseWriter, r *http.Request) {
 	byProvider := map[string]*oauthProviderView{}
 
 	for rows.Next() {
-		var id, provider, token, status, createdAt, expiresAt string
-		if err := rows.Scan(&id, &provider, &token, &status, &createdAt, &expiresAt); err != nil {
+		var id, provider, token, status, createdAt, expiresAt, flowMeta string
+		if err := rows.Scan(&id, &provider, &token, &status, &createdAt, &expiresAt, &flowMeta); err != nil {
 			continue
 		}
 		health := oauthAccountHealth(status, expiresAt, s)
 		accounts = append(accounts, oauthAccountView{
-			ID:          id,
-			Provider:    provider,
-			Status:      status,
-			Health:      health,
-			CreatedAt:   createdAt,
-			ExpiresAt:   expiresAt,
-			MaskedToken: maskToken(token),
+			ID:           id,
+			Provider:     provider,
+			Status:       status,
+			Health:       health,
+			CreatedAt:    createdAt,
+			ExpiresAt:    expiresAt,
+			MaskedToken:  maskToken(token),
+			AccountLabel: oauthAccountLabel(provider, flowMeta),
 		})
 
 		pv := byProvider[provider]
@@ -199,4 +203,106 @@ func oauthAccountsProviderOrder() []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+// oauthAccountLabel extracts a human-readable account identity from the
+// provider-specific flow_meta written during authorization. This is
+// display-only: id_token payloads arrive directly from the provider over TLS,
+// so the signature is not re-verified here.
+func oauthAccountLabel(provider, flowMeta string) string {
+	if strings.TrimSpace(flowMeta) == "" {
+		return ""
+	}
+	var meta map[string]any
+	if json.Unmarshal([]byte(flowMeta), &meta) != nil {
+		return ""
+	}
+
+	paths := [][]string{
+		{"email"},
+		{"userEmail"},
+		{"github_user", "email"},
+		{"userInfo", "email"},
+		{"user", "email"},
+		{"login"},
+		{"github_user", "login"},
+		{"username"},
+		{"preferred_username"},
+		{"name"},
+		{"github_user", "name"},
+		{"userInfo", "name"},
+		{"user", "name"},
+		{"label"},
+		{"account"},
+	}
+	for _, path := range paths {
+		if value := oauthNestedString(meta, path...); value != "" {
+			return value
+		}
+	}
+
+	if idToken := oauthNestedString(meta, "id_token"); idToken != "" {
+		if claims := oauthJWTClaims(idToken); claims != nil {
+			for _, key := range []string{"email", "preferred_username", "name", "nickname"} {
+				if value, ok := claims[key].(string); ok && strings.TrimSpace(value) != "" {
+					return strings.TrimSpace(value)
+				}
+			}
+		}
+	}
+
+	if machineID := oauthNestedString(meta, "machineId"); machineID != "" {
+		return oauthProviderLabel(provider) + " · " + oauthShortID(machineID)
+	}
+	return ""
+}
+
+func oauthProviderLabel(provider string) string {
+	if strings.EqualFold(provider, "cursor") {
+		return "Cursor"
+	}
+	if provider == "" {
+		return "Account"
+	}
+	return strings.ToUpper(provider[:1]) + provider[1:]
+}
+
+func oauthNestedString(meta map[string]any, path ...string) string {
+	var current any = meta
+	for _, key := range path {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return ""
+		}
+		current = m[key]
+	}
+	value, ok := current.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func oauthJWTClaims(token string) map[string]any {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var claims map[string]any
+	if json.Unmarshal(payload, &claims) != nil {
+		return nil
+	}
+	return claims
+}
+
+func oauthShortID(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8] + "…"
 }
