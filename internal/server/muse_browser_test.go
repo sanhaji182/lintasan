@@ -126,6 +126,12 @@ func TestMuseBrowserAutoImportsCookies(t *testing.T) {
 		}
 	}
 
+	// Authentication may close/replace the login tab. Cookie detection must
+	// keep working at the browser-context level after the page is gone.
+	if _, err := sess.cdp.send(cookieCtx, "Target.closeTarget", map[string]any{"targetId": sess.targetID}, ""); err != nil {
+		t.Fatalf("close login target: %v", err)
+	}
+
 	select {
 	case <-imported:
 	case <-time.After(15 * time.Second):

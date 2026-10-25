@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -367,7 +368,6 @@ func (s *Server) startMuseBrowserSession(ctx context.Context, owner, label strin
 		done:             make(chan struct{}),
 		cleanupDone:      make(chan struct{}),
 	}
-	cdp.onEvent = sess.onCDPEvent
 	cdp.onClose = func() {
 		s.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": "browser connection closed"})
 	}
@@ -402,6 +402,7 @@ func (s *Server) startMuseBrowserSession(ctx context.Context, owner, label strin
 func (sess *museBrowserSession) captureFrames() {
 	ticker := time.NewTicker(400 * time.Millisecond)
 	defer ticker.Stop()
+	failures := 0
 	for {
 		select {
 		case <-sess.done:
@@ -413,8 +414,15 @@ func (sess *museBrowserSession) captureFrames() {
 			}, sess.pageSessionID)
 			cancel()
 			if err != nil {
+				failures++
+				if failures >= 25 {
+					// The login tab was closed/replaced. Cookie polling continues
+					// at the browser-context level until import or timeout.
+					return
+				}
 				continue
 			}
+			failures = 0
 			var shot struct {
 				Data string `json:"data"`
 			}
@@ -463,13 +471,6 @@ func (sess *museBrowserSession) emitFrame(payload []byte) {
 	}
 }
 
-func (sess *museBrowserSession) onCDPEvent(_ string, method string, params json.RawMessage) {
-	switch method {
-	case "Inspector.detached":
-		sess.server.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": "browser inspector detached"})
-	}
-}
-
 func (s *Server) finishMuseBrowserSession(sess *museBrowserSession, terminal map[string]any) {
 	if sess == nil {
 		return
@@ -477,6 +478,13 @@ func (s *Server) finishMuseBrowserSession(sess *museBrowserSession, terminal map
 	sess.finishOnce.Do(func() {
 		if terminal != nil {
 			sess.emit(terminal)
+			detail := fmt.Sprint(terminal["type"])
+			if errText, ok := terminal["error"].(string); ok && errText != "" {
+				detail += ": " + errText
+			}
+			fmt.Fprintf(os.Stderr, "[muse-browser] %s finished: %s\n", sess.id, detail)
+		} else {
+			fmt.Fprintf(os.Stderr, "[muse-browser] %s closed\n", sess.id)
 		}
 		close(sess.done)
 		s.museBrowserMu.Lock()
@@ -580,6 +588,7 @@ func (s *Server) handleMuseBrowserStart(w http.ResponseWriter, r *http.Request) 
 	s.museBrowserSessions[sess.id] = sess
 	s.museBrowserMu.Unlock()
 
+	fmt.Fprintf(os.Stderr, "[muse-browser] %s started (owner=%s, label=%s)\n", sess.id, user.Username, sess.label)
 	go s.monitorMuseBrowserSession(sess)
 	writeJSON(w, map[string]any{
 		"session_id": sess.id,
@@ -709,6 +718,7 @@ func (s *Server) monitorMuseBrowserSession(sess *museBrowserSession) {
 	defer timeout.Stop()
 	defer ticker.Stop()
 
+	lastSignature := ""
 	for {
 		select {
 		case <-sess.done:
@@ -720,7 +730,28 @@ func (s *Server) monitorMuseBrowserSession(sess *museBrowserSession) {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			cookies, err := sess.readSessionCookies(ctx)
 			cancel()
-			if err != nil || len(cookies) != len(museSessionCookieNames) {
+			if err != nil {
+				continue
+			}
+			missing := make([]string, 0, len(museSessionCookieNames))
+			for _, name := range museSessionCookieNames {
+				if cookies[name] == "" {
+					missing = append(missing, name)
+				}
+			}
+			signature := strings.Join(missing, ",")
+			if signature != lastSignature {
+				lastSignature = signature
+				if len(missing) == 0 {
+					sess.emit(map[string]any{"type": "status", "message": "muse.ai session detected — importing…"})
+				} else {
+					sess.emit(map[string]any{
+						"type":    "status",
+						"message": fmt.Sprintf("Cookies %d/%d — waiting for: %s", len(museSessionCookieNames)-len(missing), len(museSessionCookieNames), strings.Join(missing, ", ")),
+					})
+				}
+			}
+			if len(cookies) != len(museSessionCookieNames) || len(missing) > 0 {
 				continue
 			}
 			s.importMuseBrowserCookies(sess, cookies)
@@ -730,9 +761,12 @@ func (s *Server) monitorMuseBrowserSession(sess *museBrowserSession) {
 }
 
 func (sess *museBrowserSession) readSessionCookies(ctx context.Context) (map[string]string, error) {
-	raw, err := sess.cdp.send(ctx, "Network.getCookies", map[string]any{
-		"urls": []string{"https://muse.ai/", "https://www.muse.ai/"},
-	}, sess.pageSessionID)
+	// Read at the browser-context level: muse.ai may close or replace the
+	// login tab after authentication, which makes the page session unusable
+	// for Network.getCookies while the context still holds the cookies.
+	raw, err := sess.cdp.send(ctx, "Storage.getCookies", map[string]any{
+		"browserContextId": sess.browserContextID,
+	}, "")
 	if err != nil {
 		return nil, err
 	}
