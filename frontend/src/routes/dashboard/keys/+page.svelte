@@ -134,7 +134,7 @@
   {:else if error}
     <div class="card"><EmptyState icon={AlertCircle} title="Failed to load API keys" description={error} action={async () => { loading = true; error = ''; try { await loadKeys(); } catch (e: any) { error = e.message || 'Failed to load API keys'; } loading = false; }} actionLabel="Retry" /></div>
   {:else if keys.length === 0}
-    <div class="card"><EmptyState icon={Key} title="No gateway API keys" description="Create a gateway API key for OpenAI-compatible client access. Provider credentials stay under Connections." /></div>
+    <div class="card"><EmptyState icon={Key} title="No gateway API keys" description="Create a gateway API key for OpenAI-compatible client access. Provider credentials stay under Connections." action={() => (showForm = true)} actionLabel="Create key" /></div>
   {:else}
     <section class="keys-card">
       <div class="table-heading">

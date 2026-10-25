@@ -7,6 +7,8 @@
   let loading = $state(true);
   let refreshing = $state(false);
   let sources = $state<any>(null);
+  let apiKeyCount = $state(0);
+  let onboardingDismissed = $state(false);
 
   function unwrap<T>(result: PromiseSettledResult<any>, fallbackKey = 'data'): PromiseSettledResult<T> {
     if (result.status === 'rejected') return result;
@@ -19,6 +21,7 @@
       api.get('/api/dashboard/stats'),
       api.get('/api/logs'),
       api.get('/api/connections'),
+      api.get('/api/keys'),
     ]);
     sources = {
       health: unwrap(results[0], 'data'),
@@ -26,12 +29,35 @@
       logs: unwrap(results[2], 'data'),
       connections: unwrap(results[3], 'data'),
     };
+    const keysResult = results[4];
+    if (keysResult.status === 'fulfilled') {
+      const payload = keysResult.value as any;
+      apiKeyCount = Array.isArray(payload?.data) ? payload.data.length : Array.isArray(payload) ? payload.length : 0;
+    } else {
+      apiKeyCount = 0;
+    }
     loading = false;
     refreshing = false;
   }
 
   async function refresh() { refreshing = true; await load(); }
-  onMount(load);
+  onMount(() => {
+    try {
+      onboardingDismissed = localStorage.getItem('lintasan_onboarding_dismissed') === '1';
+    } catch {
+      onboardingDismissed = false;
+    }
+    load();
+  });
+
+  function dismissOnboarding() {
+    onboardingDismissed = true;
+    try {
+      localStorage.setItem('lintasan_onboarding_dismissed', '1');
+    } catch {
+      // Storage can be unavailable in hardened browsers; hiding still works for this session.
+    }
+  }
 
   const overview: OverviewState | null = $derived(sources ? deriveOverview(sources) : null);
   const metricCards = $derived(overview ? [
@@ -40,6 +66,41 @@
     { label: 'Recent tokens', ...overview.tokens, icon: Zap, tone: 'violet' },
     { label: 'Provider accounts', ...overview.providers, icon: Link2, tone: 'green' },
   ] : []);
+
+  const onboardingSteps = $derived(overview ? [
+    {
+      id: 'connection',
+      label: 'Add a provider connection',
+      detail: 'Connect an API key or OAuth account that can serve models.',
+      done: overview.connections.length > 0,
+      href: '/dashboard/connections',
+      cta: 'Open Connections'
+    },
+    {
+      id: 'key',
+      label: 'Create a gateway API key',
+      detail: 'Clients use this key to authenticate to Lintasan.',
+      done: apiKeyCount > 0,
+      href: '/dashboard/keys',
+      cta: 'Create key'
+    },
+    {
+      id: 'request',
+      label: 'Send your first request',
+      detail: 'Test a model in the Playground or from your own app.',
+      done: overview.recentRequests.length > 0,
+      href: '/dashboard/playground',
+      cta: 'Open Playground'
+    }
+  ] : []);
+  const onboardingComplete = $derived(onboardingSteps.filter((step) => step.done).length);
+  const showOnboarding = $derived(
+    !!overview &&
+    !onboardingDismissed &&
+    onboardingSteps.length > 0 &&
+    onboardingComplete < onboardingSteps.length &&
+    overview.providers.value !== 'Unavailable'
+  );
 
   function formatTime(value?: string) {
     if (!value) return 'Time unavailable';
@@ -74,6 +135,39 @@
 
     {#if overview.failedSources.length}
       <div class="source-warning" role="alert"><CircleAlert size={17} /><span><strong>Some live data is unavailable.</strong> {overview.failedSources.join(', ')} could not be loaded. Available panels remain current.</span></div>
+    {/if}
+
+    {#if showOnboarding}
+      <section class="onboarding" aria-labelledby="onboarding-title">
+        <div class="onboarding-head">
+          <div>
+            <span class="section-kicker">Getting started</span>
+            <h3 id="onboarding-title">Finish setting up your gateway</h3>
+          </div>
+          <div class="onboarding-meta">
+            <strong>{onboardingComplete}/{onboardingSteps.length}</strong>
+            <span>steps complete</span>
+            <button type="button" class="onboarding-hide" onclick={dismissOnboarding}>Hide</button>
+          </div>
+        </div>
+        <div class="onboarding-progress" aria-hidden="true">
+          <span style="width: {(onboardingComplete / onboardingSteps.length) * 100}%"></span>
+        </div>
+        <div class="onboarding-steps">
+          {#each onboardingSteps as step, i}
+            <a class="onboarding-step" class:done={step.done} href={step.href}>
+              <span class="onboarding-check">
+                {#if step.done}<CheckCircle2 size={16} />{:else}{i + 1}{/if}
+              </span>
+              <span class="onboarding-copy">
+                <strong>{step.label}</strong>
+                <small>{step.detail}</small>
+              </span>
+              <span class="onboarding-cta">{step.done ? 'Done' : step.cta}<ArrowRight size={13} /></span>
+            </a>
+          {/each}
+        </div>
+      </section>
     {/if}
 
     <div class="metric-grid">
@@ -143,6 +237,27 @@
   .hero-status strong,.hero-status small { display:block; }.hero-status strong { margin-top:2px; font-size:20px; }.hero-status small { color:var(--color-fg-2); font-size:12px; }
   .hero-status a,.panel header a,.empty a { display:inline-flex; align-items:center; gap:5px; color:var(--color-primary); font-size:12px; font-weight:650; text-decoration:none; }
   .source-warning { display:flex; gap:10px; margin-bottom:16px; padding:12px 14px; border:1px solid color-mix(in srgb,var(--color-warning) 28%,var(--color-border)); border-radius:10px; color:var(--color-fg-1); background:var(--color-warning-light); font-size:12px; }
+  .onboarding { margin-bottom:16px; padding:18px; border:1px solid var(--color-border); border-radius:var(--radius-lg); background:var(--color-bg-card); box-shadow:var(--shadow-sm); }
+  .onboarding-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .onboarding-head h3 { margin:3px 0 0; font-size:16px; }
+  .onboarding-meta { display:flex; align-items:center; gap:8px; color:var(--color-fg-3); font-size:11px; }
+  .onboarding-meta strong { font:700 16px var(--font-mono); color:var(--color-fg-0); }
+  .onboarding-hide { border:1px solid var(--color-border); background:var(--color-bg-card); color:var(--color-fg-2); border-radius:7px; padding:5px 9px; font-size:11px; cursor:pointer; }
+  .onboarding-hide:hover { background:var(--color-bg-hover); }
+
+  .onboarding-progress { height:5px; margin:12px 0 14px; border-radius:999px; overflow:hidden; background:var(--color-border-light); }
+  .onboarding-progress span { display:block; height:100%; border-radius:inherit; background:var(--color-primary); transition:width .25s ease; }
+  .onboarding-steps { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+  .onboarding-step { display:flex; align-items:flex-start; gap:10px; padding:12px; border:1px solid var(--color-border); border-radius:10px; color:var(--color-fg-1); text-decoration:none; transition:border-color .15s, background .15s; }
+  .onboarding-step:hover { border-color:var(--color-primary); background:var(--color-primary-light); }
+  .onboarding-step.done { background:var(--color-success-light); border-color:color-mix(in srgb,var(--color-success) 28%,var(--color-border)); }
+  .onboarding-check { display:grid; place-items:center; width:24px; height:24px; flex-shrink:0; border-radius:999px; background:var(--color-bg-hover); color:var(--color-fg-2); font:700 11px var(--font-mono); }
+  .onboarding-step.done .onboarding-check { background:var(--color-success); color:#fff; }
+  .onboarding-copy { flex:1; min-width:0; }
+  .onboarding-copy strong { display:block; font-size:12px; color:var(--color-fg-0); }
+  .onboarding-copy small { display:block; margin-top:2px; color:var(--color-fg-3); font-size:11px; line-height:1.4; }
+  .onboarding-cta { display:inline-flex; align-items:center; gap:4px; flex-shrink:0; color:var(--color-primary); font-size:11px; font-weight:650; }
+  .onboarding-step.done .onboarding-cta { color:var(--color-success); }
   .metric-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
   .metric { min-height:146px; padding:17px; border:1px solid var(--color-border); border-radius:var(--radius); background:var(--color-bg-card); box-shadow:var(--shadow-sm); }
   .metric-icon { width:36px;height:36px;display:grid;place-items:center;margin-bottom:15px;border-radius:10px;color:var(--tone,var(--color-primary));background:color-mix(in srgb,var(--tone,var(--color-primary)) 10%,transparent); }
@@ -153,6 +268,6 @@
   h3 { margin:2px 0 0; font-size:14px; font-weight:650; }.request-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto; align-items:center; gap:11px; min-height:58px; padding:9px 18px; border-bottom:1px solid var(--color-border-light); }.request-row:last-child{border-bottom:0}.request-row strong,.provider-row strong{display:block;font-size:12px}.request-row small,.provider-row small{display:block;color:var(--color-fg-3);font-size:11px}.request-dot,.provider-dot{width:8px;height:8px;border-radius:50%;background:var(--color-success)}.request-dot.failed,.provider-dot:not(.active){background:var(--color-error)}.request-meta{font:11px var(--font-mono);color:var(--color-fg-2)}.request-time{color:var(--color-fg-3);font-size:11px}
   .action-panel h3 { margin-bottom:12px; }.quick-action { display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-top:1px solid var(--color-border-light);color:var(--color-fg-1);text-decoration:none}.quick-action>span{display:grid;grid-template-columns:auto 1fr;column-gap:9px}.quick-action :global(svg){grid-row:1/3;color:var(--color-primary)}.quick-action b{font-size:12px}.quick-action small{color:var(--color-fg-3);font-size:11px}.provider-row{display:flex;align-items:center;gap:10px;padding:11px 18px;border-bottom:1px solid var(--color-border-light)}.provider-row>div{flex:1}.provider-row>span:last-child{color:var(--color-fg-3);font-size:11px}
   .empty{min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:7px;padding:24px;color:var(--color-fg-3);text-align:center}.empty span{max-width:340px;font-size:12px}.empty strong{color:var(--color-fg-1);font-size:13px}.empty.compact{min-height:150px}.skeleton-block{min-height:98px;background:var(--color-border-light);animation:shimmer 1.4s infinite}
-  @media(max-width:1050px){.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.workspace-grid{grid-template-columns:1fr}}
-  @media(max-width:600px){.hero{align-items:flex-start}.hero p{max-width:280px}.refresh{width:44px;min-height:44px;flex-shrink:0;padding:0;justify-content:center;font-size:0}.hero-status{grid-template-columns:auto 1fr}.hero-status>a{grid-column:2}.metric-grid{grid-template-columns:1fr 1fr}.metric{min-height:130px}.request-row{grid-template-columns:auto minmax(0,1fr) auto}.request-time{display:none}}
+  @media(max-width:1050px){.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.workspace-grid{grid-template-columns:1fr}.onboarding-steps{grid-template-columns:1fr}}
+  @media(max-width:600px){.hero{align-items:flex-start}.hero p{max-width:280px}.refresh{width:44px;min-height:44px;flex-shrink:0;padding:0;justify-content:center;font-size:0}.hero-status{grid-template-columns:auto 1fr}.hero-status>a{grid-column:2}.metric-grid{grid-template-columns:1fr 1fr}.metric{min-height:130px}.request-row{grid-template-columns:auto minmax(0,1fr) auto}.request-time{display:none}.onboarding-head{flex-direction:column;gap:8px}.onboarding-meta{width:100%}.onboarding-hide{margin-left:auto}}
 </style>

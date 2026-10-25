@@ -7,6 +7,7 @@
     description,
     action,
     actionLabel,
+    actionHref,
     variant = 'default'
   }: {
     icon?: any;
@@ -14,6 +15,7 @@
     description?: string;
     action?: () => void;
     actionLabel?: string;
+    actionHref?: string;
     variant?: 'default' | 'compact' | 'card';
   } = $props();
 </script>
@@ -45,7 +47,9 @@
   {#if description}
     <div class="empty-desc">{description}</div>
   {/if}
-  {#if action && actionLabel}
+  {#if actionHref}
+    <a class="empty-action" href={actionHref}>{actionLabel || 'Continue'}</a>
+  {:else if action && actionLabel}
     <button class="empty-action" onclick={action}>
       {actionLabel}
     </button>
@@ -124,6 +128,9 @@
   }
 
   .empty-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     margin-top: 16px;
     padding: 8px 16px;
     background: var(--color-primary);
@@ -134,6 +141,7 @@
     font-weight: 600;
     cursor: pointer;
     transition: background 0.15s;
+    text-decoration: none;
   }
   .empty-action:hover {
     background: var(--color-primary-hover);

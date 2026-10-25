@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import OverviewPage from '../src/routes/dashboard/+page.svelte';
 
@@ -7,6 +7,7 @@ vi.mock('$lib/api', () => ({ api: { get: mocks.get } }));
 
 describe('Command Center overview', () => {
   beforeEach(() => {
+    localStorage.clear();
     mocks.get.mockReset();
     mocks.get.mockImplementation(async (path: string) => {
       if (path === '/api/dashboard/stats') throw new Error('stats offline');
@@ -27,5 +28,16 @@ describe('Command Center overview', () => {
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0);
     expect(screen.queryByText('Tokens Today')).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Manage connections/i })).toHaveAttribute('href', '/dashboard/connections');
+  });
+
+  it('shows a getting-started checklist with real progress and lets it be hidden', async () => {
+    render(OverviewPage);
+    expect(await screen.findByText('Finish setting up your gateway')).toBeInTheDocument();
+    expect(screen.getByText('Add a provider connection')).toBeInTheDocument();
+    expect(screen.getByText('Create a gateway API key')).toBeInTheDocument();
+    expect(screen.getByText('2/3')).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.queryByText('Finish setting up your gateway')).toBeNull();
+    expect(localStorage.getItem('lintasan_onboarding_dismissed')).toBe('1');
   });
 });

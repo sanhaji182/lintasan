@@ -179,7 +179,7 @@
   {:else if error}
     <div class="card"><EmptyState icon={AlertCircle} title="Failed to load usage" description={error} action={loadUsage} actionLabel="Retry" /></div>
   {:else if !data}
-    <div class="card"><EmptyState icon={ChartColumn} title="No usage data recorded yet" description="Send requests through the proxy router to see live usage metrics." /></div>
+    <div class="card"><EmptyState icon={ChartColumn} title="No usage data recorded yet" description="Send requests through the proxy router to see live usage metrics." actionHref="/dashboard/playground" actionLabel="Open Playground" /></div>
   {:else}
     <!-- Summary stats cards (4 cards) -->
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-5">

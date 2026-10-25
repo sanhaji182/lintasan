@@ -198,7 +198,7 @@
 
   <div class="card table-card">
     {#if loading}<div class="loading-wrap"><Spinner /></div>
-    {:else if displayedLogs.length === 0}<EmptyState icon={ScrollText} title={hasActiveFilters ? 'No matching logs' : 'No request logs'} description={hasActiveFilters ? 'Adjust the search, time range, or server-side filters.' : 'Request logs appear as traffic flows through the gateway.'}/>
+    {:else if displayedLogs.length === 0}<EmptyState icon={ScrollText} title={hasActiveFilters ? 'No matching logs' : 'No request logs'} description={hasActiveFilters ? 'Adjust the search, time range, or server-side filters.' : 'Request logs appear as traffic flows through the gateway.'} actionHref={hasActiveFilters ? undefined : '/dashboard/playground'} actionLabel={hasActiveFilters ? undefined : 'Send a test request'}/>
     {:else}
       <div class="table-scroll">
         <table class="logs-table">

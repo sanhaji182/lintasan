@@ -1082,6 +1082,8 @@
         icon={GitBranch}
         title="No routing combos"
         description="Combos will appear here once configured."
+        action={openCreateCombo}
+        actionLabel="Create combo"
       />
     {:else}
       <div style="display: flex; flex-direction: column; gap: 10px;">
@@ -1261,6 +1263,8 @@
         icon={Tag}
         title="No aliases configured"
         description="Create aliases to map short names to full model identifiers."
+        action={() => (showAliasForm = true)}
+        actionLabel="Create alias"
       />
     {:else}
       <div style="display: flex; flex-direction: column; gap: 8px;">

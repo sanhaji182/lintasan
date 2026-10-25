@@ -310,8 +310,13 @@
       {#if filteredQuotaProviders.length === 0}
         <div class="card" style="padding: 40px; text-align: center;">
           <EmptyState
-            title="No matching provider accounts"
-            description="Try adjusting your search query or filter tab."
+            title={quotaProviders.length === 0 ? 'No provider accounts to track' : 'No matching provider accounts'}
+            description={quotaProviders.length === 0
+              ? 'Connect a provider account to see live quota windows and balances.'
+              : 'Try adjusting your search query or filter tab.'}
+            actionHref={quotaProviders.length === 0 ? '/dashboard/connections' : undefined}
+            action={quotaProviders.length === 0 ? undefined : () => { quotaSearch = ''; quotaFilter = 'all'; }}
+            actionLabel={quotaProviders.length === 0 ? 'Manage connections' : 'Clear filters'}
           />
         </div>
       {:else}
