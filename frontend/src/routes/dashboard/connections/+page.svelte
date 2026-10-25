@@ -4553,7 +4553,16 @@
   @media (max-width: 640px) {
     .conn-header-actions { flex-basis: 100%; justify-content: space-between; }
     .stats-strip { grid-template-columns: repeat(2, 1fr); }
+    .stats-strip .stat-cell:last-child:nth-child(odd) { grid-column: span 2; }
     .oauth-banner-item { min-width: 100%; }
+    .conn-group-header { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
+    .conn-group-toggle { flex: none; width: 100%; justify-content: space-between; gap: 8px; flex-wrap: nowrap; }
+    .conn-group-header-left { flex: 1; min-width: 0; align-items: flex-start; }
+    .conn-group-header-right { flex-shrink: 0; gap: 4px; }
+    .conn-group-stat { display: none; }
+    .conn-group-health-bar { display: none; }
+    .conn-group-header-actions { width: 100%; justify-content: flex-end; margin-left: 0; }
+    .conn-group-label { font-size: 13px; }
     .conn-toolbar {
       flex-direction: column;
       align-items: stretch;

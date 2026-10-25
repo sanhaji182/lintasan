@@ -214,4 +214,7 @@
     .logout-label { display: none; }
     .logout-btn { padding: 7px 10px; }
   }
+  @media (max-width: 480px) {
+    .header-title { display: none; }
+  }
 </style>
