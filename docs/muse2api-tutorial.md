@@ -254,9 +254,13 @@ Cara paling sedikit langkah: login langsung dari panel.
 2. Browser sementara (Chromium headless, context incognito terisolasi) terbuka di modal.
 3. Login ke muse.ai di dalam modal: email/telepon, lalu kode OTP. Klik area browser
    dan ketik seperti biasa; klik tombol di halaman lewat mouse.
-4. Saat empat cookie `hatch_*` terdeteksi, Lintasan otomatis membuat akun di
+4. Saat cookie `hatch_*` terdeteksi, Lintasan otomatis membuat akun di
    muse2api, menutup context, dan memuat daftar akun.
-5. Klik **Renew session** jika ingin memvalidasi ulang sesi.
+5. Jika muse.ai hanya memberi tiga cookie (`hatch_vml` belum ada), panel
+   menampilkan "Login detected — completing muse.ai session…" lalu memanggil
+   `renew` di muse2api agar `hatch_vml` terbit dan akun langsung aktif. Tidak
+   perlu menunggu atau mengulang login.
+6. Klik **Renew session** jika ingin memvalidasi ulang sesi.
 
 Catatan:
 
