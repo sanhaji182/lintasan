@@ -175,21 +175,25 @@
   {/if}
 
   {#if apiKeyModal}
-    <div
-      class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      data-testid="api-key-backdrop"
-      onclick={(e) => { if (e.target === e.currentTarget) apiKeyModal = null; }}
-    >
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button
+        type="button"
+        class="absolute inset-0 border-0 bg-black/50 p-0"
+        data-testid="api-key-backdrop"
+        aria-label="Close API key dialog"
+        onclick={() => apiKeyModal = null}
+      ></button>
       <div
         role="dialog"
+        aria-modal="true"
         aria-label="API key required"
         tabindex="-1"
-        class="card w-full max-w-md p-6 bg-[var(--color-bg-card)] border border-[var(--color-border)] shadow-xl rounded-xl"
+        class="card relative z-10 w-full max-w-md p-6 bg-[var(--color-bg-card)] border border-[var(--color-border)] shadow-xl rounded-xl"
         onkeydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); apiKeyModal = null; } }}
       >
         <div class="flex items-center justify-between mb-3">
           <h3 class="text-base font-semibold text-[var(--color-fg-0)] m-0">Connect {apiKeyModal.name}</h3>
-          <button class="btn-ghost p-1" onclick={() => apiKeyModal = null}><X size={16} /></button>
+          <button class="btn-ghost p-1" aria-label="Close dialog" onclick={() => apiKeyModal = null}><X size={16} /></button>
         </div>
         <p class="text-xs text-[var(--color-fg-2)] mb-3">
           This provider requires an API key. Enter your key below:
@@ -200,6 +204,7 @@
             type="password"
             class="input-field w-full mb-4"
             placeholder="sk-…"
+            aria-label="Provider API key"
             bind:value={apiKeyInput}
             required
           />

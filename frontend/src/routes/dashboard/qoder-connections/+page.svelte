@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -231,10 +232,19 @@
       const extra = flagged
         ? `\n\n${flagged} of them are flagged for a credit/plan limit — those accounts may still serve other models, so deleting is usually the wrong call for them. Disable instead if unsure.`
         : '';
-      if (!confirm(`Delete ${ids.length} Qoder account(s)?\n\nThis removes the credential from Lintasan and cannot be undone. The PAT itself stays valid upstream.${extra}`)) {
+      if (!(await confirmAction({
+        title: `Delete ${ids.length} Qoder account${ids.length === 1 ? '' : 's'}?`,
+        detail: `This removes the credential from Lintasan and cannot be undone. The PAT itself stays valid upstream.${extra}`,
+        confirmLabel: 'Delete accounts',
+        tone: 'danger'
+      }))) {
         return;
       }
-    } else if (!confirm(`Disable ${ids.length} Qoder account(s)?\n\nThey stop being routed but stay in the list.`)) {
+    } else if (!(await confirmAction({
+      title: `Disable ${ids.length} Qoder account${ids.length === 1 ? '' : 's'}?`,
+      detail: 'They stop being routed but stay in the list.',
+      confirmLabel: 'Disable accounts'
+    }))) {
       return;
     }
 
@@ -272,7 +282,12 @@
     const warn = conn.credit_limited
       ? `\n\n⚠ This account is flagged for a credit/plan limit on ${conn.last_error_model || 'a model'}, but it may still serve its other models. Disable instead if you are not sure.`
       : '';
-    if (!confirm(`Delete ${conn.name}?\n\nThis removes the credential from Lintasan and cannot be undone. The PAT itself stays valid upstream.${warn}`)) {
+    if (!(await confirmAction({
+      title: `Delete ${conn.name}?`,
+      detail: `This removes the credential from Lintasan and cannot be undone. The PAT itself stays valid upstream.${warn}`,
+      confirmLabel: 'Delete account',
+      tone: 'danger'
+    }))) {
       return;
     }
 
@@ -299,10 +314,14 @@
    */
   async function disableConnection(conn: QoderConnection): Promise<void> {
     if (disabling === conn.connection_id) return;
-    const why = conn.credit_limited
-      ? `Disable ${conn.name}?\n\nIt is flagged for a credit/plan limit${conn.last_error_model ? ` on ${conn.last_error_model}` : ''}. Note: the account may still serve its other models — check "Credit Left" first.`
-      : `Disable ${conn.name}?`;
-    if (!confirm(why)) return;
+    const detail = conn.credit_limited
+      ? `It is flagged for a credit/plan limit${conn.last_error_model ? ` on ${conn.last_error_model}` : ''}. The account may still serve its other models — check "Credit Left" first.`
+      : 'It stops being routed but remains in the list.';
+    if (!(await confirmAction({
+      title: `Disable ${conn.name}?`,
+      detail,
+      confirmLabel: 'Disable account'
+    }))) return;
 
     disabling = conn.connection_id;
     try {

@@ -8,6 +8,7 @@
   ];
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -213,7 +214,12 @@
         await startBulkTest('Selected Connections', ids);
         return;
       }
-      if (action === 'delete' && !confirm(`Delete ${ids.length} selected connection(s)?`)) return;
+      if (action === 'delete' && !(await confirmAction({
+        title: `Delete ${ids.length} selected connection${ids.length === 1 ? '' : 's'}?`,
+        detail: 'Their credentials and model routes will be removed permanently.',
+        confirmLabel: 'Delete connections',
+        tone: 'danger'
+      }))) return;
       await api.post(`/api/connections/bulk-${action}`, { ids });
       selectedConnectionIds = new Set();
       await fetchConnections();
@@ -778,7 +784,12 @@
       showToast('Built-in presets cannot be deleted', 'error');
       return;
     }
-    if (!confirm(`Delete preset "${preset.name}"?`)) return;
+    if (!(await confirmAction({
+      title: `Delete preset "${preset.name}"?`,
+      detail: 'The preset will no longer be available when adding connections.',
+      confirmLabel: 'Delete preset',
+      tone: 'danger'
+    }))) return;
     try {
       await api.delete<any>(`/api/presets/${preset.id}`);
       showToast('Preset deleted', 'success');
@@ -855,7 +866,12 @@
       showToast(`Cannot delete: ${categoryPresetCounts[cat.key]} preset(s) still use this category`, 'error');
       return;
     }
-    if (!confirm(`Delete category "${cat.label}"?`)) return;
+    if (!(await confirmAction({
+      title: `Delete category "${cat.label}"?`,
+      detail: 'Connections in this category are not deleted.',
+      confirmLabel: 'Delete category',
+      tone: 'danger'
+    }))) return;
     try {
       await api.delete<any>(`/api/preset-categories/${cat.key}`);
       showToast('Category deleted', 'success');
@@ -1370,7 +1386,12 @@
   });
 
   async function deleteConn(id: string) {
-    if (!confirm('Delete this connection?')) return;
+    if (!(await confirmAction({
+      title: 'Delete this connection?',
+      detail: 'Its credential and model routes will be removed permanently.',
+      confirmLabel: 'Delete connection',
+      tone: 'danger'
+    }))) return;
     try {
       await api.delete('/api/connections/' + id);
       connections = connections.filter(c => c.id !== id);
@@ -2038,13 +2059,14 @@
 
   <!-- Add/Edit Preset Modal -->
   {#if showEditForm}
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;" onclick={() => showEditForm = false}>
-      <div class="card" style="width: 90%; max-width: 480px; padding: 24px;" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-root">
+      <button type="button" class="modal-backdrop" aria-label="Close preset dialog" onclick={() => showEditForm = false}></button>
+      <div class="card modal-panel" role="dialog" aria-modal="true" aria-label={editingPreset ? 'Edit preset' : 'New preset'} style="max-width: 480px; padding: 24px;">
         <div class="flex items-center justify-between mb-4">
           <h3 style="font-size: 16px; font-weight: 600; color: var(--color-fg-0); margin: 0;">
             {editingPreset ? 'Edit Preset' : 'New Provider Preset'}
           </h3>
-          <button onclick={() => showEditForm = false} style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 4px;">
+          <button onclick={() => showEditForm = false} aria-label="Close dialog" style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 4px;">
             <X size={18} />
           </button>
         </div>
@@ -2097,13 +2119,14 @@
 
   <!-- Add/Edit Category Modal -->
   {#if showCategoryForm}
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;" onclick={() => showCategoryForm = false}>
-      <div class="card" style="width: 90%; max-width: 440px; padding: 24px;" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-root">
+      <button type="button" class="modal-backdrop" aria-label="Close category dialog" onclick={() => showCategoryForm = false}></button>
+      <div class="card modal-panel" role="dialog" aria-modal="true" aria-label={editingCategory ? 'Edit category' : 'New category'} style="max-width: 440px; padding: 24px;">
         <div class="flex items-center justify-between mb-4">
           <h3 style="font-size: 16px; font-weight: 600; color: var(--color-fg-0); margin: 0;">
             {editingCategory ? 'Edit Category' : 'New Category'}
           </h3>
-          <button onclick={() => showCategoryForm = false} style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 4px;">
+          <button onclick={() => showCategoryForm = false} aria-label="Close dialog" style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 4px;">
             <X size={18} />
           </button>
         </div>
@@ -2156,8 +2179,9 @@
 
   <!-- Manage Modal (Tabbed: Presets | Categories) -->
   {#if showManageModal}
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;" onclick={() => showManageModal = false}>
-      <div class="card" style="width: 90%; max-width: 600px; max-height: 80vh; padding: 0; display: flex; flex-direction: column;" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-root">
+      <button type="button" class="modal-backdrop" aria-label="Close preset manager" onclick={() => showManageModal = false}></button>
+      <div class="card modal-panel" role="dialog" aria-modal="true" aria-label="Manage presets and categories" style="max-width: 600px; max-height: 80vh; padding: 0; display: flex; flex-direction: column;">
         <!-- Tabs -->
         <div style="display: flex; border-bottom: 1px solid var(--color-border);">
           <button
@@ -2172,7 +2196,7 @@
           >
             Categories ({categories.length})
           </button>
-          <button onclick={() => showManageModal = false} style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 14px 16px;">
+          <button onclick={() => showManageModal = false} aria-label="Close dialog" style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 14px 16px;">
             <X size={16} />
           </button>
         </div>
@@ -2344,16 +2368,17 @@
 
           <div class="conn-group" class:collapsed={isCollapsed}>
             <!-- Unified Provider Header with Provider-level Test button -->
-            <div 
-              class="conn-group-header" 
-              role="button" 
-              tabindex="0"
-              aria-expanded={!isCollapsed}
-              aria-controls={`connection-group-${group.key}`}
-              aria-label={`${group.label}, ${group.active} of ${group.connections.length} active`}
-              onclick={() => toggleGroup(group.key)}
-              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleGroup(group.key); } }}
-            >
+            <div class="conn-group-header">
+              <div
+                class="conn-group-toggle"
+                role="button"
+                tabindex="0"
+                aria-expanded={!isCollapsed}
+                aria-controls={`connection-group-${group.key}`}
+                aria-label={`${group.label}, ${group.active} of ${group.connections.length} active`}
+                onclick={() => toggleGroup(group.key)}
+                onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleGroup(group.key); } }}
+              >
               <div class="conn-group-header-left">
                 <span class="conn-group-chevron" class:rotated={!isCollapsed}><ChevronRight size={16} /></span>
                 {#if dom}
@@ -2394,8 +2419,10 @@
                     {group.totalModels} models
                   </span>
                 {/if}
+              </div>
+              </div>
 
-                <div class="conn-group-header-actions" onclick={(e) => e.stopPropagation()}>
+              <div class="conn-group-header-actions">
                   <button
                     class="btn-secondary conn-action-btn flex items-center gap-1.5"
                     style="padding: 4px 10px; font-size: 11px; font-weight: 600; border-color: rgba(59,130,246,0.35); background: rgba(59,130,246,0.06);"
@@ -2411,14 +2438,14 @@
                     <button
                       class="btn-secondary conn-action-btn flex items-center gap-1"
                       style="padding: 4px 8px; font-size: 11px;"
-                      onclick={(e) => { e.stopPropagation(); openGroupMenuKey = openGroupMenuKey === group.key ? null : group.key; }}
+                      onclick={() => { openGroupMenuKey = openGroupMenuKey === group.key ? null : group.key; }}
                       aria-label="Group actions"
                     >
                       <span>Actions</span>
                       <ChevronRight size={11} style="transform: rotate(90deg);" />
                     </button>
                     {#if openGroupMenuKey === group.key}
-                      <div class="conn-dropdown" onclick={(e) => e.stopPropagation()} style="right: 0; min-width: 140px;">
+                      <div class="conn-dropdown" style="right: 0; min-width: 140px;">
                         {#if group.active < group.connections.length}
                           <button
                             class="conn-dropdown-item"
@@ -2440,7 +2467,6 @@
                   </div>
                 </div>
               </div>
-            </div>
 
             <!-- Provider Accounts List -->
             {#if !isCollapsed}
@@ -2605,9 +2631,9 @@
                       </button>
 
                       <div class="kebab-menu-container" style="position: relative;">
-                        <button class="btn-icon" onclick={(e) => { e.stopPropagation(); openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More">⋯</button>
+                        <button class="btn-icon" onclick={() => { openMenuConnId = openMenuConnId === conn.id ? null : conn.id; }} aria-label="More">⋯</button>
                         {#if openMenuConnId === conn.id}
-                          <div class="conn-dropdown" onclick={(e) => e.stopPropagation()}>
+                          <div class="conn-dropdown">
                             <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; syncModels(conn.id); }}><RefreshCw size={13} /> Sync Models</button>
                             <button class="conn-dropdown-item" onclick={() => { openMenuConnId = null; openModelsViewer(conn); }}><Cpu size={13} /> View Models</button>
                             {#if conn.oauth_provider === 'antigravity' || conn.format === 'qoder' || conn.format === 'commandcode' || conn.format === 'openrouter' || conn.format === 'deepseek'}
@@ -2731,8 +2757,9 @@
 
   <!-- Models Viewer Modal -->
   {#if viewingModelsOf}
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 1100; backdrop-filter: blur(2px);" onclick={closeModelsViewer}>
-      <div class="card" style="width: 92%; max-width: 720px; max-height: 85vh; padding: 0; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-root" style="z-index: 1100;">
+      <button type="button" class="modal-backdrop" aria-label="Close models viewer" onclick={closeModelsViewer}></button>
+      <div class="card modal-panel" role="dialog" aria-modal="true" aria-label="Models for {viewingModelsOf.name}" style="max-width: 720px; max-height: 85vh; padding: 0; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
         <!-- Header -->
         <div style="padding: 16px 20px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
           <div class="flex items-center gap-3" style="min-width: 0; flex: 1;">
@@ -2782,7 +2809,7 @@
               <RefreshCw size={14} class={modelSyncing ? 'animate-spin' : ''} />
               {modelSyncing ? 'Syncing...' : 'Sync Now'}
             </button>
-            <button onclick={closeModelsViewer} style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 4px;" title="Close">
+            <button onclick={closeModelsViewer} aria-label="Close dialog" style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 4px;" title="Close">
               <X size={18} />
             </button>
           </div>
@@ -2858,9 +2885,8 @@
             <div style="display: flex; flex-direction: column;">
               {#each filteredModels as model (model.id)}
                 <div
+                  class="model-row"
                   style="display: flex; align-items: center; gap: 12px; padding: 10px 20px; border-bottom: 1px solid var(--color-border-light); transition: background 0.1s;"
-                  onmouseenter={(e) => (e.currentTarget.style.background = 'var(--color-bg-3)')}
-                  onmouseleave={(e) => (e.currentTarget.style.background = 'transparent')}
                 >
                   <!-- Status dot -->
                   <div
@@ -2995,8 +3021,9 @@
 
   <!-- Bulk Test Results & Action Modal -->
   {#if showBulkModal}
-    <div style="position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center; z-index: 1100; backdrop-filter: blur(2px);" onclick={() => { if (!bulkTesting && !bulkActing) showBulkModal = false; }}>
-      <div class="card" style="width: 92%; max-width: 680px; max-height: 85vh; padding: 0; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-root" style="z-index: 1100;">
+      <button type="button" class="modal-backdrop" aria-label="Close bulk results" onclick={() => { if (!bulkTesting && !bulkActing) showBulkModal = false; }}></button>
+      <div class="card modal-panel" role="dialog" aria-modal="true" aria-label="Bulk test results" style="max-width: 680px; max-height: 85vh; padding: 0; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
         
         <!-- Header -->
         <div style="padding: 16px 20px; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between;">
@@ -3007,7 +3034,7 @@
             </h3>
           </div>
           {#if !bulkTesting && !bulkActing}
-            <button onclick={() => showBulkModal = false} style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 4px;" title="Close">
+            <button onclick={() => showBulkModal = false} aria-label="Close dialog" style="all: unset; cursor: pointer; color: var(--color-fg-3); padding: 4px;" title="Close">
               <X size={18} />
             </button>
           {/if}
@@ -3709,18 +3736,30 @@
     color: var(--color-primary);
     font-weight: 600;
   }
-  .empty-actions {
+  .modal-root {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
     display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px;
-    margin: 14px 0 18px;
-  }
-  .empty-actions a {
-    display: inline-flex;
     align-items: center;
-    gap: 6px;
-    text-decoration: none;
+    justify-content: center;
+    padding: 16px;
+  }
+  .modal-backdrop {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(2px);
+    cursor: default;
+  }
+  .modal-panel {
+    position: relative;
+    z-index: 1;
+    width: 92%;
   }
   .empty-steps {
     display: grid;
@@ -3903,20 +3942,37 @@
     background: var(--color-bg-card);
   }
   .conn-group-header {
-    all: unset;
     display: flex;
     align-items: center;
     justify-content: space-between;
     width: 100%;
     box-sizing: border-box;
     padding: 12px 16px;
-    cursor: pointer;
     background: var(--color-bg-body);
     border-bottom: 1px solid var(--color-border);
     border-radius: 11px 11px 0 0;
     transition: background 0.1s;
     gap: 12px;
     flex-wrap: wrap;
+  }
+  .conn-group-toggle {
+    all: unset;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 1;
+    min-width: 0;
+    gap: 12px;
+    flex-wrap: wrap;
+    cursor: pointer;
+    border-radius: 8px;
+  }
+  .conn-group-toggle:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  .model-row:hover {
+    background: var(--color-bg-3);
   }
   .conn-group-header:hover {
     background: var(--color-bg-sidebar-hover);
@@ -3997,6 +4053,7 @@
     align-items: center;
     gap: 6px;
     margin-left: 4px;
+    flex-shrink: 0;
   }
   .group-subtoolbar {
     display: flex;

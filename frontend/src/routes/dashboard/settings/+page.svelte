@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import Spinner from '$lib/components/Spinner.svelte';
   import {
     Settings as SettingsIcon, Save, Shield, Zap, Globe, Server,
@@ -150,7 +151,12 @@
   }
 
   async function resetDefaults() {
-    if (!confirm('Reset all settings to defaults?')) return;
+    if (!(await confirmAction({
+      title: 'Reset all settings to defaults?',
+      detail: 'The current configuration will be replaced. Save afterwards to persist the reset.',
+      confirmLabel: 'Reset settings',
+      tone: 'danger'
+    }))) return;
     settings = {
       master_key: '',
       api_keys: '',

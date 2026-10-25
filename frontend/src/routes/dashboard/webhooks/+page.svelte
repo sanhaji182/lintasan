@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import StatusBadge from '$lib/components/StatusBadge.svelte';
@@ -110,7 +111,12 @@
   }
 
   async function deleteWebhook(webhookId: string) {
-    if (!confirm('Are you sure you want to delete this webhook?')) return;
+    if (!(await confirmAction({
+      title: 'Delete this webhook?',
+      detail: 'Event deliveries to this endpoint will stop immediately.',
+      confirmLabel: 'Delete webhook',
+      tone: 'danger'
+    }))) return;
     try {
       await api.delete(`/api/webhooks/${webhookId}`);
       webhooks = webhooks.filter(w => w.id !== webhookId);

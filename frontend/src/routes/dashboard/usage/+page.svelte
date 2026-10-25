@@ -475,7 +475,7 @@
     font-family: var(--font-mono);
     line-height: 1.1;
   }
-  .spinning {
+  :global(.spinning) {
     animation: spin 0.8s linear infinite;
   }
   @keyframes spin {

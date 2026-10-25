@@ -2,6 +2,7 @@
 import Sidebar from '$lib/components/Sidebar.svelte';
 import Header from '$lib/components/Header.svelte';
 import Toast from '$lib/components/Toast.svelte';
+import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 import { page } from '$app/state';
 
   let { children } = $props();
@@ -56,6 +57,7 @@ import { page } from '$app/state';
 </div>
 
 <Toast />
+<ConfirmDialog />
 
 <style>
   .dashboard-shell {

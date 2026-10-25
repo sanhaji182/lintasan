@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { Brain, Search, Plus, Trash2, X, Tag, Database } from 'lucide-svelte/icons';
@@ -81,7 +82,12 @@
   }
 
   async function deleteMemory(key: string) {
-    if (!confirm('Delete this memory?')) return;
+    if (!(await confirmAction({
+      title: 'Delete this memory?',
+      detail: 'The stored record will be removed permanently.',
+      confirmLabel: 'Delete memory',
+      tone: 'danger'
+    }))) return;
     try {
       await api.delete(`/v1/memory/${key}`);
       memories = memories.filter(m => m.key !== key);

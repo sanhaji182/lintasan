@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import {
@@ -109,7 +110,12 @@
   }
 
   async function deleteUser(user: UserRecord) {
-    if (!confirm(`Delete user "${user.username}"? This cannot be undone.`)) return;
+    if (!(await confirmAction({
+      title: `Delete user "${user.username}"?`,
+      detail: 'This account will be removed permanently and cannot be restored.',
+      confirmLabel: 'Delete user',
+      tone: 'danger'
+    }))) return;
     try {
       await api.delete(`/api/users/${user.id}`);
       notice = `User "${user.username}" deleted`;

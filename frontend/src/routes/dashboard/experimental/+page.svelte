@@ -811,10 +811,6 @@
     transition: background 0.15s; margin-left: auto;
   }
   .btn-detail:hover { background: var(--color-border); }
-  .hint-warn {
-    display: flex; align-items: center; gap: 5px;
-    font-size: 11px; color: #f59e0b; font-weight: 500;
-  }
   .live-badge {
     flex: 1; display: flex; align-items: center; gap: 7px;
     font-size: 13px; font-weight: 650; color: #22c55e;

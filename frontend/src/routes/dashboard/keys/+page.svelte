@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import { captureOneTimeSecret, clearOneTimeSecret, maskedKeyLabel, type OneTimeSecret } from '$lib/api-key-secret';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -79,7 +80,12 @@
   }
 
   async function deleteKey(id: string) {
-    if (!confirm('Delete this key?')) return;
+    if (!(await confirmAction({
+      title: 'Delete this API key?',
+      detail: 'Clients using this key will lose access immediately. This cannot be undone.',
+      confirmLabel: 'Delete key',
+      tone: 'danger'
+    }))) return;
     try {
       await api.delete('/api/keys/' + id);
       keys = keys.filter(k => k.id !== id);

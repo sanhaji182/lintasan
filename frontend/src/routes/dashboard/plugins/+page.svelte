@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import {
@@ -124,7 +125,12 @@
   }
 
   async function uninstallPlugin(plugin: Plugin) {
-    if (!confirm(`Uninstall "${plugin.name}"? This cannot be undone.`)) return;
+    if (!(await confirmAction({
+      title: `Uninstall "${plugin.name}"?`,
+      detail: 'The plugin and its configuration will be removed. This cannot be undone.',
+      confirmLabel: 'Uninstall',
+      tone: 'danger'
+    }))) return;
     uninstallingPlugin = plugin.id;
     try {
       await api.delete(`/api/plugins/${plugin.id}`);

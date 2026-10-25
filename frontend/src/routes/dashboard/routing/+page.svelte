@@ -7,6 +7,7 @@
   import { onMount } from 'svelte';
   import { beforeNavigate } from '$app/navigation';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
@@ -358,17 +359,32 @@
     savedComboPayload = null;
   }
 
-  function openCreateCombo() {
-    if (comboFormDirty && !confirm('Discard unsaved combo edits?')) return;
+  async function openCreateCombo() {
+    if (comboFormDirty && !(await confirmAction({
+      title: 'Discard unsaved combo edits?',
+      detail: 'Your current draft changes will be lost.',
+      confirmLabel: 'Discard',
+      tone: 'danger'
+    }))) return;
     resetComboForm();
     showComboForm = true;
     comboFormBaseline = JSON.stringify({ name: '', strategy: 'priority', description: '', entries: [] });
   }
 
-  function openEditCombo(combo: Combo) {
-    if ((combosDirtyCount > 0 || orderDirty) && !confirm('Discard staged Combo strategy/order changes before editing?')) return;
+  async function openEditCombo(combo: Combo) {
+    if ((combosDirtyCount > 0 || orderDirty) && !(await confirmAction({
+      title: 'Discard staged combo changes?',
+      detail: 'Changes to combo strategy or order have not been saved.',
+      confirmLabel: 'Discard',
+      tone: 'danger'
+    }))) return;
     if (combosDirtyCount > 0 || orderDirty) discardCombos();
-    if (comboFormDirty && !confirm('Discard unsaved combo edits?')) return;
+    if (comboFormDirty && !(await confirmAction({
+      title: 'Discard unsaved combo edits?',
+      detail: 'Your current draft changes will be lost.',
+      confirmLabel: 'Discard',
+      tone: 'danger'
+    }))) return;
     editingComboId = combo.id;
     editingComboRevision = combo.revision || '';
     newComboName = combo.provider;
@@ -391,8 +407,13 @@
     comboSaveMessage = '';
   }
 
-  function cancelComboForm() {
-    if (comboFormDirty && !confirm('Discard unsaved combo edits?')) return;
+  async function cancelComboForm() {
+    if (comboFormDirty && !(await confirmAction({
+      title: 'Discard unsaved combo edits?',
+      detail: 'Your current draft changes will be lost.',
+      confirmLabel: 'Discard',
+      tone: 'danger'
+    }))) return;
     resetComboForm();
   }
 
@@ -405,7 +426,12 @@
   }
 
   async function reloadLatestCombo() {
-    if (comboFormDirty && !confirm('Discard this draft and reload the latest saved combo?')) return;
+    if (comboFormDirty && !(await confirmAction({
+      title: 'Discard this draft?',
+      detail: 'The latest saved combo will be reloaded.',
+      confirmLabel: 'Discard draft',
+      tone: 'danger'
+    }))) return;
     comboCreating = true;
     try {
       const id = editingComboId;
@@ -514,7 +540,12 @@
   }
 
   async function deleteCombo(id: string, name: string) {
-    if (!confirm(`Delete combo "${name}"?`)) return;
+    if (!(await confirmAction({
+      title: `Delete combo "${name}"?`,
+      detail: 'Requests routed through this combo will stop resolving.',
+      confirmLabel: 'Delete combo',
+      tone: 'danger'
+    }))) return;
     try {
       await api.delete(`/api/combos?id=${encodeURIComponent(id)}`);
       showToast(`Combo "${name}" deleted`, 'success');

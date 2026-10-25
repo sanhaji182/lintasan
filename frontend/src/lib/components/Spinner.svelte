@@ -1,7 +1,11 @@
+<script lang="ts">
+  let { size = 32 }: { size?: number } = $props();
+</script>
+
 <div class="flex items-center justify-center" style="padding: 44px;" role="status" aria-label="Loading">
   <div
     style="
-      width: 32px; height: 32px;
+      width: {size}px; height: {size}px;
       border: 3px solid var(--color-border);
       border-top-color: var(--color-primary);
       border-radius: 50%;

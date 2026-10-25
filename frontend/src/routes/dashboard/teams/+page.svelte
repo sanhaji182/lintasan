@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api';
+  import { confirmAction } from '$lib/confirm';
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import {
@@ -79,7 +80,12 @@
   }
 
   async function deleteTeam(teamId: string) {
-    if (!confirm('Are you sure you want to delete this team?')) return;
+    if (!(await confirmAction({
+      title: 'Delete this team?',
+      detail: 'Members will lose access granted through this team. This cannot be undone.',
+      confirmLabel: 'Delete team',
+      tone: 'danger'
+    }))) return;
     try {
       await api.delete(`/api/teams/${teamId}`);
       teams = teams.filter(t => t.id !== teamId);
