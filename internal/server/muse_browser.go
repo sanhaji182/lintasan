@@ -742,6 +742,8 @@ func (s *Server) monitorMuseBrowserSession(sess *museBrowserSession) {
 			signature := strings.Join(missing, ",")
 			if signature != lastSignature {
 				lastSignature = signature
+				fmt.Fprintf(os.Stderr, "[muse-browser] %s cookies %d/%d missing=%s\n",
+					sess.id, len(museSessionCookieNames)-len(missing), len(museSessionCookieNames), signature)
 				if len(missing) == 0 {
 					sess.emit(map[string]any{"type": "status", "message": "muse.ai session detected — importing…"})
 				} else {
