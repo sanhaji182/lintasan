@@ -161,3 +161,80 @@ func TestMuseBrowserAutoImportsCookies(t *testing.T) {
 		t.Fatal("no imported event after account creation")
 	}
 }
+
+// TestMuseBrowserPartialRenew covers the observed muse.ai login flow: the page
+// sets three cookies and hatch_vml appears only after muse2api renews the
+// session. This exercises the create+renew fallback without Chrome.
+func TestMuseBrowserPartialRenew(t *testing.T) {
+	var (
+		mu      sync.Mutex
+		created bool
+		renewed bool
+	)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/admin/accounts":
+			mu.Lock()
+			created = true
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"account":{"id":"acc_partial"},"missing_cookies":["hatch_vml"]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/admin/accounts/acc_partial/renew":
+			mu.Lock()
+			renewed = true
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer upstream.Close()
+
+	s := &Server{
+		museBaseURL:         upstream.URL,
+		museAdminKey:        "test-admin-key",
+		museClient:          upstream.Client(),
+		museBrowserSessions: make(map[string]*museBrowserSession),
+	}
+	sess := &museBrowserSession{
+		server:      s,
+		id:          "sess_partial",
+		label:       "partial-test",
+		frames:      make(chan []byte, 1),
+		events:      make(chan []byte, 16),
+		done:        make(chan struct{}),
+		cleanupDone: make(chan struct{}),
+	}
+	s.museBrowserSessions[sess.id] = sess
+
+	s.importMuseBrowserPartial(sess, map[string]string{
+		"hatch_sess": "x", "hatch_gw": "y", "hatch_native_auth_device": "z",
+	})
+
+	deadline := time.After(5 * time.Second)
+	sawImported := false
+	for !sawImported {
+		select {
+		case raw := <-sess.events:
+			var ev struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(raw, &ev) == nil && ev.Type == "imported" {
+				sawImported = true
+			}
+		case <-deadline:
+			t.Fatal("no imported event from partial fallback")
+		}
+	}
+	mu.Lock()
+	createdNow, renewedNow := created, renewed
+	mu.Unlock()
+	if !createdNow || !renewedNow {
+		t.Fatalf("expected create+renew, got created=%v renewed=%v", createdNow, renewedNow)
+	}
+	select {
+	case <-sess.cleanupDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cleanup did not finish")
+	}
+}

@@ -719,6 +719,8 @@ func (s *Server) monitorMuseBrowserSession(sess *museBrowserSession) {
 	defer ticker.Stop()
 
 	lastSignature := ""
+	var partialSince time.Time
+	partialTried := false
 	for {
 		select {
 		case <-sess.done:
@@ -753,7 +755,22 @@ func (s *Server) monitorMuseBrowserSession(sess *museBrowserSession) {
 					})
 				}
 			}
-			if len(cookies) != len(museSessionCookieNames) || len(missing) > 0 {
+			if len(missing) == 1 && missing[0] == "hatch_vml" {
+				// Login is complete, but muse.ai issues hatch_vml only after
+				// the session/VM is renewed. Give the page a moment to set it,
+				// then complete the account through muse2api's renew path.
+				if partialSince.IsZero() {
+					partialSince = time.Now()
+					sess.emit(map[string]any{"type": "status", "message": "Login detected — completing muse.ai session…"})
+				} else if !partialTried && time.Since(partialSince) >= 5*time.Second {
+					partialTried = true
+					s.importMuseBrowserPartial(sess, cookies)
+					return
+				}
+			} else if len(missing) != 0 {
+				partialSince = time.Time{}
+			}
+			if len(missing) > 0 {
 				continue
 			}
 			s.importMuseBrowserCookies(sess, cookies)
@@ -792,6 +809,82 @@ func (sess *museBrowserSession) readSessionCookies(ctx context.Context) (map[str
 		}
 	}
 	return out, nil
+}
+
+// importMuseBrowserPartial completes an account when muse.ai has issued the
+// base session cookies but not hatch_vml. The cookie is created by muse2api's
+// renewal call (GET /api/session + VM wake), so create the account and renew it.
+func (s *Server) importMuseBrowserPartial(sess *museBrowserSession, cookies map[string]string) {
+	sess.emit(map[string]any{"type": "status", "message": "Completing muse.ai VM session…"})
+	payload, err := json.Marshal(map[string]any{"label": sess.label, "cookies": cookies})
+	if err != nil {
+		s.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": "failed to encode cookies"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	resp, data, err := s.museDoContext(ctx, http.MethodPost, "/admin/accounts", payload)
+	if err != nil {
+		s.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": "muse2api unreachable: " + err.Error()})
+		return
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		s.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": "muse2api rejected the admin key"})
+		return
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		s.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": fmt.Sprintf("muse2api returned HTTP %d", resp.StatusCode)})
+		return
+	}
+	var created struct {
+		Account        map[string]any `json:"account"`
+		MissingCookies []string       `json:"missing_cookies"`
+	}
+	if err := json.Unmarshal(data, &created); err != nil {
+		s.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": "muse2api returned an invalid response"})
+		return
+	}
+	if len(created.MissingCookies) == 0 {
+		s.finishMuseBrowserSession(sess, map[string]any{
+			"type": "imported", "account": created.Account, "missing_cookies": created.MissingCookies,
+		})
+		return
+	}
+	id, _ := created.Account["id"].(string)
+	if id == "" {
+		s.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": "muse2api did not return an account id"})
+		return
+	}
+	resp, data, err = s.museDoContext(ctx, http.MethodPost, "/admin/accounts/"+url.PathEscape(id)+"/renew", nil)
+	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _, _ = s.museDoContext(context.Background(), http.MethodDelete, "/admin/accounts/"+url.PathEscape(id), nil)
+		msg := "failed to complete the muse.ai session"
+		if err != nil {
+			msg += ": " + err.Error()
+		} else {
+			msg += fmt.Sprintf(": muse2api HTTP %d", resp.StatusCode)
+		}
+		s.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": msg})
+		return
+	}
+	var renewed struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal(data, &renewed)
+	if !renewed.OK {
+		_, _, _ = s.museDoContext(context.Background(), http.MethodDelete, "/admin/accounts/"+url.PathEscape(id), nil)
+		msg := renewed.Error
+		if msg == "" {
+			msg = "muse.ai did not complete the session"
+		}
+		s.finishMuseBrowserSession(sess, map[string]any{"type": "error", "error": msg})
+		return
+	}
+	fmt.Fprintf(os.Stderr, "[muse-browser] %s completed via renew (%s)\n", sess.id, id)
+	s.finishMuseBrowserSession(sess, map[string]any{
+		"type": "imported", "account": created.Account, "missing_cookies": []string{},
+	})
 }
 
 func (s *Server) importMuseBrowserCookies(sess *museBrowserSession, cookies map[string]string) {
