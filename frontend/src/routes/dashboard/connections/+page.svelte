@@ -530,6 +530,8 @@
         return 'Qoder';
       case 'windsurf':
         return 'Windsurf';
+      case 'antigravity':
+        return 'Antigravity';
       default:
         return format || 'unknown';
     }

@@ -32,7 +32,7 @@ func oauthIdePresets() []oauthIdeConnectionPreset {
 		{"cursor", "oauth-cursor", "https://api2.cursor.sh", "openai", "/v1/chat/completions", "/v1/models", "Authorization", "Bearer "},
 		{"kilocode", "oauth-kilocode", "https://api.kilo.ai", "openai", "/v1/chat/completions", "/v1/models", "Authorization", "Bearer "},
 		{"cline", "oauth-cline", "https://api.cline.bot", "openai", "/v1/chat/completions", "/v1/models", "Authorization", "Bearer "},
-		{"antigravity", "oauth-antigravity", "https://daily-cloudcode-pa.googleapis.com", "openai", "/v1/chat/completions", "/v1/models", "Authorization", "Bearer "},
+		{"antigravity", "oauth-antigravity", "https://daily-cloudcode-pa.googleapis.com", "antigravity", "/v1internal:generateContent", "/v1/models", "Authorization", "Bearer "},
 		// Nous Research (9router v0.5.104): portal-minted Hermes agent key,
 		// used as the bearer on the inference API. Catalog entry is
 		// Impl=Partial (device grant + agent-key mint ported in nous.go;

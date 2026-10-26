@@ -116,7 +116,7 @@ func (p *ProxyHandler) providerSDKEligible(conn *Connection) bool {
 	// OpenAI-shaped POST to {base_url}/chat/completions with the raw credential.
 	// doUpstream already diverts qoder before this seam; this check makes the
 	// exclusion explicit so a future reordering cannot silently reintroduce it.
-	if conn == nil || conn.Format == "commandcode" || conn.Format == "qoder" {
+	if conn == nil || conn.Format == "commandcode" || conn.Format == "qoder" || strings.EqualFold(conn.Format, antigravityFormat) || strings.EqualFold(conn.OAuthProvider, antigravityFormat) {
 		return false
 	}
 	return true

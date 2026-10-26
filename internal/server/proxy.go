@@ -1255,6 +1255,9 @@ if retryErr != nil {
 				commit.MarkStatusWritten()
 				streamBuffer, tokensOut = p.pipeCCAlphaStreamToOpenAI(resp.Body, w, flusher, resolvedModel)
 				commit.MarkBodyWritten()
+			case p.isAntigravityNative(conn):
+				// Cloud Code SSE (data: {"response": <gemini>}) → OpenAI SSE.
+				streamBuffer, tokensOut, streamErr = p.streamAntigravityToOpenAI(resp.Body, w, flusher, resolvedModel, commit)
 			default:
 				// Every other provider: pump bytes straight through, committing on
 				// the first frame that carries content. A transport-level failure
@@ -1419,6 +1422,26 @@ if retryErr != nil {
 			b = assembled
 		}
 
+		// Antigravity: the upstream body wraps a Gemini response in
+		// {"response": ...}; translate it back to one OpenAI completion.
+		if p.isAntigravityNative(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			assembled, agPrompt, agCompletion, agErr := p.antigravityNonStreamResponse(b, resolvedModel)
+			if agErr != nil {
+				lastErr = agErr.Error()
+				lastStatusCode = http.StatusBadGateway
+				breaker.Failure()
+				p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, costSample{})
+				continue
+			}
+			b = assembled
+			if agPrompt > 0 {
+				tokensIn = agPrompt
+			}
+			if agCompletion > 0 {
+				tokensOut = agCompletion
+			}
+		}
+
 		// Reasoning extraction: DeepSeek V4 Pro puts answer in reasoning_content not content
 		b = reasoning.ExtractReasoningContent(b)
 		b = normalizeOpenAIResponseBody(b)
@@ -1562,6 +1585,19 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 			return nil, qErr
 		}
 		return p.client.Do(qReq)
+	}
+
+	// --- Antigravity native (Cloud Code Assist) ------------------------------
+	// OAuth IDE Antigravity connections do not speak OpenAI; they need the
+	// v1internal project/model/requestId envelope. This branch must precede the
+	// SDK seam so an antigravity connection can never be sent to the generic
+	// /v1/chat/completions path (which returns an HTML 404 from Google).
+	if p.isAntigravityNative(conn) {
+		agReq, agErr := p.antigravityUpstream(r.Context(), conn, body)
+		if agErr != nil {
+			return nil, agErr
+		}
+		return p.client.Do(agReq)
 	}
 
 	// --- Provider SDK seam (F1) ----------------------------------------------
