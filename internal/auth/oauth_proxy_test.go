@@ -63,6 +63,47 @@ func TestResolveUpstreamCredential_ActiveSession(t *testing.T) {
 	}
 }
 
+func TestResolveUpstreamCredential_ExpiredWithoutRefreshDoesNotRecurse(t *testing.T) {
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	m := NewOAuthManager(database)
+	_, err = m.db.Conn().Exec(
+		`INSERT INTO oauth_sessions (id, provider, access_token, refresh_token, expires_at, status, created_at)
+		 VALUES ('old', 'xai', 'stale', '', ?, 'active', datetime('now', 'localtime'))`,
+		time.Now().Add(-time.Hour).Format(time.RFC3339),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct{})
+	var got *UpstreamCredential
+	var gotErr error
+	go func() {
+		got, gotErr = m.ResolveUpstreamCredentialFull("xai", true)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ResolveUpstreamCredentialFull did not return — expired-session retry is looping")
+	}
+	if gotErr != nil || got != nil {
+		t.Fatalf("want no credential, got %+v err=%v", got, gotErr)
+	}
+
+	var status string
+	if err := m.db.Conn().QueryRow(`SELECT status FROM oauth_sessions WHERE id='old'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "expired" {
+		t.Fatalf("status = %q, want expired", status)
+	}
+}
+
 func TestResolveUpstreamCredential_GitHubCopilotMeta(t *testing.T) {
 	database, err := db.Open(":memory:")
 	if err != nil {

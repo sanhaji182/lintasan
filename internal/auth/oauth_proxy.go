@@ -46,40 +46,51 @@ func (m *OAuthManager) ResolveUpstreamCredentialFull(provider string, oauthIdeEn
 		return nil, nil
 	}
 
-	sess, err := m.pickOAuthSession(provider)
-	if err != nil {
-		return nil, err
-	}
-	if sess == nil {
-		return nil, nil
-	}
+	// A refresh failure on an expired session must END, not recurse: the
+	// expired-session fallback in pickOAuthSession keeps offering the same row,
+	// so the previous recursive retry could spin forever (observed as 100% CPU
+	// and a hung chat request). Try each candidate at most once, with a bound.
+	const maxSessionPicks = 8
+	tried := make(map[string]struct{}, 4)
 
-	// Expired (or about to expire) with a refresh token: refresh THIS session so
-	// the rotation stays on the account it picked.
-	if sess.RefreshToken != "" &&
-		(!sess.ExpiresAt.IsZero() && time.Until(sess.ExpiresAt) < oauthRefreshSkew) {
-		if err := m.refreshOAuthSession(sess); err == nil {
-			if fresh, ferr := m.sessionByID(sess.ID); ferr == nil && fresh != nil {
-				sess = fresh
-			}
-		} else if !sess.ExpiresAt.IsZero() && time.Now().After(sess.ExpiresAt) {
-			// This account is unusable, but another active account may be healthy.
-			// Mark only this session expired and retry selection once; do not
-			// collapse the entire provider to nil because one account failed.
-			_ = m.markSessionExpiredByID(sess.ID)
-			return m.ResolveUpstreamCredentialFull(provider, oauthIdeEnabled)
+	for attempt := 0; attempt < maxSessionPicks; attempt++ {
+		sess, err := m.pickOAuthSession(provider)
+		if err != nil {
+			return nil, err
 		}
-	} else if sess.RefreshToken == "" && !sess.ExpiresAt.IsZero() && time.Now().After(sess.ExpiresAt) {
-		// An expired session without a refresh token is equally unusable. The
-		// old code would still return its token forever; remove it and rotate.
-		_ = m.markSessionExpiredByID(sess.ID)
-		return m.ResolveUpstreamCredentialFull(provider, oauthIdeEnabled)
-	}
+		if sess == nil {
+			return nil, nil
+		}
+		if _, seen := tried[sess.ID]; seen {
+			return nil, nil
+		}
+		tried[sess.ID] = struct{}{}
 
-	if strings.TrimSpace(sess.AccessToken) == "" {
-		return nil, nil
+		// Expired (or about to expire) with a refresh token: refresh THIS session
+		// so the rotation stays on the account it picked.
+		if sess.RefreshToken != "" &&
+			(!sess.ExpiresAt.IsZero() && time.Until(sess.ExpiresAt) < oauthRefreshSkew) {
+			if err := m.refreshOAuthSession(sess); err == nil {
+				if fresh, ferr := m.sessionByID(sess.ID); ferr == nil && fresh != nil {
+					sess = fresh
+				}
+			} else if !sess.ExpiresAt.IsZero() && time.Now().After(sess.ExpiresAt) {
+				// This account is unusable, but another account may be healthy.
+				_ = m.markSessionExpiredByID(sess.ID)
+				continue
+			}
+		} else if sess.RefreshToken == "" && !sess.ExpiresAt.IsZero() && time.Now().After(sess.ExpiresAt) {
+			// An expired session without a refresh token is equally unusable.
+			_ = m.markSessionExpiredByID(sess.ID)
+			continue
+		}
+
+		if strings.TrimSpace(sess.AccessToken) == "" {
+			return nil, nil
+		}
+		return credentialForSession(sess), nil
 	}
-	return credentialForSession(sess), nil
+	return nil, nil
 }
 
 // credentialForSession maps a session to the bearer/header hints the upstream
