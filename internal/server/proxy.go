@@ -556,7 +556,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		}
 		if respBody, ok := cache.GetExactMatch(p.db.Conn(), model, messages, params); ok {
 			metrics.CacheHit()
-			p.logRequest(model, "exact-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, "", taskClass, modeLabel)
+			p.logRequest(model, "exact-cache", "cache", "", 200, time.Since(start).Milliseconds(), 0, 0, true, "", taskClass, modeLabel)
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("X-Lintasan-Cache", "EXACT-HIT")
@@ -569,7 +569,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	streamCacheEnabled := globalCacheEnabled && p.getSetting("stream_cache_enabled", "false") == "true"
 	if stream && streamCacheEnabled {
 		if chunks, totalTokens, ok := cache.GetStreamMatch(p.db.Conn(), model, messages); ok {
-			p.logRequest(model, "stream-cache", "cache", 200, time.Since(start).Milliseconds(), 0, totalTokens, true, "", taskClass, modeLabel)
+			p.logRequest(model, "stream-cache", "cache", "", 200, time.Since(start).Milliseconds(), 0, totalTokens, true, "", taskClass, modeLabel)
 			w.Header().Set("X-Cache", "HIT")
 			w.Header().Set("X-Lintasan-Cache", "STREAM-HIT")
 			cache.ReplayStream(w, chunks)
@@ -582,7 +582,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	if semanticEnabled {
 		if respBody, score, ok := cache.GetSemanticMatch(p.db.Conn(), model, messages, 0.92); ok {
 			metrics.CacheHit()
-			p.logRequest(model, "semantic-cache", "cache", 200, time.Since(start).Milliseconds(), 0, 0, true, fmt.Sprintf("score=%.3f", score), taskClass, modeLabel)
+			p.logRequest(model, "semantic-cache", "cache", "", 200, time.Since(start).Milliseconds(), 0, 0, true, fmt.Sprintf("score=%.3f", score), taskClass, modeLabel)
 
 			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -773,7 +773,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			}
 			w.WriteHeader(hedgeResp.StatusCode)
 			w.Write(b)
-			p.logRequest(resolvedModel, hedgeConn.ID, hedgeConn.Name, hedgeResp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
+			p.logRequest(resolvedModel, hedgeConn.ID, hedgeConn.Name, hedgeConn.oauthSessionID, hedgeResp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
 			if exactCacheEnabled && !stream && hedgeResp.StatusCode == 200 {
 				params := map[string]any{
 					"temperature": req["temperature"],
@@ -865,7 +865,7 @@ retryPass:
 		if !breaker.Allow() {
 			lastErr = fmt.Sprintf("circuit breaker open for %s", conn.ID)
 			lastStatusCode = 503
-			p.logRequest(resolvedModel, conn.ID, conn.Name, 503, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 503, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				p.fb.RecordEvent(resolvedModel, "", fallback.ReasonCircuit, 503)
 			}
@@ -899,7 +899,7 @@ retryPass:
 		if p.quota != nil && !p.quota.Allow(conn.ID, estTokens) {
 			lastErr = fmt.Sprintf("quota exhausted for %s", conn.ID)
 			lastStatusCode = 429
-			p.logRequest(resolvedModel, conn.ID, conn.Name, 429, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 429, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				p.fb.RecordEvent(resolvedModel, "", fallback.Reason429, 429)
 			}
@@ -925,6 +925,7 @@ retryPass:
 		// Retry wrapper around upstream call
 		var resp *http.Response
 		var poolAccountID string
+		var usedConn *Connection
 		retryErr := retry.Do(r.Context(), retry.DefaultConfig(), func() (bool, error) {
 			var err error
 			// Multi-account pool: pick account and inject into a copy
@@ -936,7 +937,17 @@ retryPass:
 				cpy.APIKey = pickedKey
 				retryConn = &cpy
 			}
-			resp, err = p.doUpstream(r, retryConn, candidateBody)
+			// Resolve OAuth credentials on the per-attempt copy so the log
+			// rows below can attribute this attempt to the exact session
+			// that served it. doUpstream reuses the resolved copy.
+			attemptConn := retryConn
+			if strings.TrimSpace(conn.OAuthProvider) != "" {
+				cpy := *retryConn
+				p.applyConnectionAuth(&cpy)
+				attemptConn = &cpy
+			}
+			usedConn = attemptConn
+			resp, err = p.doUpstream(r, attemptConn, candidateBody)
 			if err != nil {
 				return true, err // retry on connection errors
 			}
@@ -946,12 +957,14 @@ retryPass:
 			}
 			return false, nil // success, don't retry
 		})
-
-		if retryErr != nil {
+		if usedConn != nil {
+			conn = usedConn
+		}
+if retryErr != nil {
 			lastErr = retryErr.Error()
 			failureUnlessClientGone(breaker, r.Context())
 			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
-			p.logRequest(resolvedModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				if should, reason := fallback.ShouldTriggerFallback(502, false, false); should {
 					p.fb.RecordEvent(resolvedModel, "", reason, 502)
@@ -969,7 +982,7 @@ retryPass:
 			lastErr = string(b)
 			breaker.Failure()
 			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
-			p.logRequest(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				if should, reason := fallback.ShouldTriggerFallback(resp.StatusCode, false, false); should {
 					p.fb.RecordEvent(candidateModel, "", reason, resp.StatusCode)
@@ -1000,7 +1013,7 @@ retryPass:
 			// body keeps the pool's default 60s cooldown. lastErr carries the
 			// upstream response body here.
 			p.recordMultiAccountResultClassified(conn.PoolID, poolAccountID, false, true, lastErr)
-			p.logRequest(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			if p.fb != nil {
 				p.fb.RecordEvent(candidateModel, "", fallback.Reason429, resp.StatusCode)
 			}
@@ -1059,7 +1072,7 @@ retryPass:
 				} else {
 					p.markPoolAccountAuthFailed(conn.PoolID, poolAccountID)
 				}
-				p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+				p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 
 				if poolResp, poolAcct := p.retryPoolAccounts(r, conn, body, resolvedModel, start, taskClass, modeLabel, &lastErr, &lastStatusCode); poolResp != nil {
 					resp = poolResp
@@ -1069,7 +1082,7 @@ retryPass:
 				}
 			} else {
 				p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
-				p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+				p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			}
 
 			if !recovered {
@@ -1280,7 +1293,7 @@ retryPass:
 				lastStatusCode = http.StatusBadGateway
 				qCostStream = costSample{}
 
-				p.logRequestCost(candidateModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCostStream)
+				p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCostStream)
 
 				// A plain model route yields exactly ONE candidate, so without this
 				// the `continue` above would simply exit the loop and the client would
@@ -1328,7 +1341,7 @@ retryPass:
 					quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
 				}
 
-				p.logRequestCost(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostStream)
+				p.logRequestCost(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostStream)
 
 				if comboName != "" && resp.StatusCode == 200 {
 					p.cmb.RecordSuccess(comboName)
@@ -1368,7 +1381,7 @@ retryPass:
 			lastErr = readErr.Error()
 			lastStatusCode = http.StatusGatewayTimeout
 			failureUnlessClientGone(breaker, r.Context())
-			p.logRequestCost(candidateModel, conn.ID, conn.Name, http.StatusGatewayTimeout, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, costSample{})
+			p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, http.StatusGatewayTimeout, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, costSample{})
 			// Another candidate may still answer; the timeout is retryable in the same
 			// sense a refused credential is — the connection is unusable for THIS
 			// request, not permanently dead.
@@ -1399,7 +1412,7 @@ retryPass:
 				lastErr = qErr.Error()
 				lastStatusCode = http.StatusBadGateway
 				breaker.Failure()
-				p.logRequestCost(candidateModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCost)
+				p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCost)
 				continue
 			}
 			qCostNonStream = qCost
@@ -1423,7 +1436,7 @@ retryPass:
 			lastErr = "upstream returned synthetic motivational text"
 			lastStatusCode = http.StatusBadGateway
 			breaker.Failure()
-			p.logRequest(candidateModel, conn.ID, conn.Name, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
 			continue
 		}
 
@@ -1434,7 +1447,7 @@ retryPass:
 
 		w.WriteHeader(resp.StatusCode)
 		w.Write(b)
-		p.logRequestCost(candidateModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostNonStream)
+		p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostNonStream)
 
 		if comboName != "" && resp.StatusCode == 200 {
 			p.cmb.RecordSuccess(comboName)
@@ -2535,8 +2548,8 @@ func (p *ProxyHandler) getFirstConnection() (*Connection, error) {
 	return &conn, nil
 }
 
-func (p *ProxyHandler) logRequest(model, connID, provider string, status int, latencyMs int64, tokensIn, tokensOut int, cached bool, errMsg, taskClass, mode string) {
-	p.logRequestCost(model, connID, provider, status, latencyMs, tokensIn, tokensOut, cached, errMsg, taskClass, mode, costSample{})
+func (p *ProxyHandler) logRequest(model, connID, provider, oauthSessionID string, status int, latencyMs int64, tokensIn, tokensOut int, cached bool, errMsg, taskClass, mode string) {
+	p.logRequestCost(model, connID, provider, oauthSessionID, status, latencyMs, tokensIn, tokensOut, cached, errMsg, taskClass, mode, costSample{})
 }
 
 // costSample carries an upstream-reported charge alongside a request log row.
@@ -2556,7 +2569,7 @@ type costSample struct {
 // provider leaves them NULL, and a stored 0 would read as "this request was free"
 // on the dashboard. Qoder is the provider that populates them, from its usage
 // frame's `credits` and `prompt_tokens_details.cached_tokens`.
-func (p *ProxyHandler) logRequestCost(model, connID, provider string, status int, latencyMs int64, tokensIn, tokensOut int, cached bool, errMsg, taskClass, mode string, cost costSample) {
+func (p *ProxyHandler) logRequestCost(model, connID, provider, oauthSessionID string, status int, latencyMs int64, tokensIn, tokensOut int, cached bool, errMsg, taskClass, mode string, cost costSample) {
 	cachedInt := 0
 	if cached {
 		cachedInt = 1
@@ -2568,9 +2581,9 @@ func (p *ProxyHandler) logRequestCost(model, connID, provider string, status int
 	}
 	id := uuid.New().String()
 	p.db.Conn().Exec(`
-		INSERT INTO request_logs (id, connection_id, provider, model, status, input_tokens, output_tokens, latency_ms, cached, error, created_at, credits, cached_tokens)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?)
-	`, id, connID, provider, model, status, tokensIn, tokensOut, latencyMs, cachedInt, errMsg, creditsVal, cachedTokVal)
+		INSERT INTO request_logs (id, connection_id, provider, oauth_session_id, model, status, input_tokens, output_tokens, latency_ms, cached, error, created_at, credits, cached_tokens)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'), ?, ?)
+	`, id, connID, provider, oauthSessionID, model, status, tokensIn, tokensOut, latencyMs, cachedInt, errMsg, creditsVal, cachedTokVal)
 	if p.telemetry != nil {
 		p.telemetry.Observe(provider, taskClass, mode, latencyMs, status, cached)
 	}

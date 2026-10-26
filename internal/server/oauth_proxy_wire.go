@@ -57,7 +57,9 @@ func (p *ProxyHandler) connForUpstream(conn *Connection) *Connection {
 		return nil
 	}
 	c := *conn
-	p.applyConnectionAuth(&c)
+	if c.oauthSessionID == "" {
+		p.applyConnectionAuth(&c)
+	}
 	return &c
 }
 
@@ -248,6 +250,9 @@ func (p *ProxyHandler) retryPoolAccounts(
 		}
 		cpy := *conn
 		cpy.APIKey = pickedKey
+		if strings.TrimSpace(cpy.OAuthProvider) != "" {
+			p.applyConnectionAuth(&cpy)
+		}
 
 		resp, err := p.doUpstream(r, &cpy, body)
 		if err != nil {
@@ -264,7 +269,7 @@ func (p *ProxyHandler) retryPoolAccounts(
 			*lastErr = string(b)
 			*lastStatus = resp.StatusCode
 			p.markPoolAccountAuthFailed(conn.PoolID, acctID)
-			p.logRequest(resolvedModel, conn.ID, conn.Name, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, *lastErr, taskClass, modeLabel)
+			p.logRequest(resolvedModel, cpy.ID, cpy.Name, cpy.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, *lastErr, taskClass, modeLabel)
 			continue
 		}
 		// Anything else (2xx, or even 429/5xx) is handed back to the main loop,

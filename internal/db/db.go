@@ -286,6 +286,11 @@ func (d *DB) migrate() error {
 		// any turn whose usage frame omitted the field) — never 0, which would read
 		// as a free request.
 		`ALTER TABLE request_logs ADD COLUMN credits REAL DEFAULT NULL`,
+		// Per-account OAuth usage: the resolved session is attached to every
+		// request log written by the proxy, so the OAuth accounts API can report
+		// request/token totals per account instead of per connection.
+		`ALTER TABLE request_logs ADD COLUMN oauth_session_id TEXT DEFAULT ''`,
+		`CREATE INDEX IF NOT EXISTS idx_request_logs_oauth_session ON request_logs(oauth_session_id, created_at)`,
 		// Cached portion of the prompt, the dominant cost variable for Qoder.
 		`ALTER TABLE request_logs ADD COLUMN cached_tokens INTEGER DEFAULT NULL`,
 		// Diagnosed account state, for the dashboard to surface next to the

@@ -24,14 +24,27 @@ import (
 
 // oauthAccountView is one account as shown to the dashboard. No secrets.
 type oauthAccountView struct {
-	ID           string `json:"id"`
-	Provider     string `json:"provider"`
-	Status       string `json:"status"`
-	Health       string `json:"health"` // healthy | expiring | restricted | expired | revoked
-	CreatedAt    string `json:"created_at,omitempty"`
-	ExpiresAt    string `json:"expires_at,omitempty"`
-	MaskedToken  string `json:"masked_token,omitempty"`
-	AccountLabel string `json:"account_label,omitempty"`
+	ID             string `json:"id"`
+	Provider       string `json:"provider"`
+	Status         string `json:"status"`
+	Health         string `json:"health"` // healthy | expiring | restricted | expired | revoked
+	CreatedAt      string `json:"created_at,omitempty"`
+	ExpiresAt      string `json:"expires_at,omitempty"`
+	MaskedToken    string `json:"masked_token,omitempty"`
+	AccountLabel   string `json:"account_label,omitempty"`
+	Requests       int    `json:"requests"`
+	FailedRequests int    `json:"failed_requests"`
+	InputTokens    int64  `json:"input_tokens"`
+	OutputTokens   int64  `json:"output_tokens"`
+	LastUsedAt     string `json:"last_used_at,omitempty"`
+}
+
+type oauthAccountUsage struct {
+	Requests       int
+	FailedRequests int
+	InputTokens    int64
+	OutputTokens   int64
+	LastUsedAt     string
 }
 
 // oauthProviderView is the per-provider roll-up the dashboard groups on.
@@ -71,6 +84,8 @@ func (s *Server) handleOAuthAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	usage := s.oauthSessionUsage()
+
 	rows, err := s.db.Conn().Query(
 		`SELECT id, provider, access_token, status, created_at, COALESCE(expires_at,''), COALESCE(flow_meta,'')
 		 FROM oauth_sessions ORDER BY provider ASC, datetime(created_at) DESC`)
@@ -89,15 +104,21 @@ func (s *Server) handleOAuthAccounts(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		health := oauthAccountHealth(status, expiresAt, s)
+		u := usage[id]
 		accounts = append(accounts, oauthAccountView{
-			ID:           id,
-			Provider:     provider,
-			Status:       status,
-			Health:       health,
-			CreatedAt:    createdAt,
-			ExpiresAt:    expiresAt,
-			MaskedToken:  maskToken(token),
-			AccountLabel: oauthAccountLabel(provider, flowMeta),
+			ID:             id,
+			Provider:       provider,
+			Status:         status,
+			Health:         health,
+			CreatedAt:      createdAt,
+			ExpiresAt:      expiresAt,
+			MaskedToken:    maskToken(token),
+			AccountLabel:   oauthAccountLabel(provider, flowMeta),
+			Requests:       u.Requests,
+			FailedRequests: u.FailedRequests,
+			InputTokens:    u.InputTokens,
+			OutputTokens:   u.OutputTokens,
+			LastUsedAt:     u.LastUsedAt,
 		})
 
 		pv := byProvider[provider]
@@ -195,6 +216,45 @@ func oauthAccountHealth(status, expiresAt string, s *Server) string {
 	default:
 		return status
 	}
+}
+
+// oauthSessionUsage aggregates the last 30 days of request logs by OAuth
+// session. Rows written before oauth_session_id existed have an empty value and
+// are deliberately excluded rather than attributed to an arbitrary account.
+func (s *Server) oauthSessionUsage() map[string]oauthAccountUsage {
+	out := map[string]oauthAccountUsage{}
+	rows, err := s.db.Conn().Query(`
+		SELECT oauth_session_id,
+		       COUNT(*),
+		       COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(input_tokens), 0),
+		       COALESCE(SUM(output_tokens), 0),
+		       COALESCE(MAX(created_at), '')
+		FROM request_logs
+		WHERE oauth_session_id != ''
+		  AND datetime(created_at) >= datetime('now', 'localtime', '-30 days')
+		GROUP BY oauth_session_id`)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, lastUsed string
+		var requests, failed int
+		var inputTokens, outputTokens int64
+		if err := rows.Scan(&id, &requests, &failed, &inputTokens, &outputTokens, &lastUsed); err != nil {
+			continue
+		}
+		out[id] = oauthAccountUsage{
+			Requests:       requests,
+			FailedRequests: failed,
+			InputTokens:    inputTokens,
+			OutputTokens:   outputTokens,
+			LastUsedAt:     lastUsed,
+		}
+	}
+	rows.Err()
+	return out
 }
 
 func oauthAccountsProviderOrder() []string {

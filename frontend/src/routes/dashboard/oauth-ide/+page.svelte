@@ -184,6 +184,12 @@
     return { label: 'Coming Soon', color: 'var(--color-fg-3)', bg: 'var(--color-bg-hover)' };
   }
 
+  function formatCount(value: number): string {
+    if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + 'M';
+    if (value >= 1_000) return (value / 1_000).toFixed(1) + 'k';
+    return String(value);
+  }
+
   async function copyValue(text: string, key: string) {
     if (!text) return;
     try {
@@ -1089,14 +1095,23 @@
                           </div>
                           {#if account.health !== 'revoked'}
                             <div class="account-usage">
-                              {#if account.provider === 'antigravity'}
-                                <a href="/dashboard/quota" class="link-sm">View quota &amp; limits</a>
-                              {:else}
-                                <span>
-                                  Per-account usage isn't tracked by Lintasan;
-                                  <a href="/dashboard/usage">see gateway usage</a>.
+                              {#if (account.requests ?? 0) > 0}
+                                <span class="usage-stat" title="Gateway usage for this account over the last 30 days">
+                                  <strong>Last 30d:</strong> {formatCount(account.requests ?? 0)} req ·
+                                  {formatCount(account.input_tokens ?? 0)} in /
+                                  {formatCount(account.output_tokens ?? 0)} out
+                                  {#if (account.failed_requests ?? 0) > 0}
+                                    · <span class="usage-fail">{formatCount(account.failed_requests ?? 0)} failed</span>
+                                  {/if}
+                                  {#if account.last_used_at} · last used {formatAge(account.last_used_at)}{/if}
                                 </span>
+                              {:else}
+                                <span class="usage-stat">No gateway usage in the last 30 days.</span>
                               {/if}
+                              {#if account.provider === 'antigravity'}
+                                <span> · <a href="/dashboard/quota" class="link-sm">View quota &amp; limits</a></span>
+                              {/if}
+                              <span> · <a href="/dashboard/usage" class="link-sm">Gateway usage</a></span>
                             </div>
                           {/if}
                         </div>
@@ -2158,6 +2173,13 @@
     color: var(--color-primary);
     font-weight: 600;
   }
+  .usage-stat strong {
+    color: var(--color-fg-1);
+  }
+  .usage-fail {
+    color: var(--color-warning);
+    font-weight: 600;
+  }
   .account-hint {
     font-size: 11px;
     margin: 2px 0 0;
@@ -2198,6 +2220,11 @@
       flex-wrap: nowrap;
       overflow-x: auto;
       padding-bottom: 2px;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .search-box {
+      min-width: 0;
     }
     .filter-tab {
       flex-shrink: 0;

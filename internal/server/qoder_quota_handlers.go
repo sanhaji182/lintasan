@@ -65,7 +65,7 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 	// accounting this file has already been burned by. The real upstream status is
 	// preserved in the message.
 	logAttempt := func(status int, errMsg string) {
-		s.proxy.logRequestCost(modelID, conn.ID, conn.Name, status, time.Since(start).Milliseconds(), 0, 0, false, errMsg, "model-test", "probe", costSample{})
+		s.proxy.logRequestCost(modelID, conn.ID, conn.Name, conn.oauthSessionID, status, time.Since(start).Milliseconds(), 0, 0, false, errMsg, "model-test", "probe", costSample{})
 	}
 
 	body, err := qoder.BuildChatBody(qoder.ChatRequest{
@@ -141,7 +141,7 @@ func (s *Server) testQoderModelOnce(conn *Connection, modelID string, start time
 		CachedTokens: outcome.CachedTokens,
 		Reported:     outcome.CreditsReported,
 	}
-	s.proxy.logRequestCost(modelID, conn.ID, conn.Name, resp.StatusCode, latency, outcome.InputTokens, outcome.OutputTokens, false, "", "model-test", "probe", cost)
+	s.proxy.logRequestCost(modelID, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, latency, outcome.InputTokens, outcome.OutputTokens, false, "", "model-test", "probe", cost)
 
 	return qoderProbeResult(outcome, latency, resp.StatusCode)
 }
