@@ -105,6 +105,14 @@ func (s *Server) handleSystemReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reset clears the settings these caches were built from. Drop the stale
+	// in-memory copies so removed quotas, fallback chains, and smart-routing
+	// config stop affecting traffic immediately.
+	if s.proxy != nil {
+		s.proxy.ReloadSmartRoutingConfig()
+		s.proxy.ReloadFallbackChains()
+	}
+
 	report := ResetReport{
 		Mode:          mode,
 		BackupPath:    backupPath,

@@ -68,6 +68,8 @@ var operationalSettings = []string{
 	"aliases",
 	"combos",
 	"fallback_chains",
+	"fallback_model_chains",
+	"fallback_connection_chains",
 	"teams",
 	"webhooks",
 	"plugins",

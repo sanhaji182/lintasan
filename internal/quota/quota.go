@@ -56,6 +56,15 @@ func (qt *QuotaTracker) SetLimit(connID string, limit *QuotaLimit) {
 	qt.mu.Unlock()
 }
 
+// ReplaceLimits swaps the entire configured limit set. Reload paths must
+// replace the map (rather than add entries) so removing a limit in the
+// dashboard actually stops enforcing it without a restart.
+func (qt *QuotaTracker) ReplaceLimits(limits map[string]*QuotaLimit) {
+	qt.mu.Lock()
+	qt.limits = limits
+	qt.mu.Unlock()
+}
+
 // GetLimit returns the quota limit for a connection.
 func (qt *QuotaTracker) GetLimit(connID string) *QuotaLimit {
 	qt.mu.RLock()

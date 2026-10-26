@@ -1,6 +1,8 @@
 package server
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/sanhaji182/lintasan-go/internal/config"
@@ -147,5 +149,78 @@ func TestLoadQuotaLimits_ParsesSetting(t *testing.T) {
 	}
 	if limit.MaxTokensPerDay != 1000 {
 		t.Fatalf("MaxTokensPerDay = %d, want 1000", limit.MaxTokensPerDay)
+	}
+}
+
+func TestReloadQuotaLimitsRemovesDeletedLimits(t *testing.T) {
+	database, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	if err := database.SetSetting("quota_limits",
+		`{"conn-1":{"max_tokens_per_day":1000}}`); err != nil {
+		t.Fatalf("set setting: %v", err)
+	}
+	p := NewProxyHandler(&config.Config{}, database)
+	if p.quota.GetLimit("conn-1") == nil {
+		t.Fatal("expected conn-1 limit to be loaded")
+	}
+	if err := database.SetSetting("quota_limits", `{}`); err != nil {
+		t.Fatalf("clear setting: %v", err)
+	}
+	p.ReloadSmartRoutingConfig()
+	if p.quota.GetLimit("conn-1") != nil {
+		t.Fatal("deleted quota limit must stop being enforced after reload")
+	}
+}
+
+func TestSmartRoutingActionRejectsInvalidPayloadBeforeWriting(t *testing.T) {
+	s := newRESTTestServer(t)
+	cases := []map[string]any{
+		{"ml_router_threshold": "1.2"},
+		{"ml_router_threshold": "0"},
+		{"ml_router_threshold": "not-a-number"},
+		{"ml_router_threshold": "NaN"},
+		{"ml_router_threshold": "+Inf"},
+		{"cost_quality_floor": "1.5"},
+		{"cost_expensive_anchor": "0"},
+		{"ml_router_cheap_model": "  "},
+		{"quota_limits": map[string]any{"conn-1": map[string]any{"max_tokens_per_day": 0}}},
+		{"quota_limits": map[string]any{"conn-1": map[string]any{"max_tokens_per_day": 1.5}}},
+		{"quota_limits": map[string]any{"  ": map[string]any{"max_tokens_per_day": 10}}},
+	}
+	for _, body := range cases {
+		rec := httptest.NewRecorder()
+		s.handleSmartRoutingAction(rec, reqWithPath("POST", "/api/smart-routing", body, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %v: got %d, want 400", body, rec.Code)
+		}
+	}
+	if raw, _ := s.db.GetSetting("ml_router_threshold"); raw != "" {
+		t.Fatalf("invalid payload must not write settings, threshold=%q", raw)
+	}
+	if raw, _ := s.db.GetSetting("quota_limits"); raw != "" {
+		t.Fatalf("invalid payload must not write quotas, got %q", raw)
+	}
+}
+
+func TestSmartRoutingActionAcceptsValidPayload(t *testing.T) {
+	s := newRESTTestServer(t)
+	rec := httptest.NewRecorder()
+	s.handleSmartRoutingAction(rec, reqWithPath("POST", "/api/smart-routing", map[string]any{
+		"ml_router_enabled":         true,
+		"ml_router_cheap_model":     "cheap",
+		"ml_router_expensive_model": "expensive",
+		"ml_router_threshold":       "0.7",
+		"cost_quality_floor":        "0.4",
+		"cost_expensive_anchor":     "0.03",
+		"quota_limits":              map[string]any{"conn-1": map[string]any{"max_tokens_per_day": 1000}},
+	}, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid payload: got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if raw, _ := s.db.GetSetting("ml_router_threshold"); raw != "0.7" {
+		t.Fatalf("threshold = %q, want 0.7", raw)
 	}
 }

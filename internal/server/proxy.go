@@ -218,26 +218,34 @@ func (p *ProxyHandler) loadQuotaLimits(database *db.DB) {
 	if p.quota == nil {
 		return
 	}
-	raw, err := database.GetSetting("quota_limits")
-	if err != nil || raw == "" {
-		return
-	}
-	var limits map[string]struct {
+	stored := map[string]struct {
 		MaxTokensPerDay     int64 `json:"max_tokens_per_day"`
 		MaxTokensPerMonth   int64 `json:"max_tokens_per_month"`
 		MaxRequestsPerDay   int64 `json:"max_requests_per_day"`
 		MaxRequestsPerMonth int64 `json:"max_requests_per_month"`
+	}{}
+	if raw, err := database.GetSetting("quota_limits"); err == nil && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+			return
+		}
 	}
-	if err := json.Unmarshal([]byte(raw), &limits); err != nil {
-		return
-	}
-	for connID, l := range limits {
-		p.quota.SetLimit(connID, &quota.QuotaLimit{
+	limits := make(map[string]*quota.QuotaLimit, len(stored))
+	for connID, l := range stored {
+		limits[connID] = &quota.QuotaLimit{
 			MaxTokensPerDay:     l.MaxTokensPerDay,
 			MaxTokensPerMonth:   l.MaxTokensPerMonth,
 			MaxRequestsPerDay:   l.MaxRequestsPerDay,
 			MaxRequestsPerMonth: l.MaxRequestsPerMonth,
-		})
+		}
+	}
+	p.quota.ReplaceLimits(limits)
+}
+
+// ReloadFallbackChains re-reads model and connection fallback chains so
+// dashboard edits take effect without a process restart.
+func (p *ProxyHandler) ReloadFallbackChains() {
+	if p.fb != nil {
+		_ = p.fb.LoadChains()
 	}
 }
 

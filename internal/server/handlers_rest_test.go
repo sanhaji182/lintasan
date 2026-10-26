@@ -421,6 +421,19 @@ func TestFallbackChainCreateAndDelete(t *testing.T) {
 	if len(asSlice(data["model_chains"])) != 1 {
 		t.Fatalf("expected 1 model chain stored")
 	}
+	runtimeChains := map[string][]string{}
+	if raw, _ := s.db.GetSetting(fallbackModelSetting); raw == "" || json.Unmarshal([]byte(raw), &runtimeChains) != nil {
+		t.Fatalf("expected runtime model chains, got %q", raw)
+	}
+	if got := runtimeChains["a"]; len(got) != 1 || got[0] != "b" {
+		t.Fatalf("runtime chain for a = %v, want [b]", got)
+	}
+	// A second chain with the same primary would overwrite the runtime map.
+	dup := httptest.NewRecorder()
+	s.handleFallbackModelChainCreate(dup, reqWithPath("POST", "/api/fallback/model-chains", map[string]any{"name": "other", "chain": []any{"a", "c"}}, nil))
+	if dup.Code != http.StatusConflict {
+		t.Fatalf("duplicate primary: got %d, want 409", dup.Code)
+	}
 	// delete it
 	rec2 := httptest.NewRecorder()
 	s.handleFallbackModelChainDelete(rec2, reqWithPath("DELETE", "/api/fallback/model-chains/"+id, nil, map[string]string{"id": id}))
@@ -431,12 +444,16 @@ func TestFallbackChainCreateAndDelete(t *testing.T) {
 	if len(asSlice(data["model_chains"])) != 0 {
 		t.Fatalf("expected model chain removed")
 	}
+	runtimeChains = map[string][]string{}
+	if raw, _ := s.db.GetSetting(fallbackModelSetting); raw == "" || json.Unmarshal([]byte(raw), &runtimeChains) != nil || len(runtimeChains) != 0 {
+		t.Fatalf("expected runtime model chains cleared, got %q", raw)
+	}
 }
 
 func TestFallbackConnChainSeparateBucket(t *testing.T) {
 	s := newRESTTestServer(t)
 	rec := httptest.NewRecorder()
-	s.handleFallbackConnChainCreate(rec, reqWithPath("POST", "/api/fallback/connection-chains", map[string]any{"name": "c"}, nil))
+	s.handleFallbackConnChainCreate(rec, reqWithPath("POST", "/api/fallback/connection-chains", map[string]any{"name": "c", "chain": []any{"c1", "c2"}}, nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("create conn chain: got %d", rec.Code)
 	}
@@ -446,6 +463,33 @@ func TestFallbackConnChainSeparateBucket(t *testing.T) {
 	}
 	if len(asSlice(data["model_chains"])) != 0 {
 		t.Fatalf("connection chain must not leak into model_chains bucket")
+	}
+	runtimeChains := map[string][]string{}
+	if raw, _ := s.db.GetSetting(fallbackConnSetting); raw == "" || json.Unmarshal([]byte(raw), &runtimeChains) != nil {
+		t.Fatalf("expected runtime connection chains, got %q", raw)
+	}
+	if got := runtimeChains["c1"]; len(got) != 1 || got[0] != "c2" {
+		t.Fatalf("runtime connection chain for c1 = %v, want [c2]", got)
+	}
+}
+
+func TestFallbackChainRejectsIncompleteOrDuplicateInput(t *testing.T) {
+	s := newRESTTestServer(t)
+	cases := []map[string]any{
+		{"name": "", "chain": []any{"a", "b"}},
+		{"name": "empty", "chain": []any{}},
+		{"name": "short", "chain": []any{"a"}},
+		{"name": "dupe", "chain": []any{"a", "a"}},
+	}
+	for _, body := range cases {
+		rec := httptest.NewRecorder()
+		s.handleFallbackModelChainCreate(rec, reqWithPath("POST", "/api/fallback/model-chains", body, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %v: got %d, want 400", body, rec.Code)
+		}
+	}
+	if data := s.fallbackData(); len(asSlice(data["model_chains"])) != 0 {
+		t.Fatalf("invalid chains must not be stored")
 	}
 }
 

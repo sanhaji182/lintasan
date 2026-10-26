@@ -125,6 +125,9 @@ func New(cfg *config.Config, database *db.DB) *Server {
 	s.oauthMgr = auth.NewOAuthManager(database)
 	s.proxy = NewProxyHandler(cfg, database)
 	s.proxy.SetOAuthManager(s.oauthMgr)
+	// Migrate dashboard-configured fallback chains into the map shape the
+	// runtime engine reads. Skipped when the dashboard list is empty.
+	s.syncFallbackEngine(false)
 	s.memHandler = NewMemoryHandler(s.proxy.mem)
 
 	// OAuth manager also used by dashboard OAuth handlers

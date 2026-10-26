@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -377,6 +378,7 @@ func (s *Server) handleBackupImport(w http.ResponseWriter, r *http.Request) {
 	if s.proxy != nil {
 		s.proxy.ReloadSmartRoutingConfig()
 	}
+	s.syncFallbackEngine(false)
 	s.audit("backup.import", "dashboard", "import", map[string]any{"keys": imported})
 	writeJSON(w, map[string]any{"status": "imported", "keys": imported})
 }
@@ -435,6 +437,7 @@ func (s *Server) handleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	if s.proxy != nil {
 		s.proxy.ReloadSmartRoutingConfig()
 	}
+	s.syncFallbackEngine(false)
 	s.audit("backup.restore", "dashboard", id, map[string]any{"settings": settingsRestored, "connections": connRestored})
 	writeJSON(w, map[string]any{"id": id, "status": "restored", "settings_restored": settingsRestored, "connections_restored": connRestored})
 }
@@ -555,7 +558,7 @@ func (s *Server) handleRoutingAliasDelete(w http.ResponseWriter, r *http.Request
 // ---------------------------------------------------------------- Fallback chains
 
 func (s *Server) fallbackData() map[string]any {
-	d := asMap(s.getJSONSetting("fallback_chains", map[string]any{"model_chains": []any{}, "connection_chains": []any{}}))
+	d := asMap(s.getJSONSetting(fallbackViewSetting, map[string]any{"model_chains": []any{}, "connection_chains": []any{}}))
 	if _, ok := d["model_chains"]; !ok {
 		d["model_chains"] = []any{}
 	}
@@ -579,13 +582,90 @@ func (s *Server) fallbackChainCreate(w http.ResponseWriter, r *http.Request, key
 	if in == nil {
 		in = map[string]any{}
 	}
+	if err := normalizeFallbackChain(in); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	primary := fallbackPrimaryOf(in)
+	data := s.fallbackData()
+	if primary != "" && fallbackPrimaryExists(data, key, primary) {
+		writeJSONStatus(w, http.StatusConflict, map[string]any{
+			"error": fmt.Sprintf("a %s chain already starts with %s", strings.TrimSuffix(key, "_chains"), primary),
+		})
+		return
+	}
 	in["id"] = uuid.New().String()
 	in["usage_count"] = 0
-	data := s.fallbackData()
 	data[key] = append(asSlice(data[key]), in)
-	s.setJSONSetting("fallback_chains", data)
+	s.setJSONSetting(fallbackViewSetting, data)
+	s.syncFallbackEngine(true)
 	s.audit("fallback.create", "dashboard", fmt.Sprint(in["id"]), map[string]any{"type": key})
 	writeJSON(w, map[string]any{"chain": in})
+}
+
+func fallbackPrimaryOf(in map[string]any) string {
+	switch chain := in["chain"].(type) {
+	case []string:
+		if len(chain) > 0 {
+			return chain[0]
+		}
+	case []any:
+		if len(chain) > 0 {
+			return fmt.Sprint(chain[0])
+		}
+	}
+	return ""
+}
+
+// fallbackPrimaryExists reports whether a chain in this bucket already starts
+// with the same primary. Two chains with one primary would race to overwrite
+// each other in the runtime map.
+func fallbackPrimaryExists(data map[string]any, key, primary string) bool {
+	for _, item := range asSlice(data[key]) {
+		chain := asSlice(asMap(item)["chain"])
+		if len(chain) > 0 && fmt.Sprint(chain[0]) == primary {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeFallbackChain trims and validates the operator-supplied chain.
+// A chain has to name at least a primary and one fallback, and duplicate hops
+// would make the runtime map ambiguous.
+func normalizeFallbackChain(in map[string]any) error {
+	name, _ := in["name"].(string)
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("chain name is required")
+	}
+	raw, ok := in["chain"].([]any)
+	if !ok {
+		return fmt.Errorf("chain must be an array of at least two IDs")
+	}
+	chain := make([]string, 0, len(raw))
+	seen := make(map[string]bool, len(raw))
+	for _, value := range raw {
+		item, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("chain entries must be strings")
+		}
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if seen[item] {
+			return fmt.Errorf("chain entries must be unique: %s", item)
+		}
+		seen[item] = true
+		chain = append(chain, item)
+	}
+	if len(chain) < 2 {
+		return fmt.Errorf("chain must contain at least two unique IDs")
+	}
+	in["name"] = name
+	in["chain"] = chain
+	return nil
 }
 
 func (s *Server) handleFallbackModelChainDelete(w http.ResponseWriter, r *http.Request) {
@@ -614,7 +694,8 @@ func (s *Server) fallbackChainDelete(w http.ResponseWriter, r *http.Request, key
 		return
 	}
 	data[key] = out
-	s.setJSONSetting("fallback_chains", data)
+	s.setJSONSetting(fallbackViewSetting, data)
+	s.syncFallbackEngine(true)
 	s.audit("fallback.delete", "dashboard", id, map[string]any{"type": key})
 	writeJSON(w, map[string]any{"id": id, "status": "deleted"})
 }

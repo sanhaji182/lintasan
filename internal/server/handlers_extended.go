@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -196,22 +197,36 @@ func (s *Server) handleBackupAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFallback(w http.ResponseWriter, r *http.Request) {
-	writeData(w, s.getJSONSetting("fallback_chains", map[string]any{"model_chains": []any{}, "connection_chains": []any{}, "stats": map[string]any{"total_used": 0, "success_rate": 100}}))
+	writeData(w, s.getJSONSetting(fallbackViewSetting, map[string]any{"model_chains": []any{}, "connection_chains": []any{}, "stats": map[string]any{"total_used": 0, "success_rate": 100}}))
 }
 func (s *Server) handleFallbackAction(w http.ResponseWriter, r *http.Request) {
 	var in map[string]any
 	json.NewDecoder(r.Body).Decode(&in)
-	data := s.getJSONSetting("fallback_chains", map[string]any{"model_chains": []any{}, "connection_chains": []any{}}).(map[string]any)
+	if in == nil {
+		in = map[string]any{}
+	}
+	if err := normalizeFallbackChain(in); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	data := asMap(s.getJSONSetting(fallbackViewSetting, map[string]any{"model_chains": []any{}, "connection_chains": []any{}}))
 	typ, _ := in["type"].(string)
 	key := "model_chains"
 	if typ == "connection" {
 		key = "connection_chains"
 	}
-	arr := data[key].([]any)
+	primary := fallbackPrimaryOf(in)
+	if primary != "" && fallbackPrimaryExists(data, key, primary) {
+		writeJSONStatus(w, http.StatusConflict, map[string]any{
+			"error": fmt.Sprintf("a %s chain already starts with %s", strings.TrimSuffix(key, "_chains"), primary),
+		})
+		return
+	}
 	in["id"] = uuid.New().String()
 	in["usage_count"] = 0
-	data[key] = append(arr, in)
-	s.setJSONSetting("fallback_chains", data)
+	data[key] = append(asSlice(data[key]), in)
+	s.setJSONSetting(fallbackViewSetting, data)
+	s.syncFallbackEngine(true)
 	writeJSON(w, map[string]any{"status": "created"})
 }
 func (s *Server) handleFallbackDelete(w http.ResponseWriter, r *http.Request) {
@@ -695,6 +710,12 @@ func (s *Server) handleSmartRoutingAction(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":"invalid JSON"}`, http.StatusBadRequest)
 		return
 	}
+	// Validate the whole payload before writing anything: a partially applied
+	// routing policy is worse than a rejected save.
+	if err := validateSmartRoutingInput(in); err != nil {
+		writeJSONStatus(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
 	// String/bool/number scalar settings.
 	setStr := func(k string) {
 		if v, ok := in[k]; ok {
@@ -729,4 +750,92 @@ func (s *Server) handleSmartRoutingAction(w http.ResponseWriter, r *http.Request
 		s.proxy.ReloadSmartRoutingConfig()
 	}
 	writeJSON(w, map[string]any{"status": "updated"})
+}
+
+func validateSmartRoutingInput(in map[string]any) error {
+	number := func(key string) (float64, bool, error) {
+		raw, ok := in[key]
+		if !ok {
+			return 0, false, nil
+		}
+		var parsed float64
+		switch value := raw.(type) {
+		case float64:
+			parsed = value
+		case string:
+			number, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			if err != nil {
+				return 0, true, fmt.Errorf("%s must be a number", key)
+			}
+			parsed = number
+		default:
+			return 0, true, fmt.Errorf("%s must be a number", key)
+		}
+		if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			return 0, true, fmt.Errorf("%s must be a finite number", key)
+		}
+		return parsed, true, nil
+	}
+
+	if value, ok, err := number("ml_router_threshold"); err != nil {
+		return err
+	} else if ok && (value <= 0 || value >= 1) {
+		return fmt.Errorf("ml_router_threshold must be greater than 0 and less than 1")
+	}
+	if value, ok, err := number("cost_quality_floor"); err != nil {
+		return err
+	} else if ok && (value < 0 || value > 1) {
+		return fmt.Errorf("cost_quality_floor must be between 0 and 1")
+	}
+	if value, ok, err := number("cost_expensive_anchor"); err != nil {
+		return err
+	} else if ok && value <= 0 {
+		return fmt.Errorf("cost_expensive_anchor must be greater than 0")
+	}
+
+	for _, key := range []string{"ml_router_cheap_model", "ml_router_expensive_model"} {
+		if raw, ok := in[key]; ok {
+			value, isString := raw.(string)
+			if !isString || strings.TrimSpace(value) == "" {
+				return fmt.Errorf("%s must be a non-empty model ID", key)
+			}
+		}
+	}
+
+	if raw, ok := in["quota_limits"]; ok {
+		limits, isObject := raw.(map[string]any)
+		if !isObject {
+			return fmt.Errorf("quota_limits must be an object")
+		}
+		for connID, rawLimit := range limits {
+			if strings.TrimSpace(connID) == "" {
+				return fmt.Errorf("quota_limits contains an empty connection ID")
+			}
+			limit, isObject := rawLimit.(map[string]any)
+			if !isObject {
+				return fmt.Errorf("quota_limits.%s must be an object", connID)
+			}
+			rawMax, ok := limit["max_tokens_per_day"]
+			if !ok {
+				continue
+			}
+			var max float64
+			switch value := rawMax.(type) {
+			case float64:
+				max = value
+			case string:
+				parsed, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				if err != nil {
+					return fmt.Errorf("quota_limits.%s.max_tokens_per_day must be a positive whole number", connID)
+				}
+				max = parsed
+			default:
+				return fmt.Errorf("quota_limits.%s.max_tokens_per_day must be a positive whole number", connID)
+			}
+			if math.IsNaN(max) || math.IsInf(max, 0) || max <= 0 || max != float64(int64(max)) {
+				return fmt.Errorf("quota_limits.%s.max_tokens_per_day must be a positive whole number", connID)
+			}
+		}
+	}
+	return nil
 }
