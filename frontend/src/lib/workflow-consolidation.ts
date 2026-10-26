@@ -130,6 +130,10 @@ export function comboOrderFingerprint(combos: Array<{ id: string }>): string {
   return JSON.stringify(combos.map(combo => combo.id));
 }
 
+function trimmedString(value: unknown) {
+  return typeof value === 'string' ? value.trim() : value;
+}
+
 export function buildPolicyPayload(smart: {
   ml_router_enabled: unknown;
   ml_router_cheap_model: unknown;
@@ -140,20 +144,30 @@ export function buildPolicyPayload(smart: {
 }) {
   return {
     ml_router_enabled: smart.ml_router_enabled,
-    ml_router_cheap_model: smart.ml_router_cheap_model,
-    ml_router_expensive_model: smart.ml_router_expensive_model,
-    ml_router_threshold: smart.ml_router_threshold,
-    cost_quality_floor: smart.cost_quality_floor,
-    cost_expensive_anchor: smart.cost_expensive_anchor,
+    ml_router_cheap_model: trimmedString(smart.ml_router_cheap_model),
+    ml_router_expensive_model: trimmedString(smart.ml_router_expensive_model),
+    ml_router_threshold: trimmedString(smart.ml_router_threshold),
+    cost_quality_floor: trimmedString(smart.cost_quality_floor),
+    cost_expensive_anchor: trimmedString(smart.cost_expensive_anchor),
   };
 }
 
-export function buildQuotaPayload(rows: Array<{ connId: string; maxPerDay: string }>) {
-  const quota_limits: Record<string, { max_tokens_per_day: number }> = {};
+export type QuotaDraftRow = {
+  connId: string;
+  maxPerDay: string;
+  // Limits the UI does not edit (monthly/request caps, etc.) must survive a
+  // save instead of being dropped by the daily-token form.
+  extra?: Record<string, unknown>;
+};
+
+export function buildQuotaPayload(rows: QuotaDraftRow[]) {
+  const quota_limits: Record<string, Record<string, unknown>> = {};
   for (const row of rows) {
     const id = row.connId.trim();
     const max = Number.parseInt(row.maxPerDay, 10);
-    if (id && Number.isFinite(max) && max > 0) quota_limits[id] = { max_tokens_per_day: max };
+    if (id && Number.isFinite(max) && max > 0) {
+      quota_limits[id] = { ...(row.extra || {}), max_tokens_per_day: max };
+    }
   }
   return { quota_limits };
 }

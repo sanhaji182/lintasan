@@ -209,8 +209,8 @@ describe('Routing save boundaries', () => {
     await renderPage();
     await fireEvent.click(screen.getByRole('button', { name: /^Quotas/i }));
     await fireEvent.click(screen.getByRole('button', { name: /Add limit/i }));
-    await fireEvent.input(screen.getByPlaceholderText(/connection id/i), { target: { value: 'quota-connection' } });
-    await fireEvent.input(screen.getByPlaceholderText(/max tokens \/ day/i), { target: { value: '42000' } });
+    await fireEvent.change(screen.getByLabelText('Connection for quota row 1'), { target: { value: 'qoder-a' } });
+    await fireEvent.input(screen.getByLabelText('Daily token limit for quota row 1'), { target: { value: '42000' } });
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 unsaved scope'));
 
     await fireEvent.click(screen.getByRole('button', { name: /^Policies/i }));
@@ -221,15 +221,15 @@ describe('Routing save boundaries', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 unsaved scope'));
     expect(screen.getByRole('status')).toHaveTextContent('Quotas');
     await fireEvent.click(screen.getByRole('button', { name: /^Quotas/i }));
-    expect(screen.getByDisplayValue('quota-connection')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('42000')).toBeInTheDocument();
+    expect(screen.getByLabelText('Connection for quota row 1')).toHaveValue('qoder-a');
+    expect(screen.getByLabelText('Daily token limit for quota row 1')).toHaveValue('42000');
   });
 
   it('states that alias create and delete apply immediately outside staged Combo saves', async () => {
     await renderPage();
-    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Aliases/i }));
     expect(screen.getByText(/Creating or deleting an alias applies immediately/i)).toBeInTheDocument();
-    expect(screen.getByText(/does not use Save Combos/i)).toBeInTheDocument();
+    expect(screen.getByText(/is not part of the staged save/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Delete alias auto$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Delete alias auto\/coding$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Delete alias auto\/fast$/i })).not.toBeInTheDocument();
@@ -256,7 +256,7 @@ describe('Routing save boundaries', () => {
 
   it('upserts an existing alias in place without rendering duplicate keyed rows', async () => {
     await renderPage();
-    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Aliases/i }));
     expect(screen.getByText('target-model')).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole('button', { name: /Add Alias/i }));
@@ -279,7 +279,7 @@ describe('Routing save boundaries', () => {
     mocks.post.mockRejectedValueOnce(new Error('Create request rejected'));
     mocks.del.mockRejectedValueOnce(new Error('Delete request rejected'));
     await renderPage();
-    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /^Aliases/i }));
 
     await fireEvent.click(screen.getByRole('button', { name: /Add Alias/i }));
     await fireEvent.input(screen.getByPlaceholderText(/Alias name/i), { target: { value: 'friendly' } });
@@ -702,5 +702,119 @@ describe('Routing save boundaries', () => {
     await fireEvent.keyDown(search, { key: 'Escape' });
     expect(search).toHaveValue('');
     expect(screen.getByText('Create New Combo')).toBeInTheDocument();
+  });
+
+  it('blocks invalid quota limits with an inline explanation', async () => {
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Quotas/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Add limit/i }));
+    await fireEvent.change(screen.getByLabelText('Connection for quota row 1'), { target: { value: 'qoder-a' } });
+    await fireEvent.input(screen.getByLabelText('Daily token limit for quota row 1'), { target: { value: '0' } });
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/positive whole number/i);
+    expect(screen.getByRole('button', { name: /Save Quotas/i })).toBeDisabled();
+    expect(mocks.post).not.toHaveBeenCalledWith('/api/smart-routing', expect.anything());
+
+    await fireEvent.input(screen.getByLabelText('Daily token limit for quota row 1'), { target: { value: '42000' } });
+    expect(screen.getByRole('button', { name: /Save Quotas/i })).toBeEnabled();
+    await fireEvent.click(screen.getByRole('button', { name: /Save Quotas/i }));
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/smart-routing', {
+      quota_limits: { 'qoder-a': { max_tokens_per_day: 42000 } },
+    }));
+  });
+
+  it('preserves quota fields the form does not edit', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/smart-routing') return { data: {
+        ml_router_enabled: false,
+        ml_router_cheap_model: 'gpt-4o-mini',
+        ml_router_expensive_model: 'gpt-4o',
+        ml_router_threshold: '0.5',
+        cost_quality_floor: '0.3',
+        cost_expensive_anchor: '0.02',
+        quota_limits: { 'qoder-a': { max_tokens_per_day: 1000, max_requests_per_day: 50 } },
+      } };
+      if (path === '/api/combos') return { data: [] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      return { data: [] };
+    });
+
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Quotas/i }));
+    const limit = screen.getByLabelText('Daily token limit for quota row 1');
+    expect(limit).toHaveValue('1000');
+    await fireEvent.input(limit, { target: { value: '2000' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Save Quotas/i }));
+
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/smart-routing', {
+      quota_limits: { 'qoder-a': { max_requests_per_day: 50, max_tokens_per_day: 2000 } },
+    }));
+  });
+
+  it('blocks policy saves when numeric settings are out of range', async () => {
+    await renderPage();
+    await fireEvent.input(screen.getByPlaceholderText('0.5'), { target: { value: '1.4' } });
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/Threshold must be greater than 0 and less than 1/i);
+    expect(screen.getByRole('button', { name: /Save Policies/i })).toBeDisabled();
+    expect(mocks.post).not.toHaveBeenCalledWith('/api/smart-routing', expect.anything());
+  });
+
+  it('reorders saved combos with keyboard-accessible move buttons', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/combos') return { data: [
+        { id: 'one', name: 'One', strategy: 'priority', entries: [], order: 0 },
+        { id: 'two', name: 'Two', strategy: 'priority', entries: [], order: 1 },
+      ] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      if (path === '/api/connections') return { data: [] };
+      return { data: [] };
+    });
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    await fireEvent.click(screen.getByRole('button', { name: /Move combo One down/i }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 unsaved scope'));
+
+    await fireEvent.click(screen.getByRole('button', { name: /Save Combos/i }));
+    await waitFor(() => expect(mocks.put).toHaveBeenCalledWith('/api/routing/combos/reorder', {
+      combos: [{ id: 'two', order: 0 }, { id: 'one', order: 1 }],
+    }));
+  });
+
+  it('rolls back applied strategies when a later combo save fails', async () => {
+    mocks.get.mockImplementation(async (path: string): Promise<any> => {
+      if (path === '/api/combos') return { data: [
+        { id: 'one', name: 'One', strategy: 'priority', entries: [], order: 0 },
+        { id: 'two', name: 'Two', strategy: 'priority', entries: [], order: 1 },
+      ] };
+      if (path === '/api/aliases') return { data: {} };
+      if (path === '/api/load-balancer') return { data: { strategy: 'priority' } };
+      if (path === '/api/smart-routing') return { data: { quota_limits: {} } };
+      if (path === '/api/connections') return { data: [] };
+      return { data: [] };
+    });
+    let patchCalls = 0;
+    mocks.patch.mockImplementation(async () => {
+      patchCalls++;
+      if (patchCalls === 2) throw new Error('second combo rejected');
+      return {};
+    });
+
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Combos/i }));
+    const selects = screen.getAllByRole('combobox');
+    await fireEvent.change(selects[0], { target: { value: 'round-robin' } });
+    await fireEvent.change(selects[1], { target: { value: 'random' } });
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('1 unsaved scope'));
+
+    await fireEvent.click(screen.getByRole('button', { name: /Save Combos/i }));
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Combo save stopped; unsaved changes remain', 'error'));
+    expect(mocks.patch).toHaveBeenNthCalledWith(1, '/api/routing/combos/one', { strategy: 'round-robin' });
+    expect(mocks.patch).toHaveBeenNthCalledWith(2, '/api/routing/combos/two', { strategy: 'random' });
+    expect(mocks.patch).toHaveBeenNthCalledWith(3, '/api/routing/combos/one', { strategy: 'priority' });
+    expect(screen.getByRole('status')).toHaveTextContent('1 unsaved scope');
   });
 });

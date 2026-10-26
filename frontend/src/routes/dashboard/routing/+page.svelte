@@ -48,7 +48,7 @@
   let loading = $state(true);
   let saving = $state(false);
   let error = $state('');
-  let advertisedModels = $state<any[]>([]);
+  let connectionsLoading = $state(true);
   let draggedIndex = $state<number | null>(null);
   let dragOverIndex = $state<number | null>(null);
   let orderDirty = $state(false);
@@ -123,7 +123,7 @@
     ml_router_threshold: string;
     cost_quality_floor: string;
     cost_expensive_anchor: string;
-    quota_limits: Record<string, { max_tokens_per_day?: number }>;
+    quota_limits: Record<string, Record<string, unknown>>;
   }
   let smart = $state<SmartConfig>({
     ml_router_enabled: false,
@@ -135,17 +135,19 @@
     quota_limits: {}
   });
   let savingSmart = $state(false);
-  // Quota limit editor rows derived from the quota_limits map
-  let quotaRows = $state<Array<{ connId: string; maxPerDay: string }>>([]);
+  // Quota limit editor rows derived from the quota_limits map. `extra` keeps
+  // limits this form does not edit (monthly/request caps) intact on save.
+  let quotaRows = $state<Array<{ connId: string; maxPerDay: string; extra?: Record<string, unknown> }>>([]);
 
   // ── Explicit sections + save scopes ────────────────────────────────────
   // The page is split into three independently-savable scopes. Policy, combo,
   // and quota mutations are staged locally; aliases are explicitly immediate.
-  type Section = 'policies' | 'combos' | 'quotas';
+  type Section = 'policies' | 'combos' | 'aliases' | 'quotas';
   let section = $state<Section>('policies');
   const SECTIONS: { key: Section; label: string; help: string }[] = [
     { key: 'policies', label: 'Policies', help: 'Global load-balancer strategy, ML routing and cost ranking.' },
     { key: 'combos', label: 'Combos', help: 'Ordered failover chains and per-combo strategy.' },
+    { key: 'aliases', label: 'Aliases', help: 'Friendly model names that apply immediately.' },
     { key: 'quotas', label: 'Quotas', help: 'Per-connection daily token ceilings.' },
   ];
   let savedPolicy = $state('');
@@ -157,7 +159,44 @@
   let stagedLbStrategy = $state<string>('priority');
 
   const policyFingerprint = $derived(JSON.stringify([buildPolicyPayload(smart), stagedLbStrategy]));
-  const quotasFingerprint = $derived(JSON.stringify(buildQuotaPayload(quotaRows)));
+  const quotasFingerprint = $derived(JSON.stringify(quotaRows));
+  const policyErrors = $derived.by(() => {
+    const errors: string[] = [];
+    if (!smart.ml_router_cheap_model.trim()) errors.push('Cheap model is required.');
+    if (!smart.ml_router_expensive_model.trim()) errors.push('Expensive model is required.');
+    const threshold = Number(smart.ml_router_threshold);
+    if (!Number.isFinite(threshold) || threshold <= 0 || threshold >= 1) {
+      errors.push('Threshold must be greater than 0 and less than 1.');
+    }
+    const floor = Number(smart.cost_quality_floor);
+    if (!Number.isFinite(floor) || floor < 0 || floor > 1) {
+      errors.push('Quality floor must be between 0 and 1.');
+    }
+    const anchor = Number(smart.cost_expensive_anchor);
+    if (!Number.isFinite(anchor) || anchor <= 0) {
+      errors.push('Expensive anchor must be greater than 0.');
+    }
+    return errors;
+  });
+  const policiesInvalid = $derived(policyErrors.length > 0);
+  const quotaRowErrors = $derived.by(() => {
+    const seen = new Set<string>();
+    return quotaRows.map(row => {
+      const id = row.connId.trim();
+      if (!id) return 'Select a connection.';
+      if (seen.has(id)) return 'This connection is already listed above.';
+      seen.add(id);
+      const raw = row.maxPerDay.trim();
+      if (!raw) return 'Enter a daily token limit.';
+      const max = Number(raw);
+      if (!Number.isInteger(max) || max <= 0) return 'Use a positive whole number.';
+      return '';
+    });
+  });
+  const quotaErrors = $derived(quotaRowErrors
+    .map((message, index) => message ? `Row ${index + 1}: ${message}` : '')
+    .filter(Boolean));
+  const quotasInvalid = $derived(quotaErrors.length > 0);
   const combosDirtyCount = $derived(Object.keys(stagedStrategies).length);
   const dirty = $derived(routingDirtyState({
     policy: savedPolicy !== '' && policyFingerprint !== savedPolicy,
@@ -201,8 +240,19 @@
     stagedStrategies = {};
   }
 
+  function quotaRowsFromLimits(limits: SmartConfig['quota_limits']) {
+    return Object.entries(limits || {}).map(([connId, raw]) => {
+      const { max_tokens_per_day, ...extra } = (raw || {}) as Record<string, unknown>;
+      return {
+        connId,
+        maxPerDay: max_tokens_per_day == null ? '' : String(max_tokens_per_day),
+        extra,
+      };
+    });
+  }
+
   function discardQuotas() {
-    quotaRows = Object.entries(smart.quota_limits || {}).map(([connId, v]) => ({ connId, maxPerDay: String((v as any)?.max_tokens_per_day ?? '') }));
+    quotaRows = quotaRowsFromLimits(smart.quota_limits);
     savedQuotas = quotasFingerprint;
   }
 
@@ -211,10 +261,7 @@
       const res = await api.get<{ data: SmartConfig }>('/api/smart-routing');
       if (res?.data) {
         smart = { ...smart, ...res.data, quota_limits: res.data.quota_limits || {} };
-        quotaRows = Object.entries(smart.quota_limits || {}).map(([connId, v]) => ({
-          connId,
-          maxPerDay: String((v as any)?.max_tokens_per_day ?? '')
-        }));
+        quotaRows = quotaRowsFromLimits(smart.quota_limits);
       }
     } catch {
       // leave defaults
@@ -222,13 +269,21 @@
   }
 
   async function saveSmart(scope: 'policies' | 'quotas' = section === 'quotas' ? 'quotas' : 'policies') {
+    if (scope === 'quotas' && quotasInvalid) {
+      showToast('Fix the quota validation errors before saving', 'error');
+      return;
+    }
+    if (scope === 'policies' && policiesInvalid) {
+      showToast('Fix the policy validation errors before saving', 'error');
+      return;
+    }
     savingSmart = true;
     try {
       if (scope === 'quotas') {
         const payload = buildQuotaPayload(quotaRows);
         await api.post('/api/smart-routing', payload);
         smart.quota_limits = payload.quota_limits;
-        savedQuotas = JSON.stringify(payload);
+        savedQuotas = quotasFingerprint;
         showToast('Quota scope saved (applied live, no restart)', 'success');
       } else {
         await api.post('/api/smart-routing', buildPolicyPayload(smart));
@@ -242,7 +297,7 @@
   }
 
   function addQuotaRow() {
-    quotaRows = [...quotaRows, { connId: '', maxPerDay: '' }];
+    quotaRows = [...quotaRows, { connId: '', maxPerDay: '', extra: {} }];
   }
   function removeQuotaRow(i: number) {
     quotaRows = quotaRows.filter((_, idx) => idx !== i);
@@ -285,20 +340,31 @@
     }
   }
 
+  async function loadConnections(strict = false) {
+    connectionsLoading = true;
+    try {
+      const res = await api.get<any>('/api/connections');
+      comboConnections = Array.isArray(res?.data) ? res.data : [];
+    } catch (e) {
+      if (strict) throw e;
+      comboConnections = [];
+    } finally {
+      connectionsLoading = false;
+    }
+  }
+
   async function loadComboCatalog() {
     comboCatalogLoading = true;
     comboCatalogError = '';
     try {
-      const [connectionsResponse, modelsResponse, presetsResponse] = await Promise.all([
-        api.get<any>('/api/connections'),
+      await loadConnections(true);
+      const [modelsResponse, presetsResponse] = await Promise.all([
         api.get<any>('/api/models/discovered'),
         api.get<any>('/api/presets').catch(() => ({ data: [] })),
       ]);
-      comboConnections = Array.isArray(connectionsResponse?.data) ? connectionsResponse.data : [];
       comboDiscoveredModels = Array.isArray(modelsResponse?.data) ? modelsResponse.data : [];
       comboProviderCatalog = Array.isArray(presetsResponse?.data) ? presetsResponse.data : [];
     } catch (e: any) {
-      comboConnections = [];
       comboDiscoveredModels = [];
       comboProviderCatalog = [];
       comboCatalogError = e.message || 'Provider catalog could not be loaded.';
@@ -592,18 +658,9 @@
     }
   }
 
-  async function loadAdvertisedModels() {
-    try {
-      const response = await api.get<any>('/v1/models');
-      advertisedModels = Array.isArray(response?.data) ? response.data : [];
-    } catch {
-      advertisedModels = [];
-    }
-  }
-
   onMount(async () => {
     loading = true;
-    await Promise.all([loadCombos(), loadAliases(), loadLoadBalancer(), loadSmart(), loadAdvertisedModels()]);
+    await Promise.all([loadCombos(), loadAliases(), loadLoadBalancer(), loadSmart(), loadConnections()]);
     savedPolicy = policyFingerprint;
     savedQuotas = quotasFingerprint;
     loading = false;
@@ -617,8 +674,32 @@
   }
 
   async function saveComboStrategies() {
-    for (const [comboId, strategy] of Object.entries(stagedStrategies)) {
-      await api.patch(`/api/routing/combos/${comboId}`, { strategy });
+    const applied: Array<[string, string]> = [];
+    try {
+      for (const [comboId, strategy] of Object.entries(stagedStrategies)) {
+        await api.patch(`/api/routing/combos/${encodeURIComponent(comboId)}`, { strategy });
+        applied.push([comboId, strategy]);
+      }
+    } catch (e: any) {
+      // The strategy PATCHes are not transactional. Restore every strategy
+      // already applied so a mid-save failure cannot leave a half-updated set.
+      const rollbackFailed: string[] = [];
+      for (const [comboId] of applied) {
+        const previous = baseStrategies[comboId];
+        if (!previous) {
+          rollbackFailed.push(comboId);
+          continue;
+        }
+        try {
+          await api.patch(`/api/routing/combos/${encodeURIComponent(comboId)}`, { strategy: previous });
+        } catch {
+          rollbackFailed.push(comboId);
+        }
+      }
+      if (rollbackFailed.length > 0) {
+        throw new Error(`${e.message || 'Combo strategy save failed'}; rollback incomplete for ${rollbackFailed.length} combo(s)`);
+      }
+      throw new Error(`${e.message || 'Combo strategy save failed'}; ${applied.length} applied change(s) rolled back`);
     }
     baseStrategies = { ...baseStrategies, ...stagedStrategies };
     stagedStrategies = {};
@@ -638,6 +719,10 @@
   }
 
   async function savePolicy() {
+    if (policiesInvalid) {
+      showToast('Fix the policy validation errors before saving', 'error');
+      return;
+    }
     savingSmart = true;
     const previousStrategy = loadBalancerStrategy;
     try {
@@ -668,6 +753,15 @@
     await api.put('/api/routing/combos/reorder', { combos: ordered });
     combos = combos.map((c, i) => ({ ...c, order: i }));
     orderDirty = false;
+  }
+
+  function moveCombo(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= combos.length) return;
+    const items = [...combos];
+    [items[index], items[target]] = [items[target], items[index]];
+    combos = items.map((combo, order) => ({ ...combo, order }));
+    orderDirty = true;
   }
 
   function handleDragStart(index: number) {
@@ -771,12 +865,29 @@
       </div>
       <div class="flex items-center gap-2">
         <button class="btn-secondary" onclick={section === 'quotas' ? discardQuotas : discardPolicies} disabled={savingSmart}>Discard</button>
-        <button class="btn-primary flex items-center gap-1.5" onclick={() => section === 'quotas' ? saveSmart('quotas') : savePolicy()} disabled={savingSmart}>
+        <button
+          class="btn-primary flex items-center gap-1.5"
+          onclick={() => section === 'quotas' ? saveSmart('quotas') : savePolicy()}
+          disabled={savingSmart || (section === 'quotas' ? quotasInvalid : policiesInvalid)}
+        >
           <Save size={14} stroke-width={2} />
           {savingSmart ? 'Saving...' : `Save ${section === 'quotas' ? 'Quotas' : 'Policies'}`}
         </button>
       </div>
     </div>
+
+    {#if section === 'policies' && policyErrors.length > 0}
+      <div class="validation-list" role="alert">
+        <strong>Fix these before saving:</strong>
+        <ul>{#each policyErrors as message}<li>{message}</li>{/each}</ul>
+      </div>
+    {/if}
+    {#if section === 'quotas' && quotaErrors.length > 0}
+      <div class="validation-list" role="alert">
+        <strong>Fix these before saving:</strong>
+        <ul>{#each quotaErrors as message}<li>{message}</li>{/each}</ul>
+      </div>
+    {/if}
 
     {#if section === 'policies'}
     <!-- ML Routing -->
@@ -848,21 +959,55 @@
           <span style="font-size: 13px; font-weight: 600; color: var(--color-fg-0);">Per-Connection Quota</span>
           <span style="font-size: 11px; color: var(--color-fg-3);">— exhausted connections are skipped before the upstream call</span>
         </div>
-        <button class="btn-secondary flex items-center gap-1.5" onclick={addQuotaRow}>
+        <button class="btn-secondary flex items-center gap-1.5" onclick={addQuotaRow} disabled={connectionsLoading || comboConnections.length === 0}>
           <Plus size={14} stroke-width={2} /> Add limit
         </button>
       </div>
+      {#if connectionsLoading}
+        <div class="catalog-state" role="status"><Spinner /> Loading connections…</div>
+      {:else if comboConnections.length === 0}
+        <div class="catalog-state warning" role="status">
+          <AlertTriangle size={18} />
+          <span><strong>No connections configured</strong>Add a provider connection before setting a daily limit.</span>
+          <a class="btn-secondary" href="/dashboard/connections">Open Connections</a>
+        </div>
+      {/if}
       {#if quotaRows.length === 0}
-        <div style="font-size: 12px; color: var(--color-fg-3); padding: 8px 0;">No quota limits set — all connections run unlimited.</div>
+        <div class="quota-empty">No quota limits set — all connections run unlimited.</div>
       {:else}
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          {#each quotaRows as row, i}
-            <div class="flex items-center gap-3">
-              <input class="input-field" style="flex: 1;" placeholder="connection id" bind:value={row.connId} />
-              <input class="input-field" style="width: 200px;" placeholder="max tokens / day" bind:value={row.maxPerDay} />
-              <button class="btn-icon" style="color: var(--color-error);" onclick={() => removeQuotaRow(i)} title="Remove">
-                <Trash2 size={14} />
-              </button>
+        <div class="quota-rows">
+          {#each quotaRows as row, i (i)}
+            <div class="quota-row">
+              <div class="quota-row-controls">
+                <select
+                  class="input-field quota-connection"
+                  bind:value={row.connId}
+                  aria-label={`Connection for quota row ${i + 1}`}
+                  aria-invalid={Boolean(quotaRowErrors[i])}
+                >
+                  <option value="">Select a connection…</option>
+                  {#each comboConnections as connection}
+                    <option value={connection.id}>
+                      {connection.name || connection.id} — {connection.id}{connection.is_active === 0 || connection.is_active === false ? ' (inactive)' : ''}
+                    </option>
+                  {/each}
+                  {#if row.connId && !comboConnections.some(connection => connection.id === row.connId)}
+                    <option value={row.connId}>{row.connId} (not found — replace it)</option>
+                  {/if}
+                </select>
+                <input
+                  class="input-field quota-limit"
+                  inputmode="numeric"
+                  placeholder="e.g. 200000"
+                  bind:value={row.maxPerDay}
+                  aria-label={`Daily token limit for quota row ${i + 1}`}
+                  aria-invalid={Boolean(quotaRowErrors[i])}
+                />
+                <button class="btn-icon" style="color: var(--color-error);" onclick={() => removeQuotaRow(i)} title="Remove" aria-label={`Remove quota row ${i + 1}`}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
+              {#if quotaRowErrors[i]}<div class="field-error">{quotaRowErrors[i]}</div>{/if}
             </div>
           {/each}
         </div>
@@ -1160,8 +1305,26 @@
               </div>
             </div>
 
-            <!-- Strategy Selector & Delete -->
+            <!-- Strategy Selector, Reorder & Delete -->
             <div class="flex items-center gap-2" style="flex-shrink: 0;">
+              <button
+                class="btn-icon"
+                onclick={() => moveCombo(i, -1)}
+                disabled={i === 0 || showComboForm}
+                title="Move combo up"
+                aria-label={`Move combo ${combo.provider} up`}
+              >
+                <ArrowUp size={14} />
+              </button>
+              <button
+                class="btn-icon"
+                onclick={() => moveCombo(i, 1)}
+                disabled={i === combos.length - 1 || showComboForm}
+                title="Move combo down"
+                aria-label={`Move combo ${combo.provider} down`}
+              >
+                <ArrowDown size={14} />
+              </button>
               <select
                 class="input-field"
                 style="width: 160px; font-size: 12px; padding: 6px 10px;"
@@ -1199,7 +1362,9 @@
       </div>
     {/if}
   </div>
+  {/if}
 
+  {#if section === 'aliases'}
   <!-- Aliases Section -->
   <div class="card">
     <div class="flex items-center justify-between" style="margin-bottom: 20px;">
@@ -1212,7 +1377,7 @@
         </div>
         <div>
           <div style="font-size: 15px; font-weight: 600; color: var(--color-fg-0);">Model Aliases</div>
-          <div style="font-size: 12px; color: var(--color-fg-3);">Map friendly names to actual model identifiers. Creating or deleting an alias applies immediately and does not use Save Combos.</div>
+          <div style="font-size: 12px; color: var(--color-fg-3);">Map friendly names to actual model identifiers. Creating or deleting an alias applies immediately and is not part of the staged save.</div>
         </div>
       </div>
       <button
@@ -1322,7 +1487,17 @@
   .btn-icon.edit-button { color:var(--color-primary); }
   .btn-icon.edit-button:hover { background:var(--color-primary-light); }
   .btn-icon:disabled { opacity:.35; cursor:not-allowed; }
-  .routing-section-nav { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px; }
+  .routing-section-nav { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-bottom:12px; }
+  .validation-list { margin-bottom:14px; padding:10px 12px; border:1px solid color-mix(in srgb,var(--color-error) 35%,transparent); border-radius:8px; background:var(--color-error-light); color:var(--color-error); font-size:11px; }
+  .validation-list strong { display:block; font-size:12px; margin-bottom:4px; }
+  .validation-list ul { margin:0; padding-left:18px; display:flex; flex-direction:column; gap:2px; }
+  .quota-rows { display:flex; flex-direction:column; gap:10px; margin-top:10px; }
+  .quota-row-controls { display:flex; align-items:center; gap:10px; }
+  .quota-connection { flex:1; min-width:0; }
+  .quota-limit { width:200px; flex:0 0 auto; }
+  .quota-empty { padding:8px 0; font-size:12px; color:var(--color-fg-3); }
+  .field-error { margin-top:4px; color:var(--color-error); font-size:11px; font-weight:600; }
+  .catalog-state a { min-height:44px; display:inline-flex; align-items:center; padding:0 12px; text-decoration:none; }
   .combo-entry-builder { min-width:0; padding:16px; border:1px solid var(--color-border); border-radius:12px; background:var(--color-bg-body); overflow:hidden; }
   .combo-entry-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
   .combo-entry-heading strong,.combo-entry-heading span,.catalog-state strong { display:block; }
@@ -1495,12 +1670,17 @@
   .btn-icon:hover {
     background: var(--color-error-light);
   }
+  @media (max-width: 1024px) {
+    .routing-section-nav { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  }
   @media (max-width: 768px) {
     .routing-section-nav { grid-template-columns:1fr; }
     .combo-card {
       flex-direction: column;
       align-items: flex-start;
     }
+    .quota-row-controls { flex-wrap:wrap; }
+    .quota-connection, .quota-limit { width:100%; flex:1 1 100%; }
   }
 
   .chain-chip {

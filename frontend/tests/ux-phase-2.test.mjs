@@ -106,8 +106,16 @@ test('policy and quota payloads never cross save scopes', () => {
     cost_quality_floor: '0.4',
     cost_expensive_anchor: '0.03',
   });
-  assert.deepEqual(buildQuotaPayload([{ connId: ' alpha ', maxPerDay: '1200' }, { connId: '', maxPerDay: '3' }, { connId: 'bad', maxPerDay: '0' }]), {
-    quota_limits: { alpha: { max_tokens_per_day: 1200 } },
+  assert.deepEqual(buildQuotaPayload([
+    { connId: ' alpha ', maxPerDay: '1200' },
+    { connId: '', maxPerDay: '3' },
+    { connId: 'bad', maxPerDay: '0' },
+    { connId: 'beta', maxPerDay: '5000', extra: { max_requests_per_day: 50 } },
+  ]), {
+    quota_limits: {
+      alpha: { max_tokens_per_day: 1200 },
+      beta: { max_requests_per_day: 50, max_tokens_per_day: 5000 },
+    },
   });
 });
 
