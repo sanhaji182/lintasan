@@ -31,13 +31,13 @@ type UsageStats struct {
 
 // BalanceInfo represents the credit/usage information from a provider.
 type BalanceInfo struct {
-	Balance       string       `json:"balance"`         // Current balance (e.g., "$95.20" or "9520 credits")
-	TotalUsed     string       `json:"total_used"`      // Total amount used
-	Currency      string       `json:"currency"`        // USD, credits, etc.
-	PlanType      string       `json:"plan_type"`       // prepaid, subscription, free, etc.
-	RateInfo      string       `json:"rate_info"`       // Legacy: flat rate info string (for non-CC providers)
-	ProviderType  string       `json:"provider_type"`   // deepseek, openai, commandcode, etc.
-	UpdatedAt     string       `json:"updated_at"`      // When this info was fetched
+	Balance       string       `json:"balance"`       // Current balance (e.g., "$95.20" or "9520 credits")
+	TotalUsed     string       `json:"total_used"`    // Total amount used
+	Currency      string       `json:"currency"`      // USD, credits, etc.
+	PlanType      string       `json:"plan_type"`     // prepaid, subscription, free, etc.
+	RateInfo      string       `json:"rate_info"`     // Legacy: flat rate info string (for non-CC providers)
+	ProviderType  string       `json:"provider_type"` // deepseek, openai, commandcode, etc.
+	UpdatedAt     string       `json:"updated_at"`    // When this info was fetched
 	Error         string       `json:"error,omitempty"` // Error message if fetch failed
 	RateWindows   []RateWindow `json:"rate_windows,omitempty"`
 	Usage         *UsageStats  `json:"usage,omitempty"`

@@ -875,256 +875,462 @@ retryPass:
 			// pass on accounts that are still queued.
 			candidates = fresh
 		}
-		// NOTE: index loop, not "for i, conn := range candidates". The range form
-		// evaluates len(candidates) ONCE at loop start, so appending a candidate
-		// mid-loop (the auth-failover below, and the circuit-open connection
-		// fallback) would never actually iterate to it — the appended candidate is
-		// silently dropped. Re-checking len each iteration lets those appends work.
-		for i := 0; i < len(candidates); i++ {
-			conn := candidates[i]
-			// Circuit breaker check
-			breaker := p.getBreaker(conn.ID)
-			if !breaker.Allow() {
-				lastErr = fmt.Sprintf("circuit breaker open for %s", conn.ID)
-				lastStatusCode = 503
-				p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 503, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-				if p.fb != nil {
-					p.fb.RecordEvent(resolvedModel, "", fallback.ReasonCircuit, 503)
-				}
-				// Connection fallback chains are model-wide operator routes. A combo is
-				// already an explicit request-lifetime scope (exact connection or
-				// provider pool), so expanding its candidates here could escape that
-				// scope when the selected connection's circuit is open.
-				if comboName == "" {
-					fallbackConns := p.fb.GetConnFallback(conn.ID)
-					for _, fbID := range fallbackConns {
-						fbConn, err := p.findConnectionByID(fbID)
-						if err != nil {
-							continue
-						}
-						candidates = append(candidates, fbConn)
-					}
-				}
-				continue
+	// NOTE: index loop, not "for i, conn := range candidates". The range form
+	// evaluates len(candidates) ONCE at loop start, so appending a candidate
+	// mid-loop (the auth-failover below, and the circuit-open connection
+	// fallback) would never actually iterate to it — the appended candidate is
+	// silently dropped. Re-checking len each iteration lets those appends work.
+	for i := 0; i < len(candidates); i++ {
+		conn := candidates[i]
+		// Circuit breaker check
+		breaker := p.getBreaker(conn.ID)
+		if !breaker.Allow() {
+			lastErr = fmt.Sprintf("circuit breaker open for %s", conn.ID)
+			lastStatusCode = 503
+			p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 503, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			if p.fb != nil {
+				p.fb.RecordEvent(resolvedModel, "", fallback.ReasonCircuit, 503)
 			}
-
-			// Quota gating (Gap #3): skip a connection whose daily token budget is
-			// already exhausted, BEFORE spending an upstream call on it. Allow()
-			// returns true when the connection has no configured limit, so this is a
-			// no-op until an operator sets a quota limit for the connection.
-			// estTokens uses the real cl100k tokenizer (char/4 fallback) rather than
-			// a raw byte/4 guess, so the gate matches actual usage more closely.
-			estTokens := tokencount.CountMessages(messages)
-			if estTokens == 0 {
-				estTokens = len(body) / 4
-			}
-			if p.quota != nil && !p.quota.Allow(conn.ID, estTokens) {
-				lastErr = fmt.Sprintf("quota exhausted for %s", conn.ID)
-				lastStatusCode = 429
-				p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 429, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-				if p.fb != nil {
-					p.fb.RecordEvent(resolvedModel, "", fallback.Reason429, 429)
-				}
-				w.Header().Set("X-Lintasan-Quota-Skip", conn.ID)
-				continue
-			}
-
-			// Target model override for combos and heterogeneous model fallbacks
-			candidateBody := body
-			candidateModel := resolvedModel
-			if conn.TargetModel != "" && conn.TargetModel != resolvedModel {
-				candidateModel = conn.TargetModel
-				reqCopy := make(map[string]any, len(req))
-				for k, v := range req {
-					reqCopy[k] = v
-				}
-				reqCopy["model"] = candidateModel
-				if mb, err := json.Marshal(reqCopy); err == nil {
-					candidateBody = mb
-				}
-			}
-
-			// Retry wrapper around upstream call
-			var resp *http.Response
-			var poolAccountID string
-			var usedConn *Connection
-			retryErr := retry.Do(r.Context(), retry.DefaultConfig(), func() (bool, error) {
-				var err error
-				// Multi-account pool: pick account and inject into a copy
-				retryConn := conn
-				if conn.PoolID != "" {
-					var pickedKey string
-					pickedKey, poolAccountID = p.pickMultiAccountAPIKey(conn.PoolID, retryConn.APIKey)
-					cpy := *retryConn
-					cpy.APIKey = pickedKey
-					retryConn = &cpy
-				}
-				// Resolve OAuth credentials on the per-attempt copy so the log
-				// rows below can attribute this attempt to the exact session
-				// that served it. doUpstream reuses the resolved copy.
-				attemptConn := retryConn
-				if strings.TrimSpace(conn.OAuthProvider) != "" {
-					cpy := *retryConn
-					p.applyConnectionAuth(&cpy)
-					attemptConn = &cpy
-				}
-				usedConn = attemptConn
-				resp, err = p.doUpstream(r, attemptConn, candidateBody)
-				if err != nil {
-					return true, err // retry on connection errors
-				}
-				if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-					resp.Body.Close()
-					return true, fmt.Errorf("upstream returned %d", resp.StatusCode)
-				}
-				return false, nil // success, don't retry
-			})
-			if usedConn != nil {
-				conn = usedConn
-			}
-			if retryErr != nil {
-				lastErr = retryErr.Error()
-				failureUnlessClientGone(breaker, r.Context())
-				p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
-				p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-				if p.fb != nil {
-					if should, reason := fallback.ShouldTriggerFallback(502, false, false); should {
-						p.fb.RecordEvent(resolvedModel, "", reason, 502)
-					}
-				}
-				continue
-			}
-
-			defer resp.Body.Close()
-			lastStatusCode = resp.StatusCode
-
-			// On 4xx/5xx errors (e.g. 400 insufficient credits, 402, 404, 5xx) with more candidates: fallback
-			if resp.StatusCode >= 400 && resp.StatusCode != 429 && resp.StatusCode != 401 && resp.StatusCode != 403 && i < len(candidates)-1 {
-				b, _ := io.ReadAll(resp.Body)
-				lastErr = string(b)
-				breaker.Failure()
-				p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
-				p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-				if p.fb != nil {
-					if should, reason := fallback.ShouldTriggerFallback(resp.StatusCode, false, false); should {
-						p.fb.RecordEvent(candidateModel, "", reason, resp.StatusCode)
-					}
-				}
-				continue
-			}
-
-			// On 429: circuit breaker + fallback
-			if resp.StatusCode == 429 {
-				b, _ := io.ReadAll(resp.Body)
-				lastErr = string(b)
-				lastStatusCode = resp.StatusCode
-				// Generic provider backoff: honour a standard Retry-After header
-				// (any provider) or a nested queue-state body (Qoder) so the
-				// retry-pass loop can wait it out.
-				if ra := resp.Header.Get("Retry-After"); ra != "" {
-					if secs, err := strconv.Atoi(ra); err == nil && secs > maxRetryAfter {
-						maxRetryAfter = secs
-					}
-				}
-				if hint, queued := qoder.BackoffHintFromBody(b); queued && hint > maxRetryAfter {
-					maxRetryAfter = hint
-				}
-				breaker.Failure()
-				// B1 classified: the 429 body may say something the classifier
-				// recognises (e.g. "quota exceeded", "overloaded"); an unmatched
-				// body keeps the pool's default 60s cooldown. lastErr carries the
-				// upstream response body here.
-				p.recordMultiAccountResultClassified(conn.PoolID, poolAccountID, false, true, lastErr)
-				p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-				if p.fb != nil {
-					p.fb.RecordEvent(candidateModel, "", fallback.Reason429, resp.StatusCode)
-				}
-				continue
-			}
-
-			// On 401/403: try the rest of the pool, then fail over to another
-			// connection serving this model. A 401/403 is an auth or quota failure —
-			// retrying the SAME key knocks on a locked door, and passing it through
-			// hands the client a dead end (the "stuck here and stops" case).
-			// findConnectionForModel returns only ONE connection, so the loop's
-			// candidate list normally has no second entry for a plain model route.
-			// Look one up here, ONLY on auth failure, so 429/5xx routing and its
-			// single-candidate behaviour are completely untouched.
-			if resp.StatusCode == 401 || resp.StatusCode == 403 {
-				b, _ := io.ReadAll(resp.Body)
-				lastErr = string(b)
-				lastStatusCode = resp.StatusCode
-				resp.Body.Close()
-
-				// Attribute this hard auth rejection to the exact OAuth account
-				// selected for this request. Non-OAuth connections are a no-op.
-				p.recordOAuthAccountRejection(conn, true)
-
-				// Queue states ride along on 403s (Qoder 10605). Collect the
-				// backoff hint so the retry-pass loop can honour it once the
-				// candidate walk is exhausted. Non-queue 403s (credential
-				// expiry, plan gates) report IsQueued()==false and are skipped.
-				if hint, queued := qoder.BackoffHintFromBody(b); queued && hint > maxRetryAfter {
-					maxRetryAfter = hint
-				}
-
-				// A pooled connection holds several keys. One key being rejected
-				// says nothing about the other four, so exhaust the pool BEFORE
-				// writing off the whole provider. The rejected key is taken out of
-				// rotation (a longer cooldown than a 429, since a bad key does not
-				// heal in 60s) so the round-robin cannot hand it back on the next
-				// pick and burn another request on the same locked door.
-				//
-				// Deliberately NOT inside retry.Do: that retries the same call with
-				// backoff, and waiting is pointless when the fix is simply "use a
-				// different key". Bounded by the account count, so a pool of dead
-				// keys cannot spin.
-				recovered := false
-				if conn.PoolID != "" && poolAccountID != "" {
-					// B1 classified: a 401/403 whose body says a
-					// throughput-quota / capacity phrase is NOT a dead key — it
-					// goes to the (shorter) rate-limit cooldown so the account
-					// rejoins on backoff, instead of sitting out the 5-minute
-					// auth-failure window for a quota that resets sooner.
-					// markPoolAccountAuthFailed stays the default when the body
-					// is silent or matches an auth-slot phrase; only a positive
-					// match that says "short retry" downgrades to rate-limit.
-					if cls := lb.ClassifyUpstreamError("", resp.StatusCode, lastErr, 0); cls.ShouldFallback && !cls.Backoff && cls.Cooldown <= lb.CooldownShort {
-						p.recordMultiAccountResultClassified(conn.PoolID, poolAccountID, false, true, lastErr)
-					} else {
-						p.markPoolAccountAuthFailed(conn.PoolID, poolAccountID)
-					}
-					p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-
-					if poolResp, poolAcct := p.retryPoolAccounts(r, conn, body, resolvedModel, start, taskClass, modeLabel, &lastErr, &lastStatusCode); poolResp != nil {
-						resp = poolResp
-						poolAccountID = poolAcct
-						w.Header().Set("X-Lintasan-Pool-Retry", conn.PoolID)
-						recovered = true
-					}
-				} else {
-					p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
-					p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-				}
-
-				if !recovered {
-					// Either not pooled, or every key in the pool was rejected. Now
-					// it IS the connection that is unusable.
-					breaker.Failure()
-					if p.fb != nil {
-						p.fb.RecordEvent(resolvedModel, "", fallback.Reason401, resp.StatusCode)
-					}
-
-					// If the loop still has candidates, just advance to the next.
-					if i < len(candidates)-1 {
+			// Connection fallback chains are model-wide operator routes. A combo is
+			// already an explicit request-lifetime scope (exact connection or
+			// provider pool), so expanding its candidates here could escape that
+			// scope when the selected connection's circuit is open.
+			if comboName == "" {
+				fallbackConns := p.fb.GetConnFallback(conn.ID)
+				for _, fbID := range fallbackConns {
+					fbConn, err := p.findConnectionByID(fbID)
+					if err != nil {
 						continue
 					}
+					candidates = append(candidates, fbConn)
+				}
+			}
+			continue
+		}
 
-					// Otherwise this was the last candidate. Try to widen it with
-					// another active connection that serves the same model and has
-					// not been tried yet. If there is none, the continue below exits
-					// the loop and the exhausted-routes path reports the auth/quota
-					// failure with its real status code.
+		// Quota gating (Gap #3): skip a connection whose daily token budget is
+		// already exhausted, BEFORE spending an upstream call on it. Allow()
+		// returns true when the connection has no configured limit, so this is a
+		// no-op until an operator sets a quota limit for the connection.
+		// estTokens uses the real cl100k tokenizer (char/4 fallback) rather than
+		// a raw byte/4 guess, so the gate matches actual usage more closely.
+		estTokens := tokencount.CountMessages(messages)
+		if estTokens == 0 {
+			estTokens = len(body) / 4
+		}
+		if p.quota != nil && !p.quota.Allow(conn.ID, estTokens) {
+			lastErr = fmt.Sprintf("quota exhausted for %s", conn.ID)
+			lastStatusCode = 429
+			p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 429, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			if p.fb != nil {
+				p.fb.RecordEvent(resolvedModel, "", fallback.Reason429, 429)
+			}
+			w.Header().Set("X-Lintasan-Quota-Skip", conn.ID)
+			continue
+		}
+
+		// Target model override for combos and heterogeneous model fallbacks
+		candidateBody := body
+		candidateModel := resolvedModel
+		if conn.TargetModel != "" && conn.TargetModel != resolvedModel {
+			candidateModel = conn.TargetModel
+			reqCopy := make(map[string]any, len(req))
+			for k, v := range req {
+				reqCopy[k] = v
+			}
+			reqCopy["model"] = candidateModel
+			if mb, err := json.Marshal(reqCopy); err == nil {
+				candidateBody = mb
+			}
+		}
+
+		// Retry wrapper around upstream call
+		var resp *http.Response
+		var poolAccountID string
+		var usedConn *Connection
+		retryErr := retry.Do(r.Context(), retry.DefaultConfig(), func() (bool, error) {
+			var err error
+			// Multi-account pool: pick account and inject into a copy
+			retryConn := conn
+			if conn.PoolID != "" {
+				var pickedKey string
+				pickedKey, poolAccountID = p.pickMultiAccountAPIKey(conn.PoolID, retryConn.APIKey)
+				cpy := *retryConn
+				cpy.APIKey = pickedKey
+				retryConn = &cpy
+			}
+			// Resolve OAuth credentials on the per-attempt copy so the log
+			// rows below can attribute this attempt to the exact session
+			// that served it. doUpstream reuses the resolved copy.
+			attemptConn := retryConn
+			if strings.TrimSpace(conn.OAuthProvider) != "" {
+				cpy := *retryConn
+				p.applyConnectionAuth(&cpy)
+				attemptConn = &cpy
+			}
+			usedConn = attemptConn
+			resp, err = p.doUpstream(r, attemptConn, candidateBody)
+			if err != nil {
+				return true, err // retry on connection errors
+			}
+			if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+				resp.Body.Close()
+				return true, fmt.Errorf("upstream returned %d", resp.StatusCode)
+			}
+			return false, nil // success, don't retry
+		})
+		if usedConn != nil {
+			conn = usedConn
+		}
+if retryErr != nil {
+			lastErr = retryErr.Error()
+			failureUnlessClientGone(breaker, r.Context())
+			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
+			p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			if p.fb != nil {
+				if should, reason := fallback.ShouldTriggerFallback(502, false, false); should {
+					p.fb.RecordEvent(resolvedModel, "", reason, 502)
+				}
+			}
+			continue
+		}
+
+		defer resp.Body.Close()
+		lastStatusCode = resp.StatusCode
+
+		// On 4xx/5xx errors (e.g. 400 insufficient credits, 402, 404, 5xx) with more candidates: fallback
+		if resp.StatusCode >= 400 && resp.StatusCode != 429 && resp.StatusCode != 401 && resp.StatusCode != 403 && i < len(candidates)-1 {
+			b, _ := io.ReadAll(resp.Body)
+			lastErr = string(b)
+			breaker.Failure()
+			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
+			p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			if p.fb != nil {
+				if should, reason := fallback.ShouldTriggerFallback(resp.StatusCode, false, false); should {
+					p.fb.RecordEvent(candidateModel, "", reason, resp.StatusCode)
+				}
+			}
+			continue
+		}
+
+		// On 429: circuit breaker + fallback
+		if resp.StatusCode == 429 {
+			b, _ := io.ReadAll(resp.Body)
+			lastErr = string(b)
+			lastStatusCode = resp.StatusCode
+			// Generic provider backoff: honour a standard Retry-After header
+			// (any provider) or a nested queue-state body (Qoder) so the
+			// retry-pass loop can wait it out.
+			if ra := resp.Header.Get("Retry-After"); ra != "" {
+				if secs, err := strconv.Atoi(ra); err == nil && secs > maxRetryAfter {
+					maxRetryAfter = secs
+				}
+			}
+			if hint, queued := qoder.BackoffHintFromBody(b); queued && hint > maxRetryAfter {
+				maxRetryAfter = hint
+			}
+			breaker.Failure()
+			// B1 classified: the 429 body may say something the classifier
+			// recognises (e.g. "quota exceeded", "overloaded"); an unmatched
+			// body keeps the pool's default 60s cooldown. lastErr carries the
+			// upstream response body here.
+			p.recordMultiAccountResultClassified(conn.PoolID, poolAccountID, false, true, lastErr)
+			p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			if p.fb != nil {
+				p.fb.RecordEvent(candidateModel, "", fallback.Reason429, resp.StatusCode)
+			}
+			continue
+		}
+
+		// On 401/403: try the rest of the pool, then fail over to another
+		// connection serving this model. A 401/403 is an auth or quota failure —
+		// retrying the SAME key knocks on a locked door, and passing it through
+		// hands the client a dead end (the "stuck here and stops" case).
+		// findConnectionForModel returns only ONE connection, so the loop's
+		// candidate list normally has no second entry for a plain model route.
+		// Look one up here, ONLY on auth failure, so 429/5xx routing and its
+		// single-candidate behaviour are completely untouched.
+		if resp.StatusCode == 401 || resp.StatusCode == 403 {
+			b, _ := io.ReadAll(resp.Body)
+			lastErr = string(b)
+			lastStatusCode = resp.StatusCode
+			resp.Body.Close()
+
+			// Attribute this hard auth rejection to the exact OAuth account
+			// selected for this request. Non-OAuth connections are a no-op.
+			p.recordOAuthAccountRejection(conn, true)
+
+			// Queue states ride along on 403s (Qoder 10605). Collect the
+			// backoff hint so the retry-pass loop can honour it once the
+			// candidate walk is exhausted. Non-queue 403s (credential
+			// expiry, plan gates) report IsQueued()==false and are skipped.
+			if hint, queued := qoder.BackoffHintFromBody(b); queued && hint > maxRetryAfter {
+				maxRetryAfter = hint
+			}
+
+			// A pooled connection holds several keys. One key being rejected
+			// says nothing about the other four, so exhaust the pool BEFORE
+			// writing off the whole provider. The rejected key is taken out of
+			// rotation (a longer cooldown than a 429, since a bad key does not
+			// heal in 60s) so the round-robin cannot hand it back on the next
+			// pick and burn another request on the same locked door.
+			//
+			// Deliberately NOT inside retry.Do: that retries the same call with
+			// backoff, and waiting is pointless when the fix is simply "use a
+			// different key". Bounded by the account count, so a pool of dead
+			// keys cannot spin.
+			recovered := false
+			if conn.PoolID != "" && poolAccountID != "" {
+				// B1 classified: a 401/403 whose body says a
+				// throughput-quota / capacity phrase is NOT a dead key — it
+				// goes to the (shorter) rate-limit cooldown so the account
+				// rejoins on backoff, instead of sitting out the 5-minute
+				// auth-failure window for a quota that resets sooner.
+				// markPoolAccountAuthFailed stays the default when the body
+				// is silent or matches an auth-slot phrase; only a positive
+				// match that says "short retry" downgrades to rate-limit.
+				if cls := lb.ClassifyUpstreamError("", resp.StatusCode, lastErr, 0); cls.ShouldFallback && !cls.Backoff && cls.Cooldown <= lb.CooldownShort {
+					p.recordMultiAccountResultClassified(conn.PoolID, poolAccountID, false, true, lastErr)
+				} else {
+					p.markPoolAccountAuthFailed(conn.PoolID, poolAccountID)
+				}
+				p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+
+				if poolResp, poolAcct := p.retryPoolAccounts(r, conn, body, resolvedModel, start, taskClass, modeLabel, &lastErr, &lastStatusCode); poolResp != nil {
+					resp = poolResp
+					poolAccountID = poolAcct
+					w.Header().Set("X-Lintasan-Pool-Retry", conn.PoolID)
+					recovered = true
+				}
+			} else {
+				p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
+				p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			}
+
+			if !recovered {
+				// Either not pooled, or every key in the pool was rejected. Now
+				// it IS the connection that is unusable.
+				breaker.Failure()
+				if p.fb != nil {
+					p.fb.RecordEvent(resolvedModel, "", fallback.Reason401, resp.StatusCode)
+				}
+
+				// If the loop still has candidates, just advance to the next.
+				if i < len(candidates)-1 {
+					continue
+				}
+
+				// Otherwise this was the last candidate. Try to widen it with
+				// another active connection that serves the same model and has
+				// not been tried yet. If there is none, the continue below exits
+				// the loop and the exhausted-routes path reports the auth/quota
+				// failure with its real status code.
+				tried := make([]string, 0, len(candidates))
+				for _, c := range candidates {
+					tried = append(tried, c.ID)
+				}
+				if comboName == "" {
+					if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
+						candidates = append(candidates, alternates...)
+					}
+				}
+				continue
+			}
+			// recovered: fall through to the success path with the new response.
+			defer resp.Body.Close()
+			lastStatusCode = resp.StatusCode
+		}
+
+		// Success! Record to breaker
+		breaker.Success()
+		p.recordMultiAccountResult(conn.PoolID, poolAccountID, true, false)
+
+		// Record latency for load balancer
+		latencyMs := float64(time.Since(start).Milliseconds())
+		p.lb.RecordLatency(conn.ID, latencyMs)
+
+		// Token counting from response headers
+		var tokensIn, tokensOut int
+		if ct := resp.Header.Get("x-tokens-input"); ct != "" {
+			fmt.Sscanf(ct, "%d", &tokensIn)
+		}
+		if ct := resp.Header.Get("x-tokens-output"); ct != "" {
+			fmt.Sscanf(ct, "%d", &tokensOut)
+		}
+
+		for k, v := range resp.Header {
+			// Skip hop-by-hop and transport headers that conflict with the
+			// downstream response writer. Go's http.Transport auto-decompresses
+			// gzip and clears Content-Length; forwarding a stale or zero value
+			// causes the client to see an empty body even when w.Write() has
+			// data. Content-Encoding is likewise handled by the transport.
+			switch strings.ToLower(k) {
+			case "content-length", "content-encoding", "transfer-encoding":
+				continue
+			}
+			for _, vv := range v {
+				w.Header().Add(k, vv)
+			}
+		}
+
+		// Add context compression headers if compression was applied
+		if compressionStats.WasCompressed {
+			w.Header().Set("X-Lintasan-Compressed", "true")
+			w.Header().Set("X-Lintasan-Original-Tokens", fmt.Sprintf("%d", compressionStats.OriginalTokens))
+			w.Header().Set("X-Lintasan-Compressed-Tokens", fmt.Sprintf("%d", compressionStats.CompressedTokens))
+			w.Header().Set("X-Lintasan-Compression-Ratio", fmt.Sprintf("%.2f", compressionStats.CompressionRatio))
+			w.Header().Set("X-Lintasan-Messages-Before", fmt.Sprintf("%d", compressionStats.MessagesBefore))
+			w.Header().Set("X-Lintasan-Messages-After", fmt.Sprintf("%d", compressionStats.MessagesAfter))
+		}
+
+		// Tell the caller which upstream actually served this request. Routing
+		// is dynamic — load balancing, task-class reordering, and (for
+		// auto/tiered/multi-model routes) failover across candidates — so the
+		// answer differs between two identical requests and is otherwise only
+		// visible in server logs. Set before WriteHeader: on the streaming
+		// branch below the header block is flushed with the first byte.
+		setProviderHeaders(w.Header(), conn.ID, conn.Name)
+
+		if stream {
+			// ================================================================
+			// STREAMING: BUFFER-UNTIL-FIRST-CONTENT (delayed header commit)
+			// ================================================================
+			//
+			// The streaming branch used to call `w.WriteHeader(resp.StatusCode)`
+			// before reading a single upstream frame. That commits the response
+			// status, and every `continue` on the failover path below then becomes
+			// impossible — the candidate loop can only reach them if nothing has
+			// been written yet. The result was a class of failure this codebase
+			// documents in its own comments and did not handle on this path:
+			//
+			//   Qoder reports a refused credential, a busy model and content
+			//   moderation all INSIDE a stream that opened with HTTP 200.
+			//
+			// Status is not the signal for such a provider, so the 4xx/5xx checks
+			// above sail past, the header is flushed, and the in-stream error is
+			// merely logged and returned. The client receives an error frame on a
+			// 200 — never a retry on another account.
+			//
+			// So the commit is deferred until we are CERTAIN this candidate is
+			// serving: response status committed (if not 200) or first real frame
+			// received (200). An in-stream failure before any content can then fall
+			// through to the same `continue` the non-stream path uses, and the
+			// client never learns a failed attempt happened.
+			//
+			// Once bytes ARE committed the request cannot be retried — the status
+			// and any content are already on the wire. Carrying an attempt across
+			// into the next candidate is a behaviour change beyond this fix; the
+			// failure surfaces as a typed error frame exactly as it did before. See
+			// `streamCommit.makeStreamFailure`.
+			commit := &streamCommit{}
+			qCostStream := costSample{}
+			var streamErr error
+
+			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+				// Non-2xx already took its failover decisions above, so nothing
+				// retries here. The status goes out with an empty body, exactly as
+				// the pre-buffering code did. (A streaming request cannot be answered
+				// as a stream after an error status, so there is no header set.)
+				w.WriteHeader(resp.StatusCode)
+				commit.MarkStatusWritten()
+				commit.MarkBodyWritten()
+				return
+			}
+
+			// NOTE: the 2xx status is deliberately NOT written here.
+			//
+			// Sending it is what closes the retry window, and a 2xx is exactly the
+			// case that still has one open — Qoder reports failure INSIDE a 200.
+			// Writing the status eagerly (the first version of this change did) set
+			// statusWritten immediately, made the gate report "not retryable", and
+			// the in-stream refusal was reported instead of retried: the fix looked
+			// present and did nothing. The headers and status are sent by
+			// streamCommit.FlushHeaders, from the first client-visible write, which is
+			// also where the SSE Content-Type is required to be set by then.
+			flusher, _ := w.(http.Flusher)
+
+			var streamBuffer []byte
+			switch {
+			case p.isQoder(conn):
+				// Qoder's frames are enveloped and its failures are in-stream, so this
+				// is the one provider that must be consumed here rather than piped.
+				// The commit gate is passed in: Qoder opens with a role-only chunk
+				// before a refusal can arrive, so writing that chunk would commit the
+				// response and strand the failover.
+				streamBuffer, tokensOut, qCostStream, streamErr =
+					p.streamQoderToOpenAICost(r.Context(), resp.Body, w, flusher, resolvedModel, commit)
+			case conn.Format == "commandcode":
+				// CommandCode Alpha speaks NDJSON, not OpenAI SSE, so it needs its own
+				// translator. It deliberately does NOT go through the commit gate: the
+				// translator writes to the client itself and never reports a retryable
+				// failure, so there is nothing to gate. Dropping this branch would have
+				// pushed raw NDJSON to OpenAI clients — a regression introduced by the
+				// buffering change and caught by reviewing every format branch, not by
+				// the tests.
+				//
+				// It also does not set the SSE headers, because it never did: the status
+				// came from the single WriteHeader that used to precede this branch, so
+				// nothing was lost when that moved into the commit gate. Byte-for-byte
+				// behaviour is preserved by sending the status and leaving the header
+				// map alone, exactly as before.
+				w.WriteHeader(resp.StatusCode)
+				commit.MarkStatusWritten()
+				streamBuffer, tokensOut = p.pipeCCAlphaStreamToOpenAI(resp.Body, w, flusher, resolvedModel)
+				commit.MarkBodyWritten()
+			case p.isAntigravityNative(conn):
+				// Cloud Code SSE (data: {"response": <gemini>}) → OpenAI SSE.
+				streamBuffer, tokensOut, streamErr = p.streamAntigravityToOpenAI(resp.Body, w, flusher, resolvedModel, commit)
+			default:
+				// Every other provider: pump bytes straight through, committing on
+				// the first frame that carries content. A transport-level failure
+				// still reaches streamErr and is retryable while nothing has been
+				// written, which is strictly more failover than the previous
+				// unconditional write-then-pump.
+				var perr error
+				streamBuffer, perr = pumpStreamToClient(resp.Body, w, flusher, commit)
+				streamErr = perr
+				if perr == nil {
+					tokensOut = len(streamBuffer) / 4
+				}
+			}
+
+			if rehandled := p.handleStreamFailure(streamFailure{
+				Err:      streamErr,
+				Commit:   commit,
+				Body:     resp.Body,
+				Conn:     conn,
+				Response: resp,
+			}, w, flusher); rehandled {
+				// The attempt was discarded, so this candidate is unusable for this
+				// request. Advance.
+				failureUnlessClientGone(breaker, r.Context())
+
+				// If the upstream asked us to back off (Qoder queue state code 10605),
+				// remember the hint so the final "all routes failed" answer can say
+				// *how long* to wait instead of letting the client guess.
+				if ue, ok := streamErr.(*qoder.UpstreamError); ok && ue.IsQueued() {
+					if ue.RetryAfterSeconds > maxRetryAfter {
+						maxRetryAfter = ue.RetryAfterSeconds
+					}
+				}
+
+				lastErr = streamErr.Error()
+				lastStatusCode = http.StatusBadGateway
+				qCostStream = costSample{}
+
+				p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCostStream)
+
+				// A plain model route yields exactly ONE candidate, so without this
+				// the `continue` above would simply exit the loop and the client would
+				// get the exhausted-routes error — the retry would have nothing to
+				// retry onto. Widen the list with another active connection serving
+				// the same model. This mirrors the 401/403 path exactly: same helper,
+				// same untried-ids guard, and the same refusal to invent candidates.
+				//
+				// Only connections genuinely serving this model are added, so a Qoder
+				// in-stream refusal can fall over to the next Qoder account while a
+				// single-account provider simply finds nothing and reports as before.
+				if i >= len(candidates)-1 {
 					tried := make([]string, 0, len(candidates))
 					for _, c := range candidates {
 						tried = append(tried, c.ID)
@@ -1134,398 +1340,192 @@ retryPass:
 							candidates = append(candidates, alternates...)
 						}
 					}
-					continue
 				}
-				// recovered: fall through to the success path with the new response.
-				defer resp.Body.Close()
-				lastStatusCode = resp.StatusCode
+				continue
 			}
 
-			// Success! Record to breaker
-			breaker.Success()
-			p.recordMultiAccountResult(conn.PoolID, poolAccountID, true, false)
-
-			// Record latency for load balancer
-			latencyMs := float64(time.Since(start).Milliseconds())
-			p.lb.RecordLatency(conn.ID, latencyMs)
-
-			// Token counting from response headers
-			var tokensIn, tokensOut int
-			if ct := resp.Header.Get("x-tokens-input"); ct != "" {
-				fmt.Sscanf(ct, "%d", &tokensIn)
-			}
-			if ct := resp.Header.Get("x-tokens-output"); ct != "" {
-				fmt.Sscanf(ct, "%d", &tokensOut)
-			}
-
-			for k, v := range resp.Header {
-				// Skip hop-by-hop and transport headers that conflict with the
-				// downstream response writer. Go's http.Transport auto-decompresses
-				// gzip and clears Content-Length; forwarding a stale or zero value
-				// causes the client to see an empty body even when w.Write() has
-				// data. Content-Encoding is likewise handled by the transport.
-				switch strings.ToLower(k) {
-				case "content-length", "content-encoding", "transfer-encoding":
-					continue
-				}
-				for _, vv := range v {
-					w.Header().Add(k, vv)
-				}
-			}
-
-			// Add context compression headers if compression was applied
-			if compressionStats.WasCompressed {
-				w.Header().Set("X-Lintasan-Compressed", "true")
-				w.Header().Set("X-Lintasan-Original-Tokens", fmt.Sprintf("%d", compressionStats.OriginalTokens))
-				w.Header().Set("X-Lintasan-Compressed-Tokens", fmt.Sprintf("%d", compressionStats.CompressedTokens))
-				w.Header().Set("X-Lintasan-Compression-Ratio", fmt.Sprintf("%.2f", compressionStats.CompressionRatio))
-				w.Header().Set("X-Lintasan-Messages-Before", fmt.Sprintf("%d", compressionStats.MessagesBefore))
-				w.Header().Set("X-Lintasan-Messages-After", fmt.Sprintf("%d", compressionStats.MessagesAfter))
-			}
-
-			// Tell the caller which upstream actually served this request. Routing
-			// is dynamic — load balancing, task-class reordering, and (for
-			// auto/tiered/multi-model routes) failover across candidates — so the
-			// answer differs between two identical requests and is otherwise only
-			// visible in server logs. Set before WriteHeader: on the streaming
-			// branch below the header block is flushed with the first byte.
-			setProviderHeaders(w.Header(), conn.ID, conn.Name)
-
-			if stream {
-				// ================================================================
-				// STREAMING: BUFFER-UNTIL-FIRST-CONTENT (delayed header commit)
-				// ================================================================
-				//
-				// The streaming branch used to call `w.WriteHeader(resp.StatusCode)`
-				// before reading a single upstream frame. That commits the response
-				// status, and every `continue` on the failover path below then becomes
-				// impossible — the candidate loop can only reach them if nothing has
-				// been written yet. The result was a class of failure this codebase
-				// documents in its own comments and did not handle on this path:
-				//
-				//   Qoder reports a refused credential, a busy model and content
-				//   moderation all INSIDE a stream that opened with HTTP 200.
-				//
-				// Status is not the signal for such a provider, so the 4xx/5xx checks
-				// above sail past, the header is flushed, and the in-stream error is
-				// merely logged and returned. The client receives an error frame on a
-				// 200 — never a retry on another account.
-				//
-				// So the commit is deferred until we are CERTAIN this candidate is
-				// serving: response status committed (if not 200) or first real frame
-				// received (200). An in-stream failure before any content can then fall
-				// through to the same `continue` the non-stream path uses, and the
-				// client never learns a failed attempt happened.
-				//
-				// Once bytes ARE committed the request cannot be retried — the status
-				// and any content are already on the wire. Carrying an attempt across
-				// into the next candidate is a behaviour change beyond this fix; the
-				// failure surfaces as a typed error frame exactly as it did before. See
-				// `streamCommit.makeStreamFailure`.
-				commit := &streamCommit{}
-				qCostStream := costSample{}
-				var streamErr error
-
-				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-					// Non-2xx already took its failover decisions above, so nothing
-					// retries here. The status goes out with an empty body, exactly as
-					// the pre-buffering code did. (A streaming request cannot be answered
-					// as a stream after an error status, so there is no header set.)
-					w.WriteHeader(resp.StatusCode)
-					commit.MarkStatusWritten()
-					commit.MarkBodyWritten()
+			// Committed or completed: the client has (or is about to get) the stream.
+			// Finish the same bookkeeping the pre-buffering code did and leave the loop.
+			if commit.Committing() || streamErr == nil {
+				// A stream that produced only frames the gate held back (a role
+				// preamble, or nothing at all) still has to be released — otherwise
+				// the client gets a silent open-and-close. See streamCommit.Flush.
+				if err := commit.Flush(w, flusher); err != nil {
 					return
 				}
 
-				// NOTE: the 2xx status is deliberately NOT written here.
-				//
-				// Sending it is what closes the retry window, and a 2xx is exactly the
-				// case that still has one open — Qoder reports failure INSIDE a 200.
-				// Writing the status eagerly (the first version of this change did) set
-				// statusWritten immediately, made the gate report "not retryable", and
-				// the in-stream refusal was reported instead of retried: the fix looked
-				// present and did nothing. The headers and status are sent by
-				// streamCommit.FlushHeaders, from the first client-visible write, which is
-				// also where the SSE Content-Type is required to be set by then.
-				flusher, _ := w.(http.Flusher)
+				// Approximate token counts when the provider reported none.
+				if tokensOut == 0 {
+					tokensOut = len(streamBuffer) / 4
+				}
+				if tokensIn == 0 {
+					tokensIn = len(body) / 4
+				}
 
-				var streamBuffer []byte
-				switch {
-				case p.isQoder(conn):
-					// Qoder's frames are enveloped and its failures are in-stream, so this
-					// is the one provider that must be consumed here rather than piped.
-					// The commit gate is passed in: Qoder opens with a role-only chunk
-					// before a refusal can arrive, so writing that chunk would commit the
-					// response and strand the failover.
-					streamBuffer, tokensOut, qCostStream, streamErr =
-						p.streamQoderToOpenAICost(r.Context(), resp.Body, w, flusher, resolvedModel, commit)
-				case conn.Format == "commandcode":
-					// CommandCode Alpha speaks NDJSON, not OpenAI SSE, so it needs its own
-					// translator. It deliberately does NOT go through the commit gate: the
-					// translator writes to the client itself and never reports a retryable
-					// failure, so there is nothing to gate. Dropping this branch would have
-					// pushed raw NDJSON to OpenAI clients — a regression introduced by the
-					// buffering change and caught by reviewing every format branch, not by
-					// the tests.
-					//
-					// It also does not set the SSE headers, because it never did: the status
-					// came from the single WriteHeader that used to precede this branch, so
-					// nothing was lost when that moved into the commit gate. Byte-for-byte
-					// behaviour is preserved by sending the status and leaving the header
-					// map alone, exactly as before.
-					w.WriteHeader(resp.StatusCode)
-					commit.MarkStatusWritten()
-					streamBuffer, tokensOut = p.pipeCCAlphaStreamToOpenAI(resp.Body, w, flusher, resolvedModel)
-					commit.MarkBodyWritten()
-				case p.isAntigravityNative(conn):
-					// Cloud Code SSE (data: {"response": <gemini>}) → OpenAI SSE.
-					streamBuffer, tokensOut, streamErr = p.streamAntigravityToOpenAI(resp.Body, w, flusher, resolvedModel, commit)
-				default:
-					// Every other provider: pump bytes straight through, committing on
-					// the first frame that carries content. A transport-level failure
-					// still reaches streamErr and is retryable while nothing has been
-					// written, which is strictly more failover than the previous
-					// unconditional write-then-pump.
-					var perr error
-					streamBuffer, perr = pumpStreamToClient(resp.Body, w, flusher, commit)
-					streamErr = perr
-					if perr == nil {
-						tokensOut = len(streamBuffer) / 4
+				if resp.StatusCode == 200 {
+					quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
+				}
+
+				p.logRequestCost(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostStream)
+
+				if comboName != "" && resp.StatusCode == 200 {
+					p.cmb.RecordSuccess(comboName)
+					if combo.AutoAliasExists(comboName) {
+						combo.RecordAutoSuccess(comboName, conn.ID)
 					}
 				}
 
-				if rehandled := p.handleStreamFailure(streamFailure{
-					Err:      streamErr,
-					Commit:   commit,
-					Body:     resp.Body,
-					Conn:     conn,
-					Response: resp,
-				}, w, flusher); rehandled {
-					// The attempt was discarded, so this candidate is unusable for this
-					// request. Advance.
-					failureUnlessClientGone(breaker, r.Context())
+				// Auto-Indexing: embed and store completion if header set
+				p.autoIndex(r, model, messages, string(streamBuffer), tokensIn, tokensOut)
 
-					// If the upstream asked us to back off (Qoder queue state code 10605),
-					// remember the hint so the final "all routes failed" answer can say
-					// *how long* to wait instead of letting the client guess.
-					if ue, ok := streamErr.(*qoder.UpstreamError); ok && ue.IsQueued() {
-						if ue.RetryAfterSeconds > maxRetryAfter {
-							maxRetryAfter = ue.RetryAfterSeconds
-						}
-					}
-
-					lastErr = streamErr.Error()
-					lastStatusCode = http.StatusBadGateway
-					qCostStream = costSample{}
-
-					p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCostStream)
-
-					// A plain model route yields exactly ONE candidate, so without this
-					// the `continue` above would simply exit the loop and the client would
-					// get the exhausted-routes error — the retry would have nothing to
-					// retry onto. Widen the list with another active connection serving
-					// the same model. This mirrors the 401/403 path exactly: same helper,
-					// same untried-ids guard, and the same refusal to invent candidates.
-					//
-					// Only connections genuinely serving this model are added, so a Qoder
-					// in-stream refusal can fall over to the next Qoder account while a
-					// single-account provider simply finds nothing and reports as before.
-					if i >= len(candidates)-1 {
-						tried := make([]string, 0, len(candidates))
-						for _, c := range candidates {
-							tried = append(tried, c.ID)
-						}
-						if comboName == "" {
-							if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
-								candidates = append(candidates, alternates...)
-							}
-						}
-					}
-					continue
+				// Plugin post-response hook (stream already sent, side-effects only)
+				if p.pm != nil {
+					p.pm.ExecuteResponseHook(r.Context(), conn.ID, resolvedModel, streamBuffer)
 				}
-
-				// Committed or completed: the client has (or is about to get) the stream.
-				// Finish the same bookkeeping the pre-buffering code did and leave the loop.
-				if commit.Committing() || streamErr == nil {
-					// A stream that produced only frames the gate held back (a role
-					// preamble, or nothing at all) still has to be released — otherwise
-					// the client gets a silent open-and-close. See streamCommit.Flush.
-					if err := commit.Flush(w, flusher); err != nil {
-						return
-					}
-
-					// Approximate token counts when the provider reported none.
-					if tokensOut == 0 {
-						tokensOut = len(streamBuffer) / 4
-					}
-					if tokensIn == 0 {
-						tokensIn = len(body) / 4
-					}
-
-					if resp.StatusCode == 200 {
-						quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
-					}
-
-					p.logRequestCost(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostStream)
-
-					if comboName != "" && resp.StatusCode == 200 {
-						p.cmb.RecordSuccess(comboName)
-						if combo.AutoAliasExists(comboName) {
-							combo.RecordAutoSuccess(comboName, conn.ID)
-						}
-					}
-
-					// Auto-Indexing: embed and store completion if header set
-					p.autoIndex(r, model, messages, string(streamBuffer), tokensIn, tokensOut)
-
-					// Plugin post-response hook (stream already sent, side-effects only)
-					if p.pm != nil {
-						p.pm.ExecuteResponseHook(r.Context(), conn.ID, resolvedModel, streamBuffer)
-					}
-					return
-				}
-
-				// Reached only when an attempt failed AFTER committing. The error frame
-				// (or the truncated body) is already on the wire, so there is nothing
-				// left to fall back to.
 				return
 			}
 
-			// A non-streaming client still needs an answer in bounded time, and this read
-			// had no deadline. When an upstream opens a response and then stalls — which
-			// Qoder does once its account pool is exhausted (HTTP 200, then nothing) — the
-			// request sat here until the CLIENT gave up. Measured: a recorded 120,002 ms
-			// with error "context canceled", i.e. the client cancelled; the server would
-			// have waited longer.
-			//
-			// The allowance is generous relative to the streaming first-byte timeout: a
-			// non-streaming client cannot observe progress, and a slow-but-working
-			// reasoning model must not be cut off mid-answer.
-			b, readErr := p.readUpstreamBodyBounded(r.Context(), resp.Body, p.qoderNonStreamReadTimeout())
-			if readErr != nil {
-				lastErr = readErr.Error()
-				lastStatusCode = http.StatusGatewayTimeout
-				failureUnlessClientGone(breaker, r.Context())
-				p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, http.StatusGatewayTimeout, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, costSample{})
-				// Another candidate may still answer; the timeout is retryable in the same
-				// sense a refused credential is — the connection is unusable for THIS
-				// request, not permanently dead.
-				continue
-			}
-
-			// Plugin post-response hook: transform response body
-			if p.pm != nil {
-				if transformedResp, err := p.pm.ExecuteResponseHook(r.Context(), conn.ID, resolvedModel, b); err != nil {
-					fmt.Fprintf(os.Stderr, "plugin post-response error: %v\n", err)
-				} else {
-					b = transformedResp
-				}
-			}
-
-			// Translate CC Alpha SSE → OpenAI JSON (only for successful responses)
-			if conn.Format == "commandcode" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				b = translateCCAlphaToOpenAI(b)
-			}
-
-			// Qoder: the upstream body is an enveloped frame stream, not an OpenAI
-			// response. It is re-read through the frame parser rather than passed
-			// through, because a passthrough would hand envelope JSON to the client.
-			var qCostNonStream costSample
-			if p.isQoder(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				assembled, qCost, qErr := p.qoderNonStreamResponseCost(r.Context(), io.NopCloser(bytes.NewReader(b)), resolvedModel)
-				if qErr != nil {
-					lastErr = qErr.Error()
-					lastStatusCode = http.StatusBadGateway
-					breaker.Failure()
-					p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCost)
-					continue
-				}
-				qCostNonStream = qCost
-				b = assembled
-			}
-
-			// Antigravity: the upstream body wraps a Gemini response in
-			// {"response": ...}; translate it back to one OpenAI completion.
-			if p.isAntigravityNative(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-				assembled, agPrompt, agCompletion, agErr := p.antigravityNonStreamResponse(b, resolvedModel)
-				if agErr != nil {
-					lastErr = agErr.Error()
-					lastStatusCode = http.StatusBadGateway
-					breaker.Failure()
-					p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, costSample{})
-					continue
-				}
-				b = assembled
-				if agPrompt > 0 {
-					tokensIn = agPrompt
-				}
-				if agCompletion > 0 {
-					tokensOut = agCompletion
-				}
-			}
-
-			// Reasoning extraction: DeepSeek V4 Pro puts answer in reasoning_content not content
-			b = reasoning.ExtractReasoningContent(b)
-			b = normalizeOpenAIResponseBody(b)
-
-			// Approximate token counts for non-stream
-			if tokensOut == 0 {
-				tokensOut = len(b) / 4
-			}
-			if tokensIn == 0 {
-				tokensIn = len(body) / 4
-			}
-
-			// Synthetic quote / fake completion validation guard (P0-1 prevention)
-			if resp.StatusCode >= 200 && resp.StatusCode < 300 && isSyntheticOrMotivationalResponse(b) {
-				lastErr = "upstream returned synthetic motivational text"
-				lastStatusCode = http.StatusBadGateway
-				breaker.Failure()
-				p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-				continue
-			}
-
-			// Quota recording with actual tokens
-			if resp.StatusCode == 200 {
-				quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
-			}
-
-			w.WriteHeader(resp.StatusCode)
-			w.Write(b)
-			p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostNonStream)
-
-			if comboName != "" && resp.StatusCode == 200 {
-				p.cmb.RecordSuccess(comboName)
-				if combo.AutoAliasExists(comboName) {
-					combo.RecordAutoSuccess(comboName, conn.ID)
-				}
-			}
-
-			if p.wm != nil {
-				p.wm.Fire("request.success", map[string]interface{}{
-					"model":  resolvedModel,
-					"status": resp.StatusCode,
-				})
-			}
-
-			if exactCacheEnabled && !stream && resp.StatusCode == 200 {
-				params := map[string]any{
-					"temperature": req["temperature"],
-					"max_tokens":  req["max_tokens"],
-					"top_p":       req["top_p"],
-				}
-				_ = cache.SaveExactMatch(p.db.Conn(), model, messages, params, string(b), tokensIn, tokensOut, 3600)
-			}
-
-			if semanticEnabled && resp.StatusCode == 200 {
-				cache.SaveSemanticMatch(p.db.Conn(), model, messages, string(b), 3600)
-			}
-
-			// Auto-Indexing: embed and store completion if header set
-			p.autoIndex(r, model, messages, string(b), tokensIn, tokensOut)
-
+			// Reached only when an attempt failed AFTER committing. The error frame
+			// (or the truncated body) is already on the wire, so there is nothing
+			// left to fall back to.
 			return
 		}
+
+		// A non-streaming client still needs an answer in bounded time, and this read
+		// had no deadline. When an upstream opens a response and then stalls — which
+		// Qoder does once its account pool is exhausted (HTTP 200, then nothing) — the
+		// request sat here until the CLIENT gave up. Measured: a recorded 120,002 ms
+		// with error "context canceled", i.e. the client cancelled; the server would
+		// have waited longer.
+		//
+		// The allowance is generous relative to the streaming first-byte timeout: a
+		// non-streaming client cannot observe progress, and a slow-but-working
+		// reasoning model must not be cut off mid-answer.
+		b, readErr := p.readUpstreamBodyBounded(r.Context(), resp.Body, p.qoderNonStreamReadTimeout())
+		if readErr != nil {
+			lastErr = readErr.Error()
+			lastStatusCode = http.StatusGatewayTimeout
+			failureUnlessClientGone(breaker, r.Context())
+			p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, http.StatusGatewayTimeout, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, costSample{})
+			// Another candidate may still answer; the timeout is retryable in the same
+			// sense a refused credential is — the connection is unusable for THIS
+			// request, not permanently dead.
+			continue
+		}
+
+		// Plugin post-response hook: transform response body
+		if p.pm != nil {
+			if transformedResp, err := p.pm.ExecuteResponseHook(r.Context(), conn.ID, resolvedModel, b); err != nil {
+				fmt.Fprintf(os.Stderr, "plugin post-response error: %v\n", err)
+			} else {
+				b = transformedResp
+			}
+		}
+
+		// Translate CC Alpha SSE → OpenAI JSON (only for successful responses)
+		if conn.Format == "commandcode" && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			b = translateCCAlphaToOpenAI(b)
+		}
+
+		// Qoder: the upstream body is an enveloped frame stream, not an OpenAI
+		// response. It is re-read through the frame parser rather than passed
+		// through, because a passthrough would hand envelope JSON to the client.
+		var qCostNonStream costSample
+		if p.isQoder(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			assembled, qCost, qErr := p.qoderNonStreamResponseCost(r.Context(), io.NopCloser(bytes.NewReader(b)), resolvedModel)
+			if qErr != nil {
+				lastErr = qErr.Error()
+				lastStatusCode = http.StatusBadGateway
+				breaker.Failure()
+				p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, qCost)
+				continue
+			}
+			qCostNonStream = qCost
+			b = assembled
+		}
+
+		// Antigravity: the upstream body wraps a Gemini response in
+		// {"response": ...}; translate it back to one OpenAI completion.
+		if p.isAntigravityNative(conn) && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			assembled, agPrompt, agCompletion, agErr := p.antigravityNonStreamResponse(b, resolvedModel)
+			if agErr != nil {
+				lastErr = agErr.Error()
+				lastStatusCode = http.StatusBadGateway
+				breaker.Failure()
+				p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel, costSample{})
+				continue
+			}
+			b = assembled
+			if agPrompt > 0 {
+				tokensIn = agPrompt
+			}
+			if agCompletion > 0 {
+				tokensOut = agCompletion
+			}
+		}
+
+		// Reasoning extraction: DeepSeek V4 Pro puts answer in reasoning_content not content
+		b = reasoning.ExtractReasoningContent(b)
+		b = normalizeOpenAIResponseBody(b)
+
+		// Approximate token counts for non-stream
+		if tokensOut == 0 {
+			tokensOut = len(b) / 4
+		}
+		if tokensIn == 0 {
+			tokensIn = len(body) / 4
+		}
+
+		// Synthetic quote / fake completion validation guard (P0-1 prevention)
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 && isSyntheticOrMotivationalResponse(b) {
+			lastErr = "upstream returned synthetic motivational text"
+			lastStatusCode = http.StatusBadGateway
+			breaker.Failure()
+			p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+			continue
+		}
+
+		// Quota recording with actual tokens
+		if resp.StatusCode == 200 {
+			quota.RecordQuota(p.db.Conn(), conn.ID, tokensIn+tokensOut)
+		}
+
+		w.WriteHeader(resp.StatusCode)
+		w.Write(b)
+		p.logRequestCost(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel, qCostNonStream)
+
+		if comboName != "" && resp.StatusCode == 200 {
+			p.cmb.RecordSuccess(comboName)
+			if combo.AutoAliasExists(comboName) {
+				combo.RecordAutoSuccess(comboName, conn.ID)
+			}
+		}
+
+		if p.wm != nil {
+			p.wm.Fire("request.success", map[string]interface{}{
+				"model":  resolvedModel,
+				"status": resp.StatusCode,
+			})
+		}
+
+		if exactCacheEnabled && !stream && resp.StatusCode == 200 {
+			params := map[string]any{
+				"temperature": req["temperature"],
+				"max_tokens":  req["max_tokens"],
+				"top_p":       req["top_p"],
+			}
+			_ = cache.SaveExactMatch(p.db.Conn(), model, messages, params, string(b), tokensIn, tokensOut, 3600)
+		}
+
+		if semanticEnabled && resp.StatusCode == 200 {
+			cache.SaveSemanticMatch(p.db.Conn(), model, messages, string(b), 3600)
+		}
+
+		// Auto-Indexing: embed and store completion if header set
+		p.autoIndex(r, model, messages, string(b), tokensIn, tokensOut)
+
+		return
+	}
 
 		if p.wm != nil {
 			p.wm.Fire("request.error", map[string]interface{}{
