@@ -2928,6 +2928,74 @@ func (p *ProxyHandler) proxyPath(w http.ResponseWriter, r *http.Request, upstrea
 func (p *ProxyHandler) HandleImages(w http.ResponseWriter, r *http.Request) {
 	p.proxyPath(w, r, "/v1/images/generations")
 }
+func (p *ProxyHandler) HandleVideos(w http.ResponseWriter, r *http.Request) {
+	p.proxyPath(w, r, "/v1/videos")
+}
+
+func validVideoTaskID(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, char := range id {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// HandleVideoTask proxies video task polling. muse2api returns a task id from
+// POST /v1/videos; the poll endpoint has no model in its body, so bind it to
+// the connection that serves the Muse video model.
+func (p *ProxyHandler) HandleVideoTask(w http.ResponseWriter, r *http.Request) {
+	taskID := r.PathValue("task_id")
+	if !validVideoTaskID(taskID) {
+		http.Error(w, `{"error":"invalid video task id"}`, http.StatusBadRequest)
+		return
+	}
+	conn, err := p.findConnectionForModel("muse-video")
+	if err != nil {
+		http.Error(w, `{"error":"no video connection"}`, http.StatusNotFound)
+		return
+	}
+	upReq, err := http.NewRequestWithContext(r.Context(), http.MethodGet,
+		provider.JoinUpstreamPath(conn.BaseURL, "/v1/videos/"+taskID), nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	upReq.Header.Set("Accept", "application/json")
+	if conn.APIKey != "" {
+		header := conn.AuthHeader
+		if header == "" {
+			header = "Authorization"
+		}
+		prefix := conn.AuthPrefix
+		if prefix == "" {
+			prefix = "Bearer "
+		}
+		upReq.Header.Set(header, prefix+conn.APIKey)
+	}
+	client := p.mediaClient
+	if client == nil {
+		client = p.client
+	}
+	resp, err := client.Do(upReq)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"upstream error: %s"}`, err.Error()), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	for _, header := range []string{"Content-Type", "Cache-Control"} {
+		if value := resp.Header.Get(header); value != "" {
+			w.Header().Set(header, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
+}
 func (p *ProxyHandler) HandleAudioSpeech(w http.ResponseWriter, r *http.Request) {
 	p.proxyPath(w, r, "/v1/audio/speech")
 }

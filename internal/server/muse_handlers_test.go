@@ -397,3 +397,56 @@ func TestHandleMuseMediaRejectsTraversal(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleVideoTaskProxiesToSidecar(t *testing.T) {
+	var gotPath, gotAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"task_abc","status":"completed","result":{"url":"https://x/media/vid.webp"}}`))
+	}))
+	defer upstream.Close()
+
+	p := newTestProxyHandler(t)
+	if _, err := p.db.Conn().Exec(
+		`INSERT INTO connections (id, name, base_url, api_key, format, is_active, priority) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"vid-conn", "Muse video", upstream.URL, "sidecar-key", "openai", 1, 0,
+	); err != nil {
+		t.Fatalf("insert connection: %v", err)
+	}
+	if _, err := p.db.Conn().Exec(
+		`INSERT INTO discovered_models (id, connection_id, model_id, is_active) VALUES (?, ?, ?, ?)`,
+		"vid-model", "vid-conn", "muse-video", 1,
+	); err != nil {
+		t.Fatalf("insert model: %v", err)
+	}
+	p.mediaClient = upstream.Client()
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/videos/task_abc", nil)
+	req.SetPathValue("task_id", "task_abc")
+	rec := httptest.NewRecorder()
+	p.HandleVideoTask(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("video task status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/v1/videos/task_abc" || gotAuth != "Bearer sidecar-key" {
+		t.Fatalf("upstream path/auth = %q/%q", gotPath, gotAuth)
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"completed"`) {
+		t.Fatalf("body not forwarded: %s", rec.Body.String())
+	}
+}
+
+func TestHandleVideoTaskRejectsInvalidID(t *testing.T) {
+	p := newTestProxyHandler(t)
+	for _, id := range []string{"", "../admin", "task/abc", strings.Repeat("a", 129)} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/videos/x", nil)
+		req.SetPathValue("task_id", id)
+		rec := httptest.NewRecorder()
+		p.HandleVideoTask(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("id %q: got %d, want 400", id, rec.Code)
+		}
+	}
+}

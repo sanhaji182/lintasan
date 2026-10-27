@@ -322,6 +322,8 @@ func (s *Server) routes() {
 	// OpenAI-compatible media endpoints (Node.js exposes these through API routes; Go exposes root /v1 too)
 	s.mux.HandleFunc("POST /v1/images/generations", s.proxy.HandleImages)
 	s.mux.HandleFunc("GET /v1/media/{name}", s.handleMuseMedia)
+	s.mux.HandleFunc("POST /v1/videos", s.proxy.HandleVideos)
+	s.mux.HandleFunc("GET /v1/videos/{task_id}", s.proxy.HandleVideoTask)
 	s.mux.HandleFunc("POST /v1/audio/speech", s.proxy.HandleAudioSpeech)
 	s.mux.HandleFunc("POST /v1/audio/transcriptions", s.proxy.HandleAudioTranscriptions)
 
