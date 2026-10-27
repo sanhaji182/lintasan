@@ -2,10 +2,23 @@ package lb
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// CreditRank is a provider-agnostic ordering hint for one account.
+// Class 0 means expiring credit is available; higher classes are less
+// preferred. ExpiresAt/Remaining only matter for class 0.
+type CreditRank struct {
+	Class     int
+	ExpiresAt time.Time
+	Remaining float64
+}
+
+// AccountCreditRanker supplies a ranking hint for an account ID.
+type AccountCreditRanker func(accountID string) CreditRank
 
 // Account represents an API key/account for a provider.
 type Account struct {
@@ -37,10 +50,19 @@ const DefaultAuthCooldown = 5 * time.Minute
 // MultiAccountLB implements round-robin across multiple API key accounts
 // for a single provider, with rate-limit awareness and priority drain.
 type MultiAccountLB struct {
-	mu         sync.RWMutex
-	accounts   []Account
-	rrIndex    uint64
-	providerID string
+	mu           sync.RWMutex
+	accounts     []Account
+	rrIndex      uint64
+	providerID   string
+	creditRanker AccountCreditRanker
+}
+
+// SetCreditRanker installs (or clears) the credit-aware ordering hint.
+// When unset, Pick keeps the legacy priority/round-robin behaviour.
+func (m *MultiAccountLB) SetCreditRanker(ranker AccountCreditRanker) {
+	m.mu.Lock()
+	m.creditRanker = ranker
+	m.mu.Unlock()
 }
 
 // NewMultiAccountLB creates a new multi-account round-robin load balancer.
@@ -76,6 +98,12 @@ func (m *MultiAccountLB) Pick() (*Account, error) {
 		return nil, fmt.Errorf("multi-account: all accounts for provider %s are rate-limited", m.providerID)
 	}
 
+	if m.creditRanker != nil {
+		if chosen, ok := m.pickCreditAwareLocked(available); ok {
+			return chosen, nil
+		}
+	}
+
 	// Round-robin among available accounts (sorted by priority)
 	rrIdx := atomic.AddUint64(&m.rrIndex, 1) - 1
 	chosen := available[rrIdx%uint64(len(available))]
@@ -84,6 +112,61 @@ func (m *MultiAccountLB) Pick() (*Account, error) {
 		return &m.accounts[idx], nil
 	}
 	return &chosen, nil
+}
+
+// pickCreditAwareLocked drains the account with the soonest expiring credit.
+// If no account has expiring credit data, it round-robins within the best
+// available class (so unknown data keeps the legacy rotation, and zero-credit
+// or unhealthy accounts are only used when nothing better remains).
+// Must be called with mu held.
+func (m *MultiAccountLB) pickCreditAwareLocked(available []Account) (*Account, bool) {
+	type ranked struct {
+		account Account
+		rank    CreditRank
+	}
+	items := make([]ranked, len(available))
+	minClass := 0
+	for i, account := range available {
+		rank := m.creditRanker(account.ID)
+		items[i] = ranked{account: account, rank: rank}
+		if i == 0 || rank.Class < minClass {
+			minClass = rank.Class
+		}
+	}
+	filtered := items[:0]
+	for _, item := range items {
+		if item.rank.Class == minClass {
+			filtered = append(filtered, item)
+		}
+	}
+	if minClass == 0 {
+		sort.SliceStable(filtered, func(i, j int) bool {
+			a, b := filtered[i].rank, filtered[j].rank
+			if !a.ExpiresAt.Equal(b.ExpiresAt) {
+				return a.ExpiresAt.Before(b.ExpiresAt)
+			}
+			if a.Remaining != b.Remaining {
+				return a.Remaining < b.Remaining
+			}
+			return filtered[i].account.Priority < filtered[j].account.Priority
+		})
+		if chosen := m.accountPtrLocked(filtered[0].account.ID); chosen != nil {
+			return chosen, true
+		}
+		return nil, false
+	}
+	rrIdx := atomic.AddUint64(&m.rrIndex, 1) - 1
+	if chosen := m.accountPtrLocked(filtered[rrIdx%uint64(len(filtered))].account.ID); chosen != nil {
+		return chosen, true
+	}
+	return nil, false
+}
+
+func (m *MultiAccountLB) accountPtrLocked(id string) *Account {
+	if idx := m.accountIndexLocked(id); idx >= 0 {
+		return &m.accounts[idx]
+	}
+	return nil
 }
 
 // RecordSuccess marks an account as having succeeded.

@@ -105,6 +105,7 @@ func (p *ProxyHandler) initMultiAccountPools() {
 	for poolID, accounts := range pools {
 		p.multiAccountLBs[poolID] = lb.NewMultiAccountLB(poolID, accounts)
 	}
+	p.applyCreditRankersLocked()
 }
 
 // RefreshMultiAccountPools re-reads multi-account pools from the database.

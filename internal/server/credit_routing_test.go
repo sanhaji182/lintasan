@@ -6,6 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/sanhaji182/lintasan-go/internal/lb"
+	"github.com/sanhaji182/lintasan-go/internal/quota"
 )
 
 func creditTestConn(id string, priority int) *Connection {
@@ -134,5 +137,116 @@ func TestCreditAwareSettingPersistsAndReloads(t *testing.T) {
 	data := asMap(decodeBody(t, getRec)["data"])
 	if data["credit_aware_routing_enabled"] != true {
 		t.Fatalf("GET credit_aware_routing_enabled = %v, want true", data["credit_aware_routing_enabled"])
+	}
+}
+
+func TestIsCreditExhaustion(t *testing.T) {
+	cases := []struct {
+		status int
+		body   string
+		want   bool
+	}{
+		{http.StatusPaymentRequired, "", true},
+		{http.StatusBadRequest, `{"error":"insufficient credits"}`, true},
+		{http.StatusForbidden, "insufficient balance", true},
+		{http.StatusTooManyRequests, "rate limit exceeded", false},
+		{http.StatusBadRequest, "invalid model", false},
+		{http.StatusUnauthorized, "unauthorized", false},
+	}
+	for _, tc := range cases {
+		if got := isCreditExhaustion(tc.status, []byte(tc.body)); got != tc.want {
+			t.Errorf("isCreditExhaustion(%d, %q) = %v, want %v", tc.status, tc.body, got, tc.want)
+		}
+	}
+}
+
+func TestMarkCreditExhaustedOverridesPositiveSnapshot(t *testing.T) {
+	p := newTestProxyHandler(t)
+	now := time.Now()
+	p.creditSnapshots = map[string]creditSnapshot{
+		"c1": {Known: true, Remaining: 10, ExpiresAt: now.Add(time.Hour), HasExpiry: true, FetchedAt: now},
+	}
+	p.markCreditExhausted("c1")
+	class, remaining, _ := p.creditClass("c1", time.Now())
+	if class != 3 || remaining != 0 {
+		t.Fatalf("exhausted class = %d remaining = %v, want class 3 and remaining 0", class, remaining)
+	}
+}
+
+func TestCreditClassPenalizesOpenCircuit(t *testing.T) {
+	p := newTestProxyHandler(t)
+	now := time.Now()
+	p.creditSnapshots = map[string]creditSnapshot{
+		"c1": {Known: true, Remaining: 10, ExpiresAt: now.Add(time.Hour), HasExpiry: true, FetchedAt: now},
+	}
+	if class, _, _ := p.creditClass("c1", now); class != 0 {
+		t.Fatalf("initial class = %d, want 0", class)
+	}
+	breaker := p.getBreaker("c1")
+	for i := 0; i < 3; i++ {
+		breaker.Failure()
+	}
+	if class, _, _ := p.creditClass("c1", now); class != 4 {
+		t.Fatalf("open-circuit class = %d, want 4", class)
+	}
+	breaker.Reset()
+	if class, _, _ := p.creditClass("c1", now); class != 0 {
+		t.Fatalf("recovered class = %d, want 0", class)
+	}
+}
+
+func TestCreditClassPenalizesExhaustedQuota(t *testing.T) {
+	p := newTestProxyHandler(t)
+	now := time.Now()
+	p.creditSnapshots = map[string]creditSnapshot{
+		"c2": {Known: true, Remaining: 10, ExpiresAt: now.Add(time.Hour), HasExpiry: true, FetchedAt: now},
+	}
+	p.quota.ReplaceLimits(map[string]*quota.QuotaLimit{
+		"c2": {MaxTokensPerDay: 100},
+	})
+	quota.InitQuotaSchema(p.db.Conn())
+	quota.RecordQuota(p.db.Conn(), "c2", 101)
+	if class, _, _ := p.creditClass("c2", now); class != 4 {
+		t.Fatalf("exhausted-quota class = %d, want 4", class)
+	}
+}
+
+func TestApplyCreditRankersToPools(t *testing.T) {
+	p := newTestProxyHandler(t)
+	now := time.Now()
+	p.creditSnapshots = map[string]creditSnapshot{
+		"a1": {Known: true, Remaining: 5, ExpiresAt: now.Add(20 * 24 * time.Hour), HasExpiry: true, FetchedAt: now},
+		"a2": {Known: true, Remaining: 1, ExpiresAt: now.Add(2 * 24 * time.Hour), HasExpiry: true, FetchedAt: now},
+	}
+	p.multiAccountLBs = map[string]*lb.MultiAccountLB{
+		"pool": lb.NewMultiAccountLB("pool", []lb.Account{
+			{ID: "a1", APIKey: "key-1", Priority: 1, Active: true},
+			{ID: "a2", APIKey: "key-2", Priority: 2, Active: true},
+		}),
+	}
+	atomic.StoreInt32(&p.creditAware, 1)
+	p.applyCreditRankers()
+	for i := 0; i < 3; i++ {
+		account, err := p.multiAccountLBs["pool"].Pick()
+		if err != nil {
+			t.Fatalf("pool Pick %d: %v", i, err)
+		}
+		if account.ID != "a2" {
+			t.Fatalf("pool pick %d = %s, want soonest-expiring a2", i, account.ID)
+		}
+	}
+
+	atomic.StoreInt32(&p.creditAware, 0)
+	p.applyCreditRankers()
+	seen := map[string]int{}
+	for i := 0; i < 4; i++ {
+		account, err := p.multiAccountLBs["pool"].Pick()
+		if err != nil {
+			t.Fatalf("disabled pool Pick %d: %v", i, err)
+		}
+		seen[account.ID]++
+	}
+	if seen["a1"] != 2 || seen["a2"] != 2 {
+		t.Fatalf("disabled pool rotation = %v, want 2 picks each", seen)
 	}
 }

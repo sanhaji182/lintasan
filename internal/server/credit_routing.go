@@ -2,11 +2,15 @@ package server
 
 import (
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/sanhaji182/lintasan-go/internal/circuit"
+	"github.com/sanhaji182/lintasan-go/internal/lb"
 )
 
 const (
@@ -134,6 +138,103 @@ func (p *ProxyHandler) reloadCreditAwareSetting() {
 	} else {
 		atomic.StoreInt32(&p.creditAware, 0)
 	}
+	p.applyCreditRankers()
+}
+
+// applyCreditRankers installs or clears the pool-level ranker. Safe to call
+// with no pools; NewProxyHandler calls it before initMultiAccountPools.
+func (p *ProxyHandler) applyCreditRankers() {
+	p.mabMu.RLock()
+	defer p.mabMu.RUnlock()
+	p.applyCreditRankersLocked()
+}
+
+// applyCreditRankersLocked must be called with mabMu held.
+func (p *ProxyHandler) applyCreditRankersLocked() {
+	enabled := atomic.LoadInt32(&p.creditAware) == 1
+	for _, mab := range p.multiAccountLBs {
+		if enabled {
+			mab.SetCreditRanker(p.creditRankForAccount)
+		} else {
+			mab.SetCreditRanker(nil)
+		}
+	}
+}
+
+func (p *ProxyHandler) creditRankForAccount(accountID string) lb.CreditRank {
+	class, remaining, expiresAt := p.creditClass(accountID, time.Now())
+	return lb.CreditRank{Class: class, ExpiresAt: expiresAt, Remaining: remaining}
+}
+
+// noteCreditExhaustion marks an account as depleted immediately and schedules
+// a debounced refresh, so a stale 5-minute snapshot cannot keep selecting it.
+func (p *ProxyHandler) noteCreditExhaustion(connectionID string) {
+	p.markCreditExhausted(connectionID)
+	p.requestCreditRefresh()
+}
+
+func (p *ProxyHandler) markCreditExhausted(connectionID string) {
+	if connectionID == "" {
+		return
+	}
+	p.creditMu.Lock()
+	if p.creditSnapshots == nil {
+		p.creditSnapshots = make(map[string]creditSnapshot)
+	}
+	snapshot, ok := p.creditSnapshots[connectionID]
+	if !ok {
+		snapshot = creditSnapshot{Known: true}
+	}
+	snapshot.Known = true
+	snapshot.Remaining = 0
+	snapshot.FetchedAt = time.Now()
+	p.creditSnapshots[connectionID] = snapshot
+	p.creditMu.Unlock()
+}
+
+func (p *ProxyHandler) requestCreditRefresh() {
+	if !atomic.CompareAndSwapInt32(&p.creditRefreshRequested, 0, 1) {
+		return
+	}
+	go func() {
+		time.Sleep(2 * time.Second)
+		p.refreshCreditSnapshots()
+		atomic.StoreInt32(&p.creditRefreshRequested, 0)
+	}()
+}
+
+func creditAccountID(conn *Connection, poolAccountID string) string {
+	if poolAccountID != "" {
+		return poolAccountID
+	}
+	if conn != nil {
+		return conn.ID
+	}
+	return ""
+}
+
+// isCreditExhaustion recognises a depleted-credit upstream response. 402 is
+// unambiguous; other statuses need a credit-specific phrase so a generic
+// rate-limit or auth error is never mistaken for an empty balance.
+func isCreditExhaustion(statusCode int, body []byte) bool {
+	if statusCode == http.StatusPaymentRequired {
+		return true
+	}
+	text := strings.ToLower(string(body))
+	for _, phrase := range []string{
+		"insufficient credit",
+		"insufficient balance",
+		"out of credits",
+		"no credits remaining",
+		"exceeded your credit",
+		"credit balance",
+		"payment required",
+	} {
+		if strings.Contains(text, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func creditGroupKey(connection *Connection) string {
@@ -216,6 +317,15 @@ func (p *ProxyHandler) sortCreditGroup(group []*Connection, now time.Time) {
 }
 
 func (p *ProxyHandler) creditClass(connectionID string, now time.Time) (class int, remaining float64, expiresAt time.Time) {
+	// An open circuit or an exhausted token quota is worse than an empty
+	// credit balance: the request is guaranteed to fail or be skipped.
+	if breaker := p.getBreaker(connectionID); breaker.State() == circuit.StateOpen {
+		return 4, 0, time.Time{}
+	}
+	if p.quotaRemainingFraction(connectionID) <= 0 {
+		return 4, 0, time.Time{}
+	}
+
 	snapshot, ok := p.creditSnapshotFor(connectionID)
 	if !ok || !snapshot.Known || now.Sub(snapshot.FetchedAt) > creditSnapshotMaxAge {
 		return 2, 0, time.Time{}

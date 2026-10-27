@@ -73,10 +73,11 @@ type ProxyHandler struct {
 
 	// Credit-aware routing: a background snapshot of provider-reported credit
 	// and expiry, read on the request path without upstream calls.
-	creditMu        sync.RWMutex
-	creditSnapshots map[string]creditSnapshot
-	creditRefreshMu sync.Mutex
-	creditAware     int32 // atomic: 0 = off, 1 = enabled via smart-routing setting
+	creditMu               sync.RWMutex
+	creditSnapshots        map[string]creditSnapshot
+	creditRefreshMu        sync.Mutex
+	creditAware            int32 // atomic: 0 = off, 1 = enabled via smart-routing setting
+	creditRefreshRequested int32 // atomic debounce for on-demand refreshes
 
 	// --- Provider SDK (F1) ----------------------------------------------------
 	// providerReg holds Official-track providers; defaultProvider is the generic
@@ -998,10 +999,18 @@ if retryErr != nil {
 		defer resp.Body.Close()
 		lastStatusCode = resp.StatusCode
 
+		// 402 is unambiguous even when the body is never read (last candidate).
+		if resp.StatusCode == http.StatusPaymentRequired {
+			p.noteCreditExhaustion(creditAccountID(conn, poolAccountID))
+		}
+
 		// On 4xx/5xx errors (e.g. 400 insufficient credits, 402, 404, 5xx) with more candidates: fallback
 		if resp.StatusCode >= 400 && resp.StatusCode != 429 && resp.StatusCode != 401 && resp.StatusCode != 403 && i < len(candidates)-1 {
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
+			if isCreditExhaustion(resp.StatusCode, b) {
+				p.noteCreditExhaustion(creditAccountID(conn, poolAccountID))
+			}
 			breaker.Failure()
 			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
 			p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
@@ -1017,6 +1026,9 @@ if retryErr != nil {
 		if resp.StatusCode == 429 {
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
+			if isCreditExhaustion(resp.StatusCode, b) {
+				p.noteCreditExhaustion(creditAccountID(conn, poolAccountID))
+			}
 			lastStatusCode = resp.StatusCode
 			// Generic provider backoff: honour a standard Retry-After header
 			// (any provider) or a nested queue-state body (Qoder) so the
@@ -1053,6 +1065,9 @@ if retryErr != nil {
 		if resp.StatusCode == 401 || resp.StatusCode == 403 {
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
+			if isCreditExhaustion(resp.StatusCode, b) {
+				p.noteCreditExhaustion(creditAccountID(conn, poolAccountID))
+			}
 			lastStatusCode = resp.StatusCode
 			resp.Body.Close()
 
