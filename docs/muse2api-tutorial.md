@@ -355,8 +355,21 @@ Keepalive: `MUSE2API_KEEPALIVE_ENABLED=true` direkomendasikan. Renew manual
 (panel **Renew** atau `POST /admin/accounts/{id}/renew`) terbukti memperpanjang
 `hatch_vml` sekitar 48 jam; loop keepalive default berjalan setiap 6 jam.
 
-Video: muse2api punya `/v1/videos`, tetapi Lintasan belum punya route padanan,
-jadi video belum bisa dipakai lewat Lintasan.
+Video: Lintasan mem-proxy `POST /v1/videos` dan `GET /v1/videos/{task_id}`.
+
+```bash
+# 1) Buat task (first frame opsional, berupa URL publik atau data URL)
+curl -s -X POST https://lintasan.sans.biz.id/v1/videos \
+  -H "Authorization: Bearer $LINTASAN_MASTER_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"muse-video","prompt":"Slow cinematic push-in","image":"https://lintasan.sans.biz.id/v1/media/img_example.webp","duration":4,"size":"16:9"}'
+
+# 2) Poll task
+curl -s https://lintasan.sans.biz.id/v1/videos/task_xxx \
+  -H "Authorization: Bearer $LINTASAN_MASTER_KEY"
+```
+
+Hasil akhir berisi `result.url` ke `/v1/media/…mp4` (publik, sama seperti gambar).
 
 Verifikasi pendukung:
 
