@@ -1008,18 +1008,25 @@ if retryErr != nil {
 		if resp.StatusCode >= 400 && resp.StatusCode != 429 && resp.StatusCode != 401 && resp.StatusCode != 403 && i < len(candidates)-1 {
 			b, _ := io.ReadAll(resp.Body)
 			lastErr = string(b)
-			if isCreditExhaustion(resp.StatusCode, b) {
+			creditEmpty := isCreditExhaustion(resp.StatusCode, b)
+			if creditEmpty {
 				p.noteCreditExhaustion(creditAccountID(conn, poolAccountID))
 			}
-			breaker.Failure()
-			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
-			p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
-			if p.fb != nil {
-				if should, reason := fallback.ShouldTriggerFallback(resp.StatusCode, false, false); should {
-					p.fb.RecordEvent(candidateModel, "", reason, resp.StatusCode)
+			if !creditEmpty && isRequestSpecific4xx(resp.StatusCode) && p.creditAwareEnabled() && sameCreditGroup(candidates) {
+				// A malformed request or unknown model fails the same way on
+				// every sibling account. Forward it instead of replaying it.
+				resp.Body = io.NopCloser(bytes.NewReader(b))
+			} else {
+				breaker.Failure()
+				p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
+				p.logRequest(candidateModel, conn.ID, conn.Name, conn.oauthSessionID, resp.StatusCode, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+				if p.fb != nil {
+					if should, reason := fallback.ShouldTriggerFallback(resp.StatusCode, false, false); should {
+						p.fb.RecordEvent(candidateModel, "", reason, resp.StatusCode)
+					}
 				}
+				continue
 			}
-			continue
 		}
 
 		// On 429: circuit breaker + fallback
@@ -2076,6 +2083,15 @@ func (p *ProxyHandler) resolveRoute(model string) ([]*Connection, string, string
 	}
 	candidates := []*Connection{conn}
 
+	// A plain model route normally yields exactly one connection. Credit-aware
+	// routing needs every account in the same provider group as candidates, or
+	// it can only ever see the LIMIT 1 winner and never reorder the rest.
+	if p.creditAwareEnabled() {
+		if all := p.connectionsForModel(model); len(all) > 1 && sameCreditGroup(all) {
+			candidates = all
+		}
+	}
+
 	// Model-level fallback (Gap #6): append connections that serve the
 	// configured fallback models for this model. When every connection for the
 	// primary model fails, the request loop continues onto these instead of
@@ -2494,6 +2510,24 @@ func isSyntheticOrMotivationalResponse(body []byte) bool {
 		}
 	}
 	return false
+}
+
+// connectionsForModel returns every active connection serving the model,
+// best-first by priority. Used only when credit-aware routing needs the whole
+// provider group; the legacy path intentionally stays LIMIT 1.
+func (p *ProxyHandler) connectionsForModel(model string) []*Connection {
+	rows, err := p.db.Conn().Query(`
+		SELECT c.id, c.name, c.base_url, c.api_key, COALESCE(c.oauth_provider,''), c.format, c.chat_path, c.auth_header, c.auth_prefix, c.is_active, c.priority, COALESCE(c.pool_id,'')
+		FROM discovered_models m
+		JOIN connections c ON m.connection_id = c.id
+		WHERE m.model_id = ? AND m.is_active = 1 AND c.is_active = 1
+		ORDER BY c.priority DESC
+	`, model)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	return p.scanConnections(rows)
 }
 
 func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error) {

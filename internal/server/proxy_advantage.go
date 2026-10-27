@@ -468,6 +468,11 @@ func (p *ProxyHandler) shouldHedge(stream, directMode bool, candidates []*Connec
 	if stream || directMode || len(candidates) < 2 {
 		return false
 	}
+	// Credit-aware groups must be attempted in expiry order. Hedging races two
+	// accounts and can surface a depleted account's 4xx without failover.
+	if p.creditAwareEnabled() && p.creditAwareGroupHasData(candidates) {
+		return false
+	}
 	return p.getSetting("hedged_requests_enabled", "true") == "true"
 }
 

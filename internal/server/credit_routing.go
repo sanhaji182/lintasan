@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ const (
 	creditRefreshInterval    = 5 * time.Minute
 	creditSnapshotMaxAge     = 15 * time.Minute
 	creditRefreshConcurrency = 4
+	creditDepletionCooldown  = 30 * time.Minute
 )
 
 // creditSnapshot is the routing-time view of a provider-reported balance.
@@ -28,6 +30,13 @@ type creditSnapshot struct {
 	ExpiresAt time.Time
 	HasExpiry bool
 	FetchedAt time.Time
+
+	// DepletedAt marks an upstream "insufficient credit" rejection. The mark
+	// survives refreshes while the reported balance has not increased, because
+	// the balance API can still show a small positive amount that cannot cover
+	// a request. A top-up (or the cooldown) clears it.
+	DepletedAt        time.Time
+	DepletedRemaining float64
 }
 
 // creditCapableHost reports whether the balance fetcher for this host returns
@@ -99,6 +108,9 @@ func (p *ProxyHandler) refreshCreditSnapshots() {
 			defer func() { <-sem }()
 
 			info := fetchProviderBalance(t.baseURL, t.apiKey, t.format)
+			if os.Getenv("LINTASAN_DEBUG_CREDIT") == "1" {
+				fmt.Printf("credit fetch %s: error=%q known=%v remaining=%.6f expires=%s\n", t.id, info.Error, info.CreditKnown, info.RemainingNum, info.ExpiresAt)
+			}
 			if info.Error != "" || !info.CreditKnown {
 				return
 			}
@@ -117,11 +129,29 @@ func (p *ProxyHandler) refreshCreditSnapshots() {
 			if p.creditSnapshots == nil {
 				p.creditSnapshots = make(map[string]creditSnapshot)
 			}
+			if previous, ok := p.creditSnapshots[t.id]; ok {
+				snap = mergeCreditSnapshot(previous, snap, snap.FetchedAt)
+			}
 			p.creditSnapshots[t.id] = snap
 			p.creditMu.Unlock()
 		}(t)
 	}
 	wg.Wait()
+}
+
+// mergeCreditSnapshot keeps an upstream credit rejection sticky until the
+// provider reports a higher balance (top-up) or the cooldown expires.
+func mergeCreditSnapshot(previous, incoming creditSnapshot, now time.Time) creditSnapshot {
+	if previous.DepletedAt.IsZero() || now.Sub(previous.DepletedAt) >= creditDepletionCooldown {
+		return incoming
+	}
+	if incoming.Remaining > previous.DepletedRemaining+0.01 {
+		return incoming
+	}
+	incoming.Remaining = 0
+	incoming.DepletedAt = previous.DepletedAt
+	incoming.DepletedRemaining = previous.DepletedRemaining
+	return incoming
 }
 
 func (p *ProxyHandler) creditSnapshotFor(connectionID string) (creditSnapshot, bool) {
@@ -185,9 +215,14 @@ func (p *ProxyHandler) markCreditExhausted(connectionID string) {
 	if !ok {
 		snapshot = creditSnapshot{Known: true}
 	}
+	now := time.Now()
+	if snapshot.DepletedAt.IsZero() {
+		snapshot.DepletedRemaining = snapshot.Remaining
+		snapshot.DepletedAt = now
+	}
 	snapshot.Known = true
 	snapshot.Remaining = 0
-	snapshot.FetchedAt = time.Now()
+	snapshot.FetchedAt = now
 	p.creditSnapshots[connectionID] = snapshot
 	p.creditMu.Unlock()
 }
@@ -216,6 +251,23 @@ func creditAccountID(conn *Connection, poolAccountID string) string {
 // isCreditExhaustion recognises a depleted-credit upstream response. 402 is
 // unambiguous; other statuses need a credit-specific phrase so a generic
 // rate-limit or auth error is never mistaken for an empty balance.
+func isRequestSpecific4xx(statusCode int) bool {
+	switch statusCode {
+	case http.StatusBadRequest,
+		http.StatusNotFound,
+		http.StatusMethodNotAllowed,
+		http.StatusNotAcceptable,
+		http.StatusConflict,
+		http.StatusGone,
+		http.StatusRequestEntityTooLarge,
+		http.StatusRequestURITooLong,
+		http.StatusUnsupportedMediaType,
+		http.StatusUnprocessableEntity:
+		return true
+	}
+	return false
+}
+
 func isCreditExhaustion(statusCode int, body []byte) bool {
 	if statusCode == http.StatusPaymentRequired {
 		return true
@@ -245,6 +297,40 @@ func creditGroupKey(connection *Connection) string {
 	return strings.ToLower(connection.Format) + "|" + host
 }
 
+func sameCreditGroup(connections []*Connection) bool {
+	if len(connections) < 2 {
+		return true
+	}
+	key := creditGroupKey(connections[0])
+	for _, connection := range connections[1:] {
+		if creditGroupKey(connection) != key {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *ProxyHandler) creditAwareEnabled() bool {
+	return atomic.LoadInt32(&p.creditAware) == 1
+}
+
+// creditAwareGroupHasData reports whether this candidate group is ordered by
+// live credit data. Hedging is unsafe for such a group: it can race two
+// accounts and surface a depleted account's 4xx instead of failing over.
+func (p *ProxyHandler) creditAwareGroupHasData(candidates []*Connection) bool {
+	if len(candidates) < 2 || !sameCreditGroup(candidates) {
+		return false
+	}
+	now := time.Now()
+	for _, connection := range candidates {
+		snapshot, ok := p.creditSnapshotFor(connection.ID)
+		if ok && snapshot.Known && now.Sub(snapshot.FetchedAt) <= creditSnapshotMaxAge {
+			return true
+		}
+	}
+	return false
+}
+
 // reorderCandidatesByCredit sorts each contiguous provider group by expiring
 // credit:
 //
@@ -261,6 +347,11 @@ func (p *ProxyHandler) reorderCandidatesByCredit(candidates []*Connection) []*Co
 	}
 	now := time.Now()
 	out := append([]*Connection(nil), candidates...)
+	debug := os.Getenv("LINTASAN_DEBUG_CREDIT") == "1"
+	var before []string
+	if debug {
+		before = creditDebugIDs(out)
+	}
 	for start := 0; start < len(out); {
 		end := start + 1
 		key := creditGroupKey(out[start])
@@ -272,7 +363,18 @@ func (p *ProxyHandler) reorderCandidatesByCredit(candidates []*Connection) []*Co
 		}
 		start = end
 	}
+	if debug {
+		fmt.Printf("credit order: %v -> %v\n", before, creditDebugIDs(out))
+	}
 	return out
+}
+
+func creditDebugIDs(connections []*Connection) []string {
+	ids := make([]string, len(connections))
+	for i, connection := range connections {
+		ids[i] = connection.ID
+	}
+	return ids
 }
 
 func (p *ProxyHandler) sortCreditGroup(group []*Connection, now time.Time) {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -248,5 +249,126 @@ func TestApplyCreditRankersToPools(t *testing.T) {
 	}
 	if seen["a1"] != 2 || seen["a2"] != 2 {
 		t.Fatalf("disabled pool rotation = %v, want 2 picks each", seen)
+	}
+}
+
+func TestResolveRouteExpandsSameProviderAccountsWhenCreditAware(t *testing.T) {
+	p := newTestProxyHandler(t)
+	for i := 1; i <= 5; i++ {
+		id := fmt.Sprintf("cc-%d", i)
+		if _, err := p.db.Conn().Exec(
+			`INSERT INTO connections (id, name, base_url, api_key, format, is_active, priority) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			id, id, "https://api.commandcode.ai", "sk-test-"+id, "commandcode", 1, i,
+		); err != nil {
+			t.Fatalf("insert connection %s: %v", id, err)
+		}
+		if _, err := p.db.Conn().Exec(
+			`INSERT INTO discovered_models (id, connection_id, model_id, is_active) VALUES (?, ?, ?, ?)`,
+			"model-"+id, id, "shared-model", 1,
+		); err != nil {
+			t.Fatalf("insert model for %s: %v", id, err)
+		}
+	}
+	now := time.Now()
+	p.creditSnapshots = map[string]creditSnapshot{
+		"cc-1": {Known: true, Remaining: 10, ExpiresAt: now.Add(30 * 24 * time.Hour), HasExpiry: true, FetchedAt: now},
+		"cc-2": {Known: true, Remaining: 1, ExpiresAt: now.Add(2 * 24 * time.Hour), HasExpiry: true, FetchedAt: now},
+		"cc-3": {Known: true, Remaining: 3, ExpiresAt: now.Add(15 * 24 * time.Hour), HasExpiry: true, FetchedAt: now},
+		"cc-4": {Known: true, Remaining: 0, ExpiresAt: now.Add(24 * time.Hour), HasExpiry: true, FetchedAt: now},
+		// cc-5 has no snapshot and keeps its place ahead of exhausted credit.
+	}
+	atomic.StoreInt32(&p.creditAware, 1)
+	candidates, resolved, combo, err := p.resolveRoute("shared-model")
+	if err != nil {
+		t.Fatalf("resolveRoute: %v", err)
+	}
+	if resolved != "shared-model" || combo != "" {
+		t.Fatalf("resolved=%q combo=%q", resolved, combo)
+	}
+	if len(candidates) != 5 {
+		t.Fatalf("credit-aware candidates = %d, want all 5 provider accounts", len(candidates))
+	}
+	got := connectionIDs(p.reorderCandidatesByCredit(candidates))
+	want := []string{"cc-2", "cc-3", "cc-1", "cc-5", "cc-4"}
+	if !equalIDs(got, want) {
+		t.Fatalf("credit-aware route order = %v, want %v", got, want)
+	}
+
+	atomic.StoreInt32(&p.creditAware, 0)
+	legacy, _, _, err := p.resolveRoute("shared-model")
+	if err != nil {
+		t.Fatalf("legacy resolveRoute: %v", err)
+	}
+	if len(legacy) != 1 {
+		t.Fatalf("legacy candidates = %d, want 1 (LIMIT 1 behavior)", len(legacy))
+	}
+}
+
+func TestShouldHedgeDisabledForCreditAwareGroup(t *testing.T) {
+	p := newTestProxyHandler(t)
+	now := time.Now()
+	p.creditSnapshots = map[string]creditSnapshot{
+		"h1": {Known: true, Remaining: 10, ExpiresAt: now.Add(time.Hour), HasExpiry: true, FetchedAt: now},
+		"h2": {Known: true, Remaining: 5, ExpiresAt: now.Add(2 * time.Hour), HasExpiry: true, FetchedAt: now},
+	}
+	candidates := []*Connection{creditTestConn("h1", 1), creditTestConn("h2", 2)}
+
+	atomic.StoreInt32(&p.creditAware, 1)
+	if p.shouldHedge(false, false, candidates) {
+		t.Fatal("hedging must be disabled for a live credit-aware group")
+	}
+
+	atomic.StoreInt32(&p.creditAware, 0)
+	if !p.shouldHedge(false, false, candidates) {
+		t.Fatal("hedging should use its default when credit-aware routing is off")
+	}
+
+	atomic.StoreInt32(&p.creditAware, 1)
+	p.creditSnapshots["h1"] = creditSnapshot{Known: true, Remaining: 10, ExpiresAt: now.Add(time.Hour), HasExpiry: true, FetchedAt: now.Add(-creditSnapshotMaxAge - time.Minute)}
+	p.creditSnapshots["h2"] = creditSnapshot{Known: true, Remaining: 5, ExpiresAt: now.Add(2 * time.Hour), HasExpiry: true, FetchedAt: now.Add(-creditSnapshotMaxAge - time.Minute)}
+	if !p.shouldHedge(false, false, candidates) {
+		t.Fatal("stale credit snapshots must not disable hedging")
+	}
+}
+
+func TestMergeCreditSnapshotKeepsDepletionUntilTopUp(t *testing.T) {
+	now := time.Now()
+	depleted := creditSnapshot{
+		Known: true, Remaining: 0, DepletedAt: now.Add(-5 * time.Minute),
+		DepletedRemaining: 0.09, FetchedAt: now.Add(-5 * time.Minute),
+	}
+	unchanged := creditSnapshot{Known: true, Remaining: 0.09, FetchedAt: now}
+	if got := mergeCreditSnapshot(depleted, unchanged, now); got.Remaining != 0 || got.DepletedAt.IsZero() {
+		t.Fatalf("small unchanged balance should stay depleted, got %+v", got)
+	}
+
+	toppedUp := creditSnapshot{Known: true, Remaining: 5, FetchedAt: now}
+	if got := mergeCreditSnapshot(depleted, toppedUp, now); got.Remaining != 5 || !got.DepletedAt.IsZero() {
+		t.Fatalf("top-up should clear depletion, got %+v", got)
+	}
+
+	expiredCooldown := depleted
+	expiredCooldown.DepletedAt = now.Add(-creditDepletionCooldown - time.Minute)
+	if got := mergeCreditSnapshot(expiredCooldown, unchanged, now); got.Remaining != 0.09 {
+		t.Fatalf("cooldown should allow one retry, got %+v", got)
+	}
+}
+
+func TestMarkCreditExhaustedKeepsOriginalDepletedBalance(t *testing.T) {
+	p := newTestProxyHandler(t)
+	now := time.Now()
+	p.creditSnapshots = map[string]creditSnapshot{
+		"c1": {Known: true, Remaining: 0.09, ExpiresAt: now.Add(time.Hour), HasExpiry: true, FetchedAt: now},
+	}
+	p.markCreditExhausted("c1")
+	first := p.creditSnapshots["c1"]
+	if first.DepletedRemaining != 0.09 {
+		t.Fatalf("depleted balance = %v, want 0.09", first.DepletedRemaining)
+	}
+	p.creditSnapshots["c1"] = mergeCreditSnapshot(first, creditSnapshot{Known: true, Remaining: 0.09, ExpiresAt: now.Add(time.Hour), HasExpiry: true, FetchedAt: now}, now)
+	p.markCreditExhausted("c1")
+	second := p.creditSnapshots["c1"]
+	if second.DepletedRemaining != 0.09 || second.Remaining != 0 {
+		t.Fatalf("repeat depletion must preserve the original balance, got %+v", second)
 	}
 }
