@@ -213,6 +213,12 @@ func (s *Server) Start() error {
 		}()
 	}
 
+	// Refresh provider-reported credit/expiry for credit-aware routing.
+	// In-memory only; a failed poll keeps the previous snapshot.
+	if s.proxy != nil {
+		go s.proxy.startCreditRefreshLoop()
+	}
+
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%d", s.cfg.Port),
 		Handler:      s.corsMiddleware(s.metricsMiddleware(s.authMiddleware(s.mux))),

@@ -694,13 +694,14 @@ func (s *Server) handleSmartRouting(w http.ResponseWriter, r *http.Request) {
 		json.Unmarshal([]byte(raw), &quotaLimits)
 	}
 	writeData(w, map[string]any{
-		"ml_router_enabled":         get("ml_router_enabled", "false") == "true",
-		"ml_router_cheap_model":     get("ml_router_cheap_model", "gpt-4o-mini"),
-		"ml_router_expensive_model": get("ml_router_expensive_model", "gpt-4o"),
-		"ml_router_threshold":       get("ml_router_threshold", "0.5"),
-		"cost_quality_floor":        get("cost_quality_floor", "0.3"),
-		"cost_expensive_anchor":     get("cost_expensive_anchor", "0.02"),
-		"quota_limits":              quotaLimits,
+		"ml_router_enabled":            get("ml_router_enabled", "false") == "true",
+		"ml_router_cheap_model":        get("ml_router_cheap_model", "gpt-4o-mini"),
+		"ml_router_expensive_model":    get("ml_router_expensive_model", "gpt-4o"),
+		"ml_router_threshold":          get("ml_router_threshold", "0.5"),
+		"cost_quality_floor":           get("cost_quality_floor", "0.3"),
+		"cost_expensive_anchor":        get("cost_expensive_anchor", "0.02"),
+		"quota_limits":                 quotaLimits,
+		"credit_aware_routing_enabled": get("credit_aware_routing_enabled", "false") == "true",
 	})
 }
 
@@ -739,6 +740,7 @@ func (s *Server) handleSmartRoutingAction(w http.ResponseWriter, r *http.Request
 	setStr("ml_router_threshold")
 	setStr("cost_quality_floor")
 	setStr("cost_expensive_anchor")
+	setStr("credit_aware_routing_enabled")
 	// quota_limits is a JSON object stored verbatim.
 	if v, ok := in["quota_limits"]; ok {
 		if b, err := json.Marshal(v); err == nil {

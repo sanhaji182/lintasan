@@ -20,6 +20,9 @@ func TestParseOpenRouterBalanceFreeTierLimit(t *testing.T) {
 	if info.Balance != "" {
 		t.Errorf("balance should be empty (rate badge path), got %q", info.Balance)
 	}
+	if !info.CreditKnown || info.RemainingNum != 2 {
+		t.Errorf("credit metadata = known:%v remaining:%v, want known:true remaining:2", info.CreditKnown, info.RemainingNum)
+	}
 }
 
 func TestParseOpenRouterBalanceUnlimited(t *testing.T) {
@@ -30,6 +33,9 @@ func TestParseOpenRouterBalanceUnlimited(t *testing.T) {
 	}
 	if !strings.Contains(info.RateInfo, "Unlimited") {
 		t.Errorf("rate_info should say Unlimited, got %q", info.RateInfo)
+	}
+	if info.CreditKnown {
+		t.Error("unlimited OpenRouter keys must not be treated as a known credit balance")
 	}
 }
 
@@ -51,6 +57,23 @@ func TestParseKiloBalanceRemaining(t *testing.T) {
 	}
 	if !strings.Contains(info.RateInfo, "remaining") {
 		t.Errorf("rate_info should mention remaining, got %q", info.RateInfo)
+	}
+	if !info.CreditKnown || info.RemainingNum != 7.5 {
+		t.Errorf("credit metadata = known:%v remaining:%v, want known:true remaining:7.5", info.CreditKnown, info.RemainingNum)
+	}
+}
+
+func TestParseKiloBalanceExpiry(t *testing.T) {
+	body := []byte(`{"microdollars_used":2500000,"total_microdollars_acquired":10000000,"next_credit_expiration_at":"2099-11-11T10:11:58.000Z"}`)
+	info := parseKiloBalance(body)
+	if info.ExpiresAt != "2099-11-11T10:11:58Z" {
+		t.Errorf("expires_at = %q, want 2099-11-11T10:11:58Z", info.ExpiresAt)
+	}
+	if info.DaysRemaining <= 0 {
+		t.Errorf("days_remaining = %d, want > 0", info.DaysRemaining)
+	}
+	if info.BillingReset == "" {
+		t.Error("billing_reset should remain populated for the existing UI")
 	}
 }
 

@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,13 +31,13 @@ type UsageStats struct {
 
 // BalanceInfo represents the credit/usage information from a provider.
 type BalanceInfo struct {
-	Balance       string       `json:"balance"`       // Current balance (e.g., "$95.20" or "9520 credits")
-	TotalUsed     string       `json:"total_used"`    // Total amount used
-	Currency      string       `json:"currency"`      // USD, credits, etc.
-	PlanType      string       `json:"plan_type"`     // prepaid, subscription, free, etc.
-	RateInfo      string       `json:"rate_info"`     // Legacy: flat rate info string (for non-CC providers)
-	ProviderType  string       `json:"provider_type"` // deepseek, openai, commandcode, etc.
-	UpdatedAt     string       `json:"updated_at"`    // When this info was fetched
+	Balance       string       `json:"balance"`         // Current balance (e.g., "$95.20" or "9520 credits")
+	TotalUsed     string       `json:"total_used"`      // Total amount used
+	Currency      string       `json:"currency"`        // USD, credits, etc.
+	PlanType      string       `json:"plan_type"`       // prepaid, subscription, free, etc.
+	RateInfo      string       `json:"rate_info"`       // Legacy: flat rate info string (for non-CC providers)
+	ProviderType  string       `json:"provider_type"`   // deepseek, openai, commandcode, etc.
+	UpdatedAt     string       `json:"updated_at"`      // When this info was fetched
 	Error         string       `json:"error,omitempty"` // Error message if fetch failed
 	RateWindows   []RateWindow `json:"rate_windows,omitempty"`
 	Usage         *UsageStats  `json:"usage,omitempty"`
@@ -45,6 +47,18 @@ type BalanceInfo struct {
 	RemainingNum  float64      `json:"remaining_num,omitempty"`
 	CapNum        float64      `json:"cap_num,omitempty"`
 	UsedNum       float64      `json:"used_num,omitempty"`
+	// CreditKnown distinguishes "provider reported a credit balance" from
+	// "no numeric balance available" (rate-limit-only providers, unlimited
+	// keys). Routing may only order accounts by credit/expiry when it is true.
+	CreditKnown bool `json:"credit_known,omitempty"`
+}
+
+func daysUntil(t time.Time) int {
+	days := int(math.Ceil(time.Until(t).Hours() / 24))
+	if days < 0 {
+		return 0
+	}
+	return days
 }
 
 var commandCodePlanCaps = map[string]float64{
@@ -294,6 +308,8 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 					info.BillingReset = sub.Data.CurrentPeriodEnd
 					if t, err := time.Parse(time.RFC3339, sub.Data.CurrentPeriodEnd); err == nil {
 						info.RateInfo = "Resets " + t.Format("Jan 2")
+						info.ExpiresAt = t.UTC().Format(time.RFC3339)
+						info.DaysRemaining = daysUntil(t)
 					}
 				}
 			}
@@ -326,6 +342,7 @@ func fetchCommandCodeBalance(apiKey string) BalanceInfo {
 			if err := json.Unmarshal(r.credit, &cred); err == nil {
 				rem := cred.Credits.MonthlyCredits + cred.Credits.PurchasedCredits + cred.Credits.FreeCredits
 				info.RemainingNum = rem
+				info.CreditKnown = true
 				info.Balance = fmt.Sprintf("$%.2f", rem)
 				info.Currency = "USD"
 
@@ -460,6 +477,8 @@ func parseOpenRouterBalance(body []byte) BalanceInfo {
 	if d.Limit > 0 {
 		info.TotalUsed = fmt.Sprintf("$%.4f", d.Usage)
 		info.Currency = "USD"
+		info.RemainingNum = d.LimitRemaining
+		info.CreditKnown = true
 		info.RateInfo = fmt.Sprintf("Limit $%.2f remaining of $%.2f · $%.4f used", d.LimitRemaining, d.Limit, d.Usage)
 	} else {
 		info.RateInfo = fmt.Sprintf("Unlimited · $%.4f used", d.Usage)
@@ -513,10 +532,14 @@ func parseKiloBalance(body []byte) BalanceInfo {
 		Balance:      fmt.Sprintf("$%.2f", remaining),
 		TotalUsed:    fmt.Sprintf("$%.4f", used),
 		RateInfo:     fmt.Sprintf("Credit $%.2f remaining · $%.4f used", remaining, used),
+		RemainingNum: remaining,
+		CreditKnown:  true,
 	}
 	if u.NextCreditExpiration != nil && *u.NextCreditExpiration != "" {
 		if t, err := time.Parse(time.RFC3339, *u.NextCreditExpiration); err == nil {
 			info.BillingReset = t.Format("Jan 2")
+			info.ExpiresAt = t.UTC().Format(time.RFC3339)
+			info.DaysRemaining = daysUntil(t)
 		}
 	}
 	return info
@@ -549,13 +572,18 @@ func fetchDeepseekBalance(apiKey string) BalanceInfo {
 		return BalanceInfo{ProviderType: "deepseek", Error: "parse error: " + err.Error()}
 	}
 
-	return BalanceInfo{
+	info := BalanceInfo{
 		Balance:      fmt.Sprintf("$%s", data.Balance),
 		TotalUsed:    fmt.Sprintf("$%s", data.TotalUsed),
 		Currency:     "USD",
 		PlanType:     "prepaid",
 		ProviderType: "deepseek",
 	}
+	if parsed, err := strconv.ParseFloat(strings.TrimSpace(data.Balance), 64); err == nil {
+		info.RemainingNum = parsed
+		info.CreditKnown = true
+	}
+	return info
 }
 
 func fetchOpenAIBalance(apiKey string) BalanceInfo {
