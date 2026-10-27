@@ -620,13 +620,16 @@ func fetchOpenAIBalance(apiKey string) BalanceInfo {
 	return info
 }
 
-func fetchGroqBalance(apiKey, baseURL string) BalanceInfo {
-	base := strings.TrimRight(baseURL, "/")
-	if !strings.HasSuffix(base, "/openai") {
+func groqModelsURL(baseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if !strings.HasSuffix(base, "/openai") && !strings.Contains(base, "/openai/") {
 		base += "/openai"
 	}
+	return modelsURLFor(base)
+}
 
-	req, _ := http.NewRequest("GET", base+"/v1/models", nil)
+func fetchGroqBalance(apiKey, baseURL string) BalanceInfo {
+	req, _ := http.NewRequest("GET", groqModelsURL(baseURL), nil)
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
 	resp, err := http.DefaultClient.Do(req)
@@ -668,14 +671,27 @@ func fetchGenericBalance(apiKey, baseURL, format string) BalanceInfo {
 	return fetchGenericRateLimits(apiKey, baseURL, format)
 }
 
-func fetchGenericRateLimits(apiKey, baseURL, providerType string) BalanceInfo {
-	base := strings.TrimRight(baseURL, "/")
-
-	// Try /v1/models endpoint
-	modelsURL := base
-	if !strings.HasSuffix(base, "/v1/models") && !strings.HasSuffix(base, "/models") {
-		modelsURL = base + "/v1/models"
+// modelsURLFor joins a base URL with the provider's models path without
+// duplicating a version segment already present in the base. A base ending in
+// /v1 must yield /v1/models, never /v1/v1/models.
+func modelsURLFor(baseURL string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if base == "" {
+		return ""
 	}
+	lower := strings.ToLower(base)
+	if strings.HasSuffix(lower, "/models") {
+		return base
+	}
+	last := lower[strings.LastIndex(lower, "/")+1:]
+	if len(last) >= 2 && last[0] == 'v' && last[1] >= '0' && last[1] <= '9' {
+		return base + "/models"
+	}
+	return base + "/v1/models"
+}
+
+func fetchGenericRateLimits(apiKey, baseURL, providerType string) BalanceInfo {
+	modelsURL := modelsURLFor(baseURL)
 
 	req, _ := http.NewRequest("GET", modelsURL, nil)
 	req.Header.Set("Authorization", "Bearer "+apiKey)

@@ -98,3 +98,33 @@ func TestCommandCodePlanCaps(t *testing.T) {
 		t.Errorf("individual-go name = %q, want Go", commandCodePlanNames["individual-go"])
 	}
 }
+
+func TestModelsURLFor(t *testing.T) {
+	cases := map[string]string{
+		"http://127.0.0.1:18610/v1":                        "http://127.0.0.1:18610/v1/models",
+		"http://127.0.0.1:18610/v1/":                       "http://127.0.0.1:18610/v1/models",
+		"https://api.example.com":                          "https://api.example.com/v1/models",
+		"https://api.example.com/v1/models":                "https://api.example.com/v1/models",
+		"https://api.example.com/v1beta":                   "https://api.example.com/v1beta/models",
+		"https://generativelanguage.googleapis.com/v1beta": "https://generativelanguage.googleapis.com/v1beta/models",
+	}
+	for input, want := range cases {
+		if got := modelsURLFor(input); got != want {
+			t.Errorf("modelsURLFor(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestGroqModelsURL(t *testing.T) {
+	cases := map[string]string{
+		"https://api.groq.com":            "https://api.groq.com/openai/v1/models",
+		"https://api.groq.com/openai":     "https://api.groq.com/openai/v1/models",
+		"https://api.groq.com/openai/v1":  "https://api.groq.com/openai/v1/models",
+		"https://api.groq.com/openai/v1/": "https://api.groq.com/openai/v1/models",
+	}
+	for input, want := range cases {
+		if got := groqModelsURL(input); got != want {
+			t.Errorf("groqModelsURL(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
