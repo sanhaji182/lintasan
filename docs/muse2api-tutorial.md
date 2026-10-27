@@ -87,7 +87,8 @@ MUSE2API_HEADLESS=true
 MUSE2API_CDP_PORT=19210
 MUSE2API_POOL_STRATEGY=affinity
 MUSE2API_ACCOUNT_MAX_CONCURRENCY=1
-MUSE2API_KEEPALIVE_ENABLED=false
+MUSE2API_KEEPALIVE_ENABLED=true
+MUSE2API_PUBLIC_BASE=https://lintasan.sans.biz.id
 EOF
 
 chmod 600 .env
@@ -344,9 +345,15 @@ curl -s -X POST https://lintasan.sans.biz.id/v1/images/generations \
   -d '{"model":"muse-image","prompt":"A red fox in autumn","size":"16:9"}'
 ```
 
-Catatan image: muse2api menghasilkan URL media berdasarkan `MUSE2API_PUBLIC_BASE`
-atau base URL request. Tanpa public base + reverse proxy media, URL akan menunjuk
-`127.0.0.1:18610` dan tidak bisa diakses klien eksternal. Chat tidak terpengaruh.
+Catatan image: set `MUSE2API_PUBLIC_BASE` ke origin publik Lintasan
+(`https://lintasan.sans.biz.id`). Lintasan mem-proxy `GET /v1/media/{name}` ke
+sidecar, jadi URL media dapat diakses klien eksternal tanpa auth (nama file
+acak). Tanpa public base, URL akan menunjuk `127.0.0.1:18610`. Chat tidak
+terpengaruh.
+
+Keepalive: `MUSE2API_KEEPALIVE_ENABLED=true` direkomendasikan. Renew manual
+(panel **Renew** atau `POST /admin/accounts/{id}/renew`) terbukti memperpanjang
+`hatch_vml` sekitar 48 jam; loop keepalive default berjalan setiap 6 jam.
 
 Video: muse2api punya `/v1/videos`, tetapi Lintasan belum punya route padanan,
 jadi video belum bisa dipakai lewat Lintasan.
@@ -379,7 +386,7 @@ journalctl -u lintasan -n 50 --no-pager
 | Akun Active tapi chat gagal | Lihat `journalctl -u muse2api -f`; bisa quota/cooldown, tab macet, atau session perlu **Renew**. |
 | Test Connection 401 | API key yang dimasukkan adalah admin key atau key Lintasan. Gunakan `MUSE2API_API_KEY`. |
 | `/readyz` false | Pool belum punya akun available; import cookie terlebih dahulu. |
-| Image URL `127.0.0.1` | Set `MUSE2API_PUBLIC_BASE` yang dapat diakses klien dan proxy path `/v1/media/` ke muse2api. |
+| Image URL `127.0.0.1` | Set `MUSE2API_PUBLIC_BASE=https://lintasan.sans.biz.id` lalu restart sidecar. Lintasan sudah mem-proxy `/v1/media/`. |
 | Chrome kehabisan memori | `systemctl status muse2api`; kurangi `MUSE2API_ACCOUNT_MAX_CONCURRENCY`, tambah RAM/swap, atau restart service. |
 
 ---
