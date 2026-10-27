@@ -141,6 +141,7 @@ export function buildPolicyPayload(smart: {
   ml_router_threshold: unknown;
   cost_quality_floor: unknown;
   cost_expensive_anchor: unknown;
+  credit_aware_routing_enabled: unknown;
 }) {
   return {
     ml_router_enabled: smart.ml_router_enabled,
@@ -149,6 +150,7 @@ export function buildPolicyPayload(smart: {
     ml_router_threshold: trimmedString(smart.ml_router_threshold),
     cost_quality_floor: trimmedString(smart.cost_quality_floor),
     cost_expensive_anchor: trimmedString(smart.cost_expensive_anchor),
+    credit_aware_routing_enabled: Boolean(smart.credit_aware_routing_enabled),
   };
 }
 

@@ -16,7 +16,7 @@
   import {
     GitBranch, GripVertical, Plus, Trash2, Save,
     Server, Tag, Shuffle, RotateCw, CircleDot,
-    BrainCircuit, DollarSign, Gauge, Layers, ToggleLeft, ToggleRight, X, Sparkles, Check, Search, AlertTriangle, Pencil, ArrowUp, ArrowDown
+    BrainCircuit, DollarSign, Gauge, Layers, ToggleLeft, ToggleRight, Wallet, X, Sparkles, Check, Search, AlertTriangle, Pencil, ArrowUp, ArrowDown
   } from 'lucide-svelte/icons';
 
   interface Combo {
@@ -124,6 +124,7 @@
     cost_quality_floor: string;
     cost_expensive_anchor: string;
     quota_limits: Record<string, Record<string, unknown>>;
+    credit_aware_routing_enabled: boolean;
   }
   let smart = $state<SmartConfig>({
     ml_router_enabled: false,
@@ -132,7 +133,8 @@
     ml_router_threshold: '0.5',
     cost_quality_floor: '0.3',
     cost_expensive_anchor: '0.02',
-    quota_limits: {}
+    quota_limits: {},
+    credit_aware_routing_enabled: false
   });
   let savingSmart = $state(false);
   // Quota limit editor rows derived from the quota_limits map. `extra` keeps
@@ -946,6 +948,34 @@
           <span>Expensive anchor <span style="color: var(--color-fg-3);">(USD / 2K tok)</span></span>
           <input class="input-field" bind:value={smart.cost_expensive_anchor} placeholder="0.02" />
         </label>
+      </div>
+    </div>
+
+    <!-- Credit-aware Routing -->
+    <div class="smart-block">
+      <div class="flex items-center justify-between" style="margin-bottom: 8px;">
+        <div class="flex items-center gap-2">
+          <Wallet size={16} style="color: var(--color-primary);" />
+          <span style="font-size: 13px; font-weight: 600; color: var(--color-fg-0);">Credit-aware Routing</span>
+          <span style="font-size: 11px; color: var(--color-fg-3);">— spend soonest-expiring credit first</span>
+        </div>
+        <button
+          class="flex items-center gap-1.5"
+          style="background: none; border: none; cursor: pointer; color: {smart.credit_aware_routing_enabled ? 'var(--color-success)' : 'var(--color-fg-3)'};"
+          aria-label="Credit-aware routing"
+          aria-pressed={smart.credit_aware_routing_enabled}
+          onclick={() => smart.credit_aware_routing_enabled = !smart.credit_aware_routing_enabled}
+        >
+          {#if smart.credit_aware_routing_enabled}
+            <ToggleRight size={28} stroke-width={1.6} />
+          {:else}
+            <ToggleLeft size={28} stroke-width={1.6} />
+          {/if}
+          <span style="font-size: 12px; font-weight: 600;">{smart.credit_aware_routing_enabled ? 'Enabled' : 'Disabled'}</span>
+        </button>
+      </div>
+      <div style="font-size: 11px; color: var(--color-fg-3); line-height: 1.5;">
+        Orders accounts of the same provider so credit that expires soonest is used first. Applies where the provider exposes credit and expiry (e.g. CommandCode, Kilo); other providers keep their existing order. Zero-credit accounts are tried last. Balances refresh every 5 minutes.
       </div>
     </div>
     {/if}

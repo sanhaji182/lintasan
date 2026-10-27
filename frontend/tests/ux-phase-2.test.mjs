@@ -97,6 +97,7 @@ test('policy and quota payloads never cross save scopes', () => {
     cost_quality_floor: '0.4',
     cost_expensive_anchor: '0.03',
     quota_limits: { old: { max_tokens_per_day: 1 } },
+    credit_aware_routing_enabled: true,
   };
   assert.deepEqual(buildPolicyPayload(smart), {
     ml_router_enabled: true,
@@ -105,6 +106,7 @@ test('policy and quota payloads never cross save scopes', () => {
     ml_router_threshold: '0.7',
     cost_quality_floor: '0.4',
     cost_expensive_anchor: '0.03',
+    credit_aware_routing_enabled: true,
   });
   assert.deepEqual(buildQuotaPayload([
     { connId: ' alpha ', maxPerDay: '1200' },

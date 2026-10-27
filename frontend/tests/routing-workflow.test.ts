@@ -752,6 +752,20 @@ describe('Routing save boundaries', () => {
     }));
   });
 
+  it('saves the credit-aware routing toggle', async () => {
+    await renderPage();
+    const toggle = screen.getByRole('button', { name: /Credit-aware routing/i });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+    await fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await fireEvent.click(screen.getByRole('button', { name: /Save Policies/i }));
+
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/smart-routing', expect.objectContaining({
+      credit_aware_routing_enabled: true,
+    })));
+  });
+
   it('blocks policy saves when numeric settings are out of range', async () => {
     await renderPage();
     await fireEvent.input(screen.getByPlaceholderText('0.5'), { target: { value: '1.4' } });
