@@ -321,6 +321,7 @@ func (s *Server) routes() {
 
 	// OpenAI-compatible media endpoints (Node.js exposes these through API routes; Go exposes root /v1 too)
 	s.mux.HandleFunc("POST /v1/images/generations", s.proxy.HandleImages)
+	s.mux.HandleFunc("GET /v1/media/{name}", s.handleMuseMedia)
 	s.mux.HandleFunc("POST /v1/audio/speech", s.proxy.HandleAudioSpeech)
 	s.mux.HandleFunc("POST /v1/audio/transcriptions", s.proxy.HandleAudioTranscriptions)
 
@@ -517,6 +518,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Generated muse2api media uses random, unguessable filenames and the
+		// sidecar serves them without auth. Expose GET/HEAD only, single segment.
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && isPublicMediaPath(path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// --- BOOTSTRAP state: only setup endpoints are reachable. ---
 		if !s.isActive() {
 			if isSetupPath(path, r.Method) {
@@ -628,4 +636,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid API key"})
 	})
+}
+
+// isPublicMediaPath limits the unauthenticated media surface to a single
+// filename under /v1/media/; traversal and nested paths stay gated.
+func isPublicMediaPath(path string) bool {
+	const prefix = "/v1/media/"
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	name := strings.TrimPrefix(path, prefix)
+	return name != "" && !strings.Contains(name, "/") && !strings.Contains(name, "..")
 }

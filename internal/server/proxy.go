@@ -52,8 +52,9 @@ type ProxyHandler struct {
 	db     *db.DB
 	pm     *plugin.Manager
 	wm     *webhook.Manager
-	quota  *quota.QuotaTracker
-	client *http.Client
+	quota       *quota.QuotaTracker
+	client      *http.Client
+	mediaClient *http.Client // long ResponseHeaderTimeout for image/video generation
 
 	rl            *ratelimit.Limiter          // rate limiter
 	rlEnabled     bool                        // false = limiter bypassed
@@ -153,6 +154,16 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 				TLSClientConfig:       &tls.Config{InsecureSkipVerify: false},
 			},
 		},
+	}
+	// Image/video generation can take minutes before the first byte. The base
+	// transport's 30s ResponseHeaderTimeout is correct for chat but aborts media
+	// generation, so use a separate long-header client for media proxy paths.
+	if transport, ok := ph.client.Transport.(*http.Transport); ok {
+		mediaTransport := transport.Clone()
+		mediaTransport.ResponseHeaderTimeout = 5 * time.Minute
+		ph.mediaClient = &http.Client{Transport: mediaTransport, Timeout: 6 * time.Minute}
+	} else {
+		ph.mediaClient = &http.Client{Timeout: 6 * time.Minute}
 	}
 	// Rate limiter: per-key requests/min, burst. Defaults 60/30 (unchanged).
 	// Override via env for benchmarking / tuning; 0 disables the limiter.
@@ -2886,7 +2897,11 @@ func (p *ProxyHandler) proxyPath(w http.ResponseWriter, r *http.Request, upstrea
 		}
 		upReq.Header.Set(h, pfx+conn.APIKey)
 	}
-	resp, err := p.client.Do(upReq)
+	client := p.client
+	if p.mediaClient != nil {
+		client = p.mediaClient
+	}
+	resp, err := client.Do(upReq)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":"upstream error: %s"}`, err.Error()), 502)
 		return

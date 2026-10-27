@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -451,4 +452,44 @@ func (s *Server) museDoContext(ctx context.Context, method, upstreamPath string,
 		return resp, nil, fmt.Errorf("muse2api response too large")
 	}
 	return resp, data, nil
+}
+
+// handleMuseMedia serves generated image/video files from the sidecar without a
+// dashboard token. Muse media names are random (img_<uuid>.<ext>) and the
+// sidecar serves them unauthenticated; this route makes those URLs reachable
+// through the public gateway origin.
+func (s *Server) handleMuseMedia(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" || strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	base := strings.TrimRight(s.museBaseURL, "/")
+	if base == "" || s.museClient == nil {
+		http.NotFound(w, r)
+		return
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, base+"/v1/media/"+url.PathEscape(name), nil)
+	if err != nil {
+		http.Error(w, `{"error":"bad media request"}`, http.StatusInternalServerError)
+		return
+	}
+	for _, header := range []string{"Range", "If-None-Match", "If-Modified-Since"} {
+		if value := r.Header.Get(header); value != "" {
+			req.Header.Set(header, value)
+		}
+	}
+	resp, err := s.museClient.Do(req)
+	if err != nil {
+		http.Error(w, `{"error":"media upstream unavailable"}`, http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	for _, header := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control", "ETag", "Last-Modified"} {
+		if value := resp.Header.Get(header); value != "" {
+			w.Header().Set(header, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }

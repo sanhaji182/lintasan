@@ -338,3 +338,62 @@ func TestMuseImportEndpointMiddleware(t *testing.T) {
 		t.Fatalf("token post status = %d, want 200", resp.StatusCode)
 	}
 }
+
+func TestIsPublicMediaPath(t *testing.T) {
+	cases := map[string]bool{
+		"/v1/media/img_abc.webp":       true,
+		"/v1/media/vid_abc.mp4":        true,
+		"/v1/media/":                   false,
+		"/v1/media/a/b":                false,
+		"/v1/media/../api/connections": false,
+		"/v1/models":                   false,
+		"/api/media/img_abc.webp":      false,
+	}
+	for input, want := range cases {
+		if got := isPublicMediaPath(input); got != want {
+			t.Errorf("isPublicMediaPath(%q) = %v, want %v", input, got, want)
+		}
+	}
+}
+
+func TestHandleMuseMediaProxiesRandomFile(t *testing.T) {
+	var gotPath, gotRange string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotRange = r.URL.Path, r.Header.Get("Range")
+		w.Header().Set("Content-Type", "image/webp")
+		w.Header().Set("Accept-Ranges", "bytes")
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write([]byte("webp"))
+	}))
+	defer upstream.Close()
+
+	s := &Server{museBaseURL: upstream.URL, museClient: upstream.Client()}
+	req := httptest.NewRequest(http.MethodGet, "/v1/media/img_test.webp", nil)
+	req.SetPathValue("name", "img_test.webp")
+	req.Header.Set("Range", "bytes=0-3")
+	rec := httptest.NewRecorder()
+	s.handleMuseMedia(rec, req)
+
+	if rec.Code != http.StatusPartialContent || rec.Body.String() != "webp" {
+		t.Fatalf("media response = %d %q", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Content-Type") != "image/webp" || rec.Header().Get("Accept-Ranges") != "bytes" {
+		t.Fatalf("media headers not forwarded: %v", rec.Header())
+	}
+	if gotPath != "/v1/media/img_test.webp" || gotRange != "bytes=0-3" {
+		t.Fatalf("upstream request path/range = %q/%q", gotPath, gotRange)
+	}
+}
+
+func TestHandleMuseMediaRejectsTraversal(t *testing.T) {
+	s := &Server{museBaseURL: "http://127.0.0.1:1", museClient: http.DefaultClient}
+	for _, name := range []string{"", "../api", "a/b"} {
+		req := httptest.NewRequest(http.MethodGet, "/v1/media/x", nil)
+		req.SetPathValue("name", name)
+		rec := httptest.NewRecorder()
+		s.handleMuseMedia(rec, req)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("name %q: got %d, want 404", name, rec.Code)
+		}
+	}
+}
