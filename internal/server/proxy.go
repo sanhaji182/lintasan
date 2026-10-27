@@ -2928,6 +2928,9 @@ func (p *ProxyHandler) proxyPath(w http.ResponseWriter, r *http.Request, upstrea
 func (p *ProxyHandler) HandleImages(w http.ResponseWriter, r *http.Request) {
 	p.proxyPath(w, r, "/v1/images/generations")
 }
+func (p *ProxyHandler) HandleImageEdits(w http.ResponseWriter, r *http.Request) {
+	p.proxyPath(w, r, "/v1/images/edits")
+}
 func (p *ProxyHandler) HandleVideos(w http.ResponseWriter, r *http.Request) {
 	p.proxyPath(w, r, "/v1/videos")
 }

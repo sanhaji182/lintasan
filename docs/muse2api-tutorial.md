@@ -345,6 +345,16 @@ curl -s -X POST https://lintasan.sans.biz.id/v1/images/generations \
   -d '{"model":"muse-image","prompt":"A red fox in autumn","size":"16:9"}'
 ```
 
+Edit gambar (reference image; muse.ai tidak mendukung mask/inpainting):
+
+```bash
+curl -s -X POST https://lintasan.sans.biz.id/v1/images/edits \
+  -H "Authorization: Bearer $LINTASAN_MASTER_KEY" \
+  -F model=muse-image \
+  -F "prompt=Warm golden-hour sunset, same composition" \
+  -F "image=@photo.webp;type=image/webp"
+```
+
 Catatan image: set `MUSE2API_PUBLIC_BASE` ke origin publik Lintasan
 (`https://lintasan.sans.biz.id`). Lintasan mem-proxy `GET /v1/media/{name}` ke
 sidecar, jadi URL media dapat diakses klien eksternal tanpa auth (nama file
