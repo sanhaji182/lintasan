@@ -34,6 +34,7 @@ func (s *Server) registerConversationRoutes() {
 	mux.HandleFunc("POST /api/conversations/{id}/attachments", s.handleUploadAttachment)
 	mux.HandleFunc("GET /api/conversations/{id}/attachments/{aid}", s.handleDownloadAttachment)
 	s.registerRewindRoutes(mux)
+	s.registerSearchRoutes(mux)
 }
 
 // writeErr writes an OpenAI-shaped error body, matching the rest of the API.
