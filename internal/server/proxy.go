@@ -546,15 +546,14 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 		strings.Contains(strings.ToLower(r.Header.Get("Pragma")), "no-cache")
 	globalCacheEnabled := !directMode && !clientNoCache && p.getSetting("cache_enabled", "true") == "true"
 
+	// Params that participate in the cache key. Built once from the whole
+	// request so tools/tool_choice/response_format/stop/seed et al are covered.
+	cacheParams := cacheParamsFromRequest(req)
+
 	// Exact Hash Cache (fastest — check before semantic; non-stream only)
 	exactCacheEnabled := globalCacheEnabled && p.getSetting("exact_cache_enabled", "true") == "true"
 	if exactCacheEnabled && !stream {
-		params := map[string]any{
-			"temperature": req["temperature"],
-			"max_tokens":  req["max_tokens"],
-			"top_p":       req["top_p"],
-		}
-		if respBody, ok := cache.GetExactMatch(p.db.Conn(), model, messages, params); ok {
+		if respBody, ok := cache.GetExactMatch(p.db.Conn(), model, messages, cacheParams); ok {
 			metrics.CacheHit()
 			p.logRequest(model, "exact-cache", "cache", "", 200, time.Since(start).Milliseconds(), 0, 0, true, "", taskClass, modeLabel)
 			w.Header().Set("Content-Type", "application/json")
@@ -567,7 +566,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 	// Stream Cache (check for streaming requests)
 	streamCacheEnabled := globalCacheEnabled && p.getSetting("stream_cache_enabled", "false") == "true"
-	if stream && streamCacheEnabled {
+	if stream && streamCacheEnabled && !cacheRequestNeedsStrictKey(req) {
 		if chunks, totalTokens, ok := cache.GetStreamMatch(p.db.Conn(), model, messages); ok {
 			p.logRequest(model, "stream-cache", "cache", "", 200, time.Since(start).Milliseconds(), 0, totalTokens, true, "", taskClass, modeLabel)
 			w.Header().Set("X-Cache", "HIT")
@@ -580,7 +579,7 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 	// Semantic Cache (OFF by default — only when explicitly enabled with strict threshold)
 	semanticEnabled := globalCacheEnabled && p.getSetting("semantic_cache_enabled", "false") == "true"
 	if semanticEnabled {
-		if respBody, score, ok := cache.GetSemanticMatch(p.db.Conn(), model, messages, 0.92); ok {
+		if respBody, score, ok := cache.GetSemanticMatch(p.db.Conn(), model, messages, 0.92, cacheParams); ok {
 			metrics.CacheHit()
 			p.logRequest(model, "semantic-cache", "cache", "", 200, time.Since(start).Milliseconds(), 0, 0, true, fmt.Sprintf("score=%.3f", score), taskClass, modeLabel)
 
@@ -775,14 +774,10 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 			w.Write(b)
 			p.logRequest(resolvedModel, hedgeConn.ID, hedgeConn.Name, hedgeConn.oauthSessionID, hedgeResp.StatusCode, time.Since(start).Milliseconds(), tokensIn, tokensOut, false, "", taskClass, modeLabel)
 			if exactCacheEnabled && !stream && hedgeResp.StatusCode == 200 {
-				params := map[string]any{
-					"temperature": req["temperature"],
-					"max_tokens":  req["max_tokens"],
-					"top_p":       req["top_p"],
-				}
+				params := cacheParamsFromRequest(req)
 				_ = cache.SaveExactMatch(p.db.Conn(), model, messages, params, string(b), tokensIn, tokensOut, 3600)
 			}
-			if semanticEnabled && hedgeResp.StatusCode == 200 {
+			if semanticEnabled && hedgeResp.StatusCode == 200 && !cacheRequestNeedsStrictKey(req) {
 				cache.SaveSemanticMatch(p.db.Conn(), model, messages, string(b), 3600)
 			}
 			p.autoIndex(r, model, messages, string(b), tokensIn, tokensOut)
@@ -1487,15 +1482,11 @@ if retryErr != nil {
 		}
 
 		if exactCacheEnabled && !stream && resp.StatusCode == 200 {
-			params := map[string]any{
-				"temperature": req["temperature"],
-				"max_tokens":  req["max_tokens"],
-				"top_p":       req["top_p"],
-			}
+			params := cacheParamsFromRequest(req)
 			_ = cache.SaveExactMatch(p.db.Conn(), model, messages, params, string(b), tokensIn, tokensOut, 3600)
 		}
 
-		if semanticEnabled && resp.StatusCode == 200 {
+		if semanticEnabled && resp.StatusCode == 200 && !cacheRequestNeedsStrictKey(req) {
 			cache.SaveSemanticMatch(p.db.Conn(), model, messages, string(b), 3600)
 		}
 

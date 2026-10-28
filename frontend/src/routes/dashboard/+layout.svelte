@@ -33,6 +33,7 @@ import { page } from '$app/state';
     '/dashboard/settings': 'Settings',
     '/dashboard/plugins': 'Plugins',
     '/dashboard/playground': 'Playground',
+    '/dashboard/chat': 'Chat',
     '/dashboard/docs': 'Docs',
     '/dashboard/mcp': 'MCP Server',
     '/dashboard/savings': 'Cost Savings',

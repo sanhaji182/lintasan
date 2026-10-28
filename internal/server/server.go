@@ -16,6 +16,7 @@ import (
 
 	"github.com/sanhaji182/lintasan-go/internal/auth"
 	"github.com/sanhaji182/lintasan-go/internal/config"
+	"github.com/sanhaji182/lintasan-go/internal/conversation"
 	"github.com/sanhaji182/lintasan-go/internal/db"
 	"github.com/sanhaji182/lintasan-go/internal/discover"
 	"github.com/sanhaji182/lintasan-go/internal/freeproviders"
@@ -53,6 +54,18 @@ type Server struct {
 	startTime      time.Time              // server boot timestamp, used by /health
 	accessLogStore *logging.LogStore      // in-memory access log ring buffer
 	comboMu        sync.Mutex             // serializes combo read-check-write mutations
+
+	// Persistent chat conversations (dashboard "Chat" surface). Lazily built on
+	// first use so servers constructed before this feature existed still work,
+	// and so a migration failure surfaces per-request instead of at boot.
+	chatStore    *conversation.Store
+	chatStoreErr error
+	chatStoreMu  sync.Mutex
+
+	// chatUpstreamURL overrides the loopback gateway address used for chat turns.
+	// Empty means "this process's own /v1/chat/completions", which is what
+	// production always uses. Tests set it to a stub server; nothing else should.
+	chatUpstreamURL string
 
 	// muse2api sidecar admin proxy. The admin key is server-side only; the
 	// dashboard calls /api/muse/* and never sees it. See muse_handlers.go.
@@ -239,6 +252,9 @@ func (s *Server) routes() {
 
 	// Register competitor-router migration API (9router import, OmniRouter next)
 	s.registerMigrateRoutes()
+
+	// Register persistent chat conversations (dashboard Chat surface)
+	s.registerConversationRoutes()
 
 	// Register Auth routes (JWT-based dashboard login)
 	s.mux.HandleFunc("POST /api/auth/login", s.authHandler.HandleLogin())
