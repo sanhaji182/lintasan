@@ -135,8 +135,17 @@ func cosineSimilarity(a, b map[string]int) float64 {
 // 2. TF-IDF cosine similarity on the last user message — threshold-based return
 //
 // threshold: cosine similarity threshold (0.75+ recommended, 0.92 = very strict)
-func GetSemanticMatch(db *sql.DB, model string, messages []any, threshold float64) (string, float64, bool) {
+func GetSemanticMatch(db *sql.DB, model string, messages []any, threshold float64, params ...map[string]any) (string, float64, bool) {
 	if len(messages) == 0 {
+		return "", 0, false
+	}
+
+	// Tool-bearing and structured-output requests must not be served from the
+	// semantic cache. A fuzzy match on the last user message can return a
+	// perfectly similar answer that was produced WITHOUT the tools the caller
+	// declared, which silently strips tool calls from the response. Only
+	// plain-text requests are eligible.
+	if len(params) > 0 && requestNeedsStrictCacheKey(params[0]) {
 		return "", 0, false
 	}
 

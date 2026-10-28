@@ -25,6 +25,56 @@ func InitExactCache(db *sql.DB) error {
 	return err
 }
 
+// strictCacheParams are the params that make fuzzy/semantic matching unsafe.
+// A semantic hit is keyed on the last user message only, so two requests that
+// differ only in these params are indistinguishable to it. Serving the earlier
+// response would drop the caller's declared tools (or JSON-mode contract).
+var strictCacheParams = []string{
+	"tools", "tool_choice", "parallel_tool_calls",
+	"functions", "function_call",
+	"response_format",
+}
+
+// requestNeedsStrictCacheKey reports whether the request carries a param that
+// requires an exact-match cache key, never a semantic/fuzzy one.
+func requestNeedsStrictCacheKey(params map[string]any) bool {
+	for _, key := range strictCacheParams {
+		if _, ok := params[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// RequestNeedsStrictKey is the exported form used by the server's cache-write
+// guard, so the eligibility rule lives in exactly one place.
+func RequestNeedsStrictKey(params map[string]any) bool {
+	return requestNeedsStrictCacheKey(params)
+}
+
+// responseAffectingParams is the allow-list of request params that change the
+// response body and therefore MUST participate in the cache key.
+//
+// This list previously held only temperature/max_tokens/top_p, which meant a
+// request carrying `tools` hashed identically to the same request without it.
+// The cached (tool-less) body was then replayed for a tool-enabled request, so
+// the model appeared to "not have" the tool. Same class of bug for
+// response_format (JSON mode returned prose), stop, seed, reasoning effort and
+// n/ presence_penalty/frequency_penalty.
+//
+// Rule: if a param can change the completion, it belongs here. Anything added
+// to the passthrough in future must be added here too.
+var responseAffectingParams = []string{
+	"temperature", "max_tokens", "top_p", "top_k",
+	"tools", "tool_choice", "parallel_tool_calls",
+	"functions", "function_call",
+	"response_format",
+	"stop", "seed", "n",
+	"presence_penalty", "frequency_penalty", "logit_bias", "logprobs", "top_logprobs",
+	"reasoning_effort", "reasoning", "thinking",
+	"modalities", "audio", "prediction",
+}
+
 // buildExactHash computes a SHA-256 hash of the full request (model + messages + params).
 func buildExactHash(model string, messages []any, params map[string]any) string {
 	request := map[string]any{
@@ -33,7 +83,7 @@ func buildExactHash(model string, messages []any, params map[string]any) string 
 
 	// Only include recognized params that affect the response.
 	trimmed := map[string]any{}
-	for _, key := range []string{"temperature", "max_tokens", "top_p"} {
+	for _, key := range responseAffectingParams {
 		if v, ok := params[key]; ok {
 			trimmed[key] = v
 		}
