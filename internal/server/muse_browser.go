@@ -712,6 +712,43 @@ func (s *Server) handleMuseBrowserCancel(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, map[string]any{"closed": true})
 }
 
+// museBrowserMissingIsRenewable reports whether the login has produced the two
+// durable identity cookies and only the gateway/VM cookies are pending. Those
+// may be issued by renew — and SSO/one-tap accounts may never receive hatch_gw,
+// which the browser driver now supports via the full cookie set.
+func museBrowserMissingIsRenewable(cookies map[string]string, missing []string) bool {
+	if cookies["hatch_sess"] == "" || cookies["hatch_native_auth_device"] == "" || len(missing) == 0 {
+		return false
+	}
+	for _, name := range missing {
+		if name != "hatch_gw" && name != "hatch_vml" {
+			return false
+		}
+	}
+	return true
+}
+
+// pageSignedIn checks the remote page itself, so the monitor never treats the
+// landing/login page (which may also hold hatch_sess) as a completed login.
+func (sess *museBrowserSession) pageSignedIn(ctx context.Context) bool {
+	raw, err := sess.cdp.send(ctx, "Runtime.evaluate", map[string]any{
+		"expression":    "(() => { const t = document.querySelector('textarea'); return !!t && !(document.body.innerText || '').includes('Log in or create an account'); })()",
+		"returnByValue": true,
+	}, sess.pageSessionID)
+	if err != nil {
+		return false
+	}
+	var out struct {
+		Result struct {
+			Value bool `json:"value"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(raw, &out) != nil {
+		return false
+	}
+	return out.Result.Value
+}
+
 func (s *Server) monitorMuseBrowserSession(sess *museBrowserSession) {
 	timeout := time.NewTimer(museBrowserTTL)
 	ticker := time.NewTicker(time.Second)
@@ -759,17 +796,25 @@ func (s *Server) monitorMuseBrowserSession(sess *museBrowserSession) {
 					})
 				}
 			}
-			if len(missing) == 1 && missing[0] == "hatch_vml" {
-				// Login is complete, but muse.ai issues hatch_vml only after
-				// the session/VM is renewed. Give the page a moment to set it,
-				// then complete the account through muse2api's renew path.
-				if partialSince.IsZero() {
-					partialSince = time.Now()
-					sess.emit(map[string]any{"type": "status", "message": "Login detected — completing muse.ai session…"})
-				} else if !partialTried && time.Since(partialSince) >= 5*time.Second {
-					partialTried = true
-					s.importMuseBrowserPartial(sess, cookies)
-					return
+			if museBrowserMissingIsRenewable(cookies, missing) {
+				// Login is complete in the page, but the gateway/VM cookies may
+				// never appear (SSO/one-tap). After a short grace period, let
+				// muse2api create the account with the full cookie set and fill
+				// hatch_vml through renew.
+				pageCtx, pageCancel := context.WithTimeout(context.Background(), 3*time.Second)
+				signedIn := sess.pageSignedIn(pageCtx)
+				pageCancel()
+				if signedIn {
+					if partialSince.IsZero() {
+						partialSince = time.Now()
+						sess.emit(map[string]any{"type": "status", "message": "Login detected — completing muse.ai session…"})
+					} else if !partialTried && time.Since(partialSince) >= 5*time.Second {
+						partialTried = true
+						s.importMuseBrowserPartial(sess, cookies)
+						return
+					}
+				} else {
+					partialSince = time.Time{}
 				}
 			} else if len(missing) != 0 {
 				partialSince = time.Time{}
@@ -795,20 +840,21 @@ func (sess *museBrowserSession) readSessionCookies(ctx context.Context) (map[str
 	}
 	var result struct {
 		Cookies []struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
+			Name   string `json:"name"`
+			Value  string `json:"value"`
+			Domain string `json:"domain"`
 		} `json:"cookies"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
 		return nil, err
 	}
-	want := make(map[string]bool, len(museSessionCookieNames))
-	for _, name := range museSessionCookieNames {
-		want[name] = true
-	}
-	out := make(map[string]string, len(museSessionCookieNames))
+	// Keep every muse.ai cookie, not just the four session cookies: SSO
+	// accounts rely on __Host-hatch_one_tap / hatch_native_auth_temp, and the
+	// sidecar's driver now knows how to set host-only cookies correctly.
+	out := make(map[string]string, len(result.Cookies))
 	for _, c := range result.Cookies {
-		if want[c.Name] && c.Value != "" {
+		domain := strings.ToLower(c.Domain)
+		if c.Value != "" && (domain == "muse.ai" || strings.HasSuffix(domain, ".muse.ai")) {
 			out[c.Name] = c.Value
 		}
 	}

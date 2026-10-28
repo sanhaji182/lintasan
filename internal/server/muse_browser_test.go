@@ -238,3 +238,26 @@ func TestMuseBrowserPartialRenew(t *testing.T) {
 		t.Fatal("cleanup did not finish")
 	}
 }
+
+func TestMuseBrowserMissingIsRenewable(t *testing.T) {
+	base := map[string]string{"hatch_sess": "s", "hatch_native_auth_device": "d"}
+	cases := []struct {
+		name    string
+		cookies map[string]string
+		missing []string
+		want    bool
+	}{
+		{"both gateway cookies pending", base, []string{"hatch_gw", "hatch_vml"}, true},
+		{"only vml pending", base, []string{"hatch_vml"}, true},
+		{"only gw pending", base, []string{"hatch_gw"}, true},
+		{"nothing missing", map[string]string{"hatch_sess": "s", "hatch_native_auth_device": "d", "hatch_gw": "g", "hatch_vml": "v"}, nil, false},
+		{"missing session", map[string]string{"hatch_native_auth_device": "d"}, []string{"hatch_sess", "hatch_vml"}, false},
+		{"missing device", map[string]string{"hatch_sess": "s"}, []string{"hatch_native_auth_device", "hatch_vml"}, false},
+		{"unexpected cookie missing", base, []string{"hatch_vml", "other"}, false},
+	}
+	for _, tc := range cases {
+		if got := museBrowserMissingIsRenewable(tc.cookies, tc.missing); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
