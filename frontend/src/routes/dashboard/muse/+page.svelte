@@ -113,6 +113,16 @@
 
   const configured = $derived(status?.configured === true);
   const reachable = $derived(status?.configured === true && status?.reachable === true && status?.ok === true);
+  const suggestedLabel = $derived.by(() => {
+    const used = new Set(accounts.map(a => (a.label || '').trim().toLowerCase()).filter(Boolean));
+    let n = accounts.length + 1;
+    let label = `muse-${n}`;
+    while (used.has(label)) {
+      n += 1;
+      label = `muse-${n}`;
+    }
+    return label;
+  });
   const pool = $derived(status?.status?.accounts ?? {});
   const capabilities = $derived(status?.status?.capabilities ?? {});
   const driver = $derived(status?.status?.driver ?? {});
@@ -221,7 +231,7 @@
     error = '';
     try {
       const res = await api.post<any>('/api/muse/accounts', {
-        label: importLabel.trim(),
+        label: importLabel.trim() || suggestedLabel,
         cookies: parseCookieInput(cookieInput)
       });
       const missing = Array.isArray(res?.missing_cookies) ? res.missing_cookies : [];
@@ -386,7 +396,7 @@
     };
     try {
       const res = await api.post<any>('/api/muse/browser/sessions', {
-        label: importLabel.trim() || 'muse-browser'
+        label: importLabel.trim() || suggestedLabel
       });
       browserLogin.id = res.session_id;
       browserLogin.width = Number(res.width) || 1280;
@@ -665,8 +675,8 @@
     <section class="card import-card">
       <div class="card-head-row">
         <div>
-          <h3 class="card-h">Import an account</h3>
-          <p class="muted small">Paste the cookies from a browser logged in to muse.ai.</p>
+          <h3 class="card-h">Add a muse.ai account</h3>
+          <p class="muted small">Paste cookies or use remote login. Repeat to add more accounts; muse2api pools all enabled accounts.</p>
         </div>
         <KeyRound size={18} class="muted" />
       </div>
@@ -688,7 +698,8 @@
 
       <form onsubmit={(e) => { e.preventDefault(); importAccount(); }}>
         <label class="field-label" for="muse-label">Label (optional)</label>
-        <input id="muse-label" class="input-field" bind:value={importLabel} placeholder="e.g. muse-main" autocomplete="off" />
+        <input id="muse-label" class="input-field" bind:value={importLabel} placeholder={suggestedLabel} autocomplete="off" />
+        <p class="form-help muted">Each import creates a new account. Use a different label so you can tell accounts apart.</p>
         <label class="field-label" for="muse-cookies">Cookies</label>
         <textarea
           id="muse-cookies"

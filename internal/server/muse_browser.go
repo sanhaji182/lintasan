@@ -749,9 +749,13 @@ func (s *Server) monitorMuseBrowserSession(sess *museBrowserSession) {
 				if len(missing) == 0 {
 					sess.emit(map[string]any{"type": "status", "message": "muse.ai session detected — importing…"})
 				} else {
+					message := "Sign in inside the browser preview above — click the email/phone field"
+					if cookies["hatch_sess"] != "" && cookies["hatch_native_auth_device"] != "" {
+						message = fmt.Sprintf("Waiting for the muse.ai session after sign-in — cookies %d/%d", len(museSessionCookieNames)-len(missing), len(museSessionCookieNames))
+					}
 					sess.emit(map[string]any{
 						"type":    "status",
-						"message": fmt.Sprintf("Cookies %d/%d — waiting for: %s", len(museSessionCookieNames)-len(missing), len(museSessionCookieNames), strings.Join(missing, ", ")),
+						"message": message,
 					})
 				}
 			}
