@@ -3,7 +3,8 @@
   import {
     LayoutDashboard, Link2, GitBranch, BarChart3, Key, Users, UserCircle, Webhook,
     Database, Settings, Puzzle, MessageSquare, BookOpen, Brain, Globe, Server,
-    Sun, Moon, Upload, Plug, Rocket, FlaskConical, ChevronDown, Gauge
+    Sun, Moon, Upload, Plug, Rocket, FlaskConical, ChevronDown, Gauge,
+    MessagesSquare
   } from 'lucide-svelte';
   import { theme } from '$lib/stores/theme';
   import LogoMark from '$lib/components/LogoMark.svelte';
@@ -14,7 +15,7 @@
   const pathname = $derived(page.url.pathname);
 
   const icons: Record<string, any> = {
-    overview: LayoutDashboard, quickstart: Rocket, playground: MessageSquare,
+    overview: LayoutDashboard, quickstart: Rocket, chat: MessagesSquare, playground: MessageSquare,
     connections: Link2, models: Brain, providers: Server, routing: GitBranch,
     usage: BarChart3, quota: Gauge, observability: BarChart3,
     keys: Key, teams: Users, users: UserCircle, webhooks: Webhook, memory: Brain,
