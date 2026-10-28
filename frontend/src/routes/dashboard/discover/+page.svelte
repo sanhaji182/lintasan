@@ -27,6 +27,8 @@
     seed_only?: boolean;
     no_model_fetch?: boolean;
     logo?: string;
+    sync_source?: string;
+    sync_updated_at?: string;
   }
 
   interface Connection {
@@ -237,8 +239,11 @@
 
           <!-- Models -->
           <div class="flex items-center justify-between mb-2" style="gap: 8px;">
-            <span style="font-size: 11px; color: var(--color-fg-3);">
-              {models.length}{provider.free_only ? ' free' : ''} model{models.length === 1 ? '' : 's'}{#if modelSources[provider.name] === 'live'}{' · live'}{/if}
+            <span
+              style="font-size: 11px; color: var(--color-fg-3);"
+              title={provider.sync_source ? `${provider.sync_source}${provider.sync_updated_at ? ` · ${provider.sync_updated_at}` : ''}` : undefined}
+            >
+              {models.length}{provider.free_only ? ' free' : ''} model{models.length === 1 ? '' : 's'}{#if modelSources[provider.name] === 'live'}{' · live'}{:else if provider.sync_source}{' · synced'}{/if}
             </span>
             {#if !provider.no_model_fetch}
               <button

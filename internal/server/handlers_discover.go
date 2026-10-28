@@ -11,7 +11,7 @@ import (
 
 // handleDiscoverFreeProviders handles GET /api/discover/free-providers
 func (s *Server) handleDiscoverFreeProviders(w http.ResponseWriter, r *http.Request) {
-	providers := discover.GetFreeProviders()
+	providers := discover.ApplySyncOverlay(r.Context(), discover.GetFreeProviders())
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
 		"providers": providers,

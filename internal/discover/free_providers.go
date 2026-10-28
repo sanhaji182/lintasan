@@ -18,6 +18,9 @@ type FreeProvider struct {
 	// NoModelFetch marks providers whose OpenAI-compatible base has no /models.
 	NoModelFetch bool   `json:"no_model_fetch,omitempty"`
 	Logo         string `json:"logo,omitempty"`
+	// SyncSource/SyncUpdatedAt are filled at request time by ApplySyncOverlay.
+	SyncSource    string `json:"sync_source,omitempty"`
+	SyncUpdatedAt string `json:"sync_updated_at,omitempty"`
 }
 
 // GetFreeProviders returns the registry of known free AI providers.
