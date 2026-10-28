@@ -54,6 +54,9 @@
   let streamingThinking = $state('');
   let streamingTools = $state<ToolEvent[]>([]);
   let error = $state('');
+  // Editing an existing user turn in place. Only one at a time.
+  let editingId = $state<string | null>(null);
+  let editingText = $state('');
   let copiedId = $state<string | null>(null);
   let showThinking = $state<Record<string, boolean>>({});
   let renaming = $state<string | null>(null);
@@ -305,6 +308,74 @@
     // A rename triggered by the server (first-message titling) should land in
     // the sidebar without the user refreshing.
     if (activeId !== id) return;
+  }
+
+  // ---------- regenerate / edit ----------
+  // Both truncate the transcript server-side and re-run a turn. The server is
+  // the source of truth for what the new history looks like, so after the
+  // stream ends we reload rather than trying to patch local state.
+
+  async function runRewind(path: string, body: unknown) {
+    if (!activeId || sending) return;
+    const convId = activeId;
+    sending = true;
+    streamingText = '';
+    streamingThinking = '';
+    streamingTools = [];
+    error = '';
+    abortCtrl = new AbortController();
+
+    try {
+      const res = await api.raw(`/api/conversations/${convId}/messages/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+        signal: abortCtrl.signal
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b?.error?.message || `Request failed (${res.status})`);
+      }
+      if (!res.body) throw new Error('Streaming not supported by this browser');
+      await consumeStream(res.body);
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') error = e?.message || 'Request failed';
+    } finally {
+      const msgRes = await api
+        .get<{ messages: Message[] }>(`/api/conversations/${convId}/messages`)
+        .catch(() => null);
+      if (msgRes && activeId === convId) messages = msgRes.messages ?? [];
+      await loadConversations();
+      sending = false;
+      abortCtrl = null;
+      streamingText = '';
+      streamingThinking = '';
+      streamingTools = [];
+      await scrollToBottom();
+    }
+  }
+
+  function regenerate(m: Message) {
+    if (!activeId) return;
+    runRewind(`${m.id}/regenerate`, {});
+  }
+
+  function startEdit(m: Message) {
+    editingId = m.id;
+    editingText = m.content;
+  }
+
+  function cancelEdit() {
+    editingId = null;
+    editingText = '';
+  }
+
+  async function commitEdit(m: Message) {
+    const text = editingText.trim();
+    if (!text) return;
+    editingId = null;
+    editingText = '';
+    await runRewind(`${m.id}/edit`, { content: text });
   }
 
   // consumeStream parses the SSE body into state updates.
@@ -575,7 +646,29 @@
                 {/if}
               {/if}
 
-              {@html render(m.content)}
+              {#if editingId === m.id}
+                <!-- Edit mode: rewrite the prompt, then the server truncates
+                     everything after it and re-runs the turn. -->
+                <textarea
+                  class="edit-box"
+                  bind:value={editingText}
+                  rows="3"
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      commitEdit(m);
+                    } else if (e.key === 'Escape') {
+                      cancelEdit();
+                    }
+                  }}
+                ></textarea>
+                <div class="edit-actions">
+                  <button class="edit-save" onclick={() => commitEdit(m)} disabled={sending}>Save &amp; resend</button>
+                  <button class="edit-cancel" onclick={cancelEdit} disabled={sending}>Cancel</button>
+                </div>
+              {:else}
+                {@html render(m.content)}
+              {/if}
 
               {#each parseAttachments(m.attachments) as a (a.id)}
                 <div class="attach-chip">
@@ -602,6 +695,18 @@
                     <Copy size={12} /> Copy
                   {/if}
                 </button>
+                {#if m.role === 'assistant' && !m.id.startsWith('temp-')}
+                  <span>·</span>
+                  <button class="copy-btn" onclick={() => regenerate(m)} title="Regenerate this reply" disabled={sending}>
+                    <RefreshCw size={12} /> Retry
+                  </button>
+                {/if}
+                {#if m.role === 'user' && !m.id.startsWith('temp-') && editingId !== m.id}
+                  <span>·</span>
+                  <button class="copy-btn" onclick={() => startEdit(m)} title="Edit and resend" disabled={sending}>
+                    <Pencil size={12} /> Edit
+                  </button>
+                {/if}
               </div>
             </div>
           </div>
@@ -835,6 +940,40 @@
     font-size: 11px; cursor: pointer;
   }
   .copy-btn:hover { background: var(--color-bg-hover); color: var(--color-fg-1); }
+  .copy-btn:disabled { opacity: 0.45; cursor: default; }
+  .copy-btn:disabled:hover { background: transparent; color: var(--color-fg-3); }
+
+  /* Inline edit of a user turn. Mirrors the composer's weight so the message
+     still reads as the same turn, not as a separate form. */
+  .edit-box {
+    width: 100%; margin: 2px 0 0; padding: 9px 11px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-fg-1); font-size: 14px; line-height: 1.55;
+    font-family: inherit; resize: vertical;
+  }
+  .edit-box:focus {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-accent-light);
+  }
+  .edit-actions { display: flex; gap: 8px; margin-top: 8px; }
+  .edit-save, .edit-cancel {
+    padding: 5px 12px; border-radius: var(--radius-sm);
+    font-size: 12px; font-weight: 500; cursor: pointer;
+  }
+  .edit-save {
+    border: 1px solid var(--color-accent);
+    background: var(--color-accent); color: #fff;
+  }
+  .edit-save:hover:not(:disabled) { filter: brightness(1.06); }
+  .edit-cancel {
+    border: 1px solid var(--color-border-light);
+    background: transparent; color: var(--color-fg-2);
+  }
+  .edit-cancel:hover:not(:disabled) { background: var(--color-bg-hover); }
+  .edit-save:disabled, .edit-cancel:disabled { opacity: 0.5; cursor: default; }
 
   .msg-error {
     margin-top: 8px; padding: 7px 10px; border-radius: var(--radius-sm);
