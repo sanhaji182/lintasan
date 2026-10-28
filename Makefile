@@ -78,7 +78,8 @@ deploy:
 		echo "  backup: $$(ls -t $(PROD_BINARY).bak-* | head -1)"; \
 	fi
 	sudo systemctl stop $(SERVICE)
-	cp $(BUILD_OUT) $(PROD_BINARY)
+	sudo cp $(BUILD_OUT) $(PROD_BINARY)
+	sudo chown $$(id -u):$$(id -g) $(PROD_BINARY)
 	sudo systemctl start $(SERVICE)
 	@sleep 1
 	@sudo systemctl is-active $(SERVICE)
