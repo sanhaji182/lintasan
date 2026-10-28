@@ -58,6 +58,7 @@ frontend:
 
 ## Compile the Go binary (CGO required for go-sqlite3)
 backend:
+	@test -f $(DIST)/index.html || { echo "✗ $(DIST)/index.html missing — the SPA is not at the embed root (check for a nested dist/dist/)"; exit 1; }
 	@echo "→ Compiling Go binary → $(BUILD_OUT)…"
 	mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=1 go build -ldflags="$(LDFLAGS)" -o $(BUILD_OUT) $(PKG)
