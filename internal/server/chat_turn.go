@@ -141,7 +141,7 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Persist the user's turn first so a crash mid-reply still leaves the
 	// prompt visible in the UI.
-	attMeta, attText, err := s.loadAttachments(st, convID, in.AttachmentIDs)
+	attMeta, attText, attImages, err := s.loadAttachments(st, convID, in.AttachmentIDs)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -189,9 +189,16 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	asm := conversation.Assemble(conv, prior, extra, budget)
 
+	wire := toWireMessages(asm.Messages)
+	// Attach image parts to the final user message. Text-only requests keep the
+	// plain string content shape, so nothing changes for them.
+	if len(attImages) > 0 {
+		wire = attachImagesToLastUserTurn(wire, attImages)
+	}
+
 	payload := map[string]any{
 		"model":    model,
-		"messages": toWireMessages(asm.Messages),
+		"messages": wire,
 		"stream":   stream,
 	}
 	if in.Temperature != nil {
@@ -245,11 +252,12 @@ func deriveTitle(content string) string {
 }
 
 // loadAttachments resolves attachment ids into (a) the JSON metadata blob to
-// store on the user message and (b) inline text for the model. It rejects ids
-// belonging to another conversation so one thread cannot read another's files.
-func (s *Server) loadAttachments(st *conversation.Store, convID string, ids []string) (string, string, error) {
+// store on the user message, (b) inline text for the model, and (c) image
+// content parts for multimodal models. It rejects ids belonging to another
+// conversation so one thread cannot read another's files.
+func (s *Server) loadAttachments(st *conversation.Store, convID string, ids []string) (string, string, []map[string]any, error) {
 	if len(ids) == 0 {
-		return "", "", nil
+		return "", "", nil, nil
 	}
 	type meta struct {
 		ID       string `json:"id"`
@@ -259,26 +267,40 @@ func (s *Server) loadAttachments(st *conversation.Store, convID string, ids []st
 	}
 	metas := make([]meta, 0, len(ids))
 	var texts []string
+	var images []map[string]any
 	for _, id := range ids {
 		a, err := st.GetAttachment(id)
 		if err != nil {
-			return "", "", fmt.Errorf("attachment %s not found", id)
+			return "", "", nil, fmt.Errorf("attachment %s not found", id)
 		}
 		if a.ConversationID != convID {
-			return "", "", fmt.Errorf("attachment %s belongs to a different conversation", id)
+			return "", "", nil, fmt.Errorf("attachment %s belongs to a different conversation", id)
 		}
 		metas = append(metas, meta{ID: a.ID, Filename: a.Filename, Mime: a.Mime, Size: a.Size})
 		if strings.TrimSpace(a.Extracted) != "" {
 			texts = append(texts, fmt.Sprintf("--- file: %s ---\n%s", a.Filename, a.Extracted))
+			continue
+		}
+		// An image with no extracted text is forwarded as bytes instead. If we
+		// cannot inline it (too large, unreadable), say so in the prompt so the
+		// model does not silently answer as if it had seen the picture.
+		if strings.HasPrefix(a.Mime, "image/") {
+			if part, ok := imagePartForAttachment(a); ok {
+				images = append(images, part)
+				continue
+			}
+			texts = append(texts, fmt.Sprintf(
+				"--- image: %s ---\n(the image could not be attached to this request; it is %.1f KB and may exceed the inline limit)",
+				a.Filename, float64(a.Size)/1024))
 		}
 	}
 	// MessageID is filled in by the caller after the message exists; leaving it
 	// blank here is fine because the association is by conversation.
 	b, err := json.Marshal(metas)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
-	return string(b), strings.Join(texts, "\n\n"), nil
+	return string(b), strings.Join(texts, "\n\n"), images, nil
 }
 
 // toWireMessages flattens assembled messages into OpenAI wire format.
@@ -290,6 +312,51 @@ func toWireMessages(msgs []conversation.AssembledMessage) []map[string]any {
 			"content": m.Content,
 		})
 	}
+	return out
+}
+
+// attachImagesToLastUserTurn converts the newest user message's content from a
+// plain string into a multimodal parts array: the text first, then each image.
+//
+// Only the last user turn is converted. Earlier turns stay as strings, which is
+// what every provider expects — re-sending megabytes of base64 on every
+// subsequent turn would blow the context window and the request size for no
+// benefit, since the model already answered about those images.
+//
+// Returns the slice unchanged (safe, not surprising) if there is no user
+// message to attach to.
+func attachImagesToLastUserTurn(wire []map[string]any, images []map[string]any) []map[string]any {
+	if len(images) == 0 {
+		return wire
+	}
+	idx := -1
+	for i := len(wire) - 1; i >= 0; i-- {
+		if role, _ := wire[i]["role"].(string); role == conversation.RoleUser {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return wire
+	}
+
+	parts := make([]map[string]any, 0, len(images)+1)
+	if text, ok := wire[idx]["content"].(string); ok && strings.TrimSpace(text) != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": text})
+	}
+	parts = append(parts, images...)
+
+	// Copy the map rather than mutating the caller's slice element, so the
+	// conversation history we just assembled stays intact for logging.
+	replaced := make(map[string]any, len(wire[idx]))
+	for k, v := range wire[idx] {
+		replaced[k] = v
+	}
+	replaced["content"] = parts
+
+	out := make([]map[string]any, len(wire))
+	copy(out, wire)
+	out[idx] = replaced
 	return out
 }
 

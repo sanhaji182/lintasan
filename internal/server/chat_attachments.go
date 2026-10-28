@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -157,10 +158,18 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		"size":     a.Size,
 		"has_text": strings.TrimSpace(a.Extracted) != "",
 	}
-	if extractErr != nil {
+	isImage := strings.HasPrefix(a.Mime, "image/")
+	if isImage {
+		// The bytes are what matter; they are sent as an image_url part.
+		resp["is_image"] = true
+	}
+	if extractErr != nil && !errors.Is(extractErr, errImageNeedsVision) {
 		// Upload succeeded but the text could not be read. Say so instead of
 		// pretending the model can see it.
 		resp["warning"] = "text could not be extracted: " + extractErr.Error()
+		if isImage {
+			resp["warning"] = "image stored, but this gateway could not prepare it for a vision model"
+		}
 	}
 	writeJSONStatus(w, http.StatusCreated, resp)
 }
@@ -312,6 +321,13 @@ func detectMime(filename, claimed string) string {
 // separate decision with its own dependency and CVE surface, so this returns an
 // explicit error rather than silently returning nothing.
 func extractText(path, mime, filename string) (string, error) {
+	// Image MIME is decided before touching the file: an image is never
+	// "extracted", it is forwarded as bytes. Checking here also keeps the
+	// upload path from reporting a bogus open() error for a valid image.
+	if strings.HasPrefix(mime, "image/") && mime != "image/svg+xml" {
+		return "", errImageNeedsVision
+	}
+
 	// Read at most a little over the extraction cap: there is no point loading
 	// 25MB of text only to throw 99% of it away.
 	f, err := os.Open(path)
@@ -351,9 +367,59 @@ func extractText(path, mime, filename string) (string, error) {
 	case strings.Contains(mime, "wordprocessingml"), strings.Contains(mime, "spreadsheetml"):
 		return "", fmt.Errorf("Office document extraction is not enabled on this gateway; the file was stored but the model cannot read its contents")
 	case strings.HasPrefix(mime, "image/"):
-		return "", fmt.Errorf("image files are stored but this gateway does not forward them to vision models yet")
+		// Handled at the top of this function (errImageNeedsVision); reaching
+		// here means an image type we do not forward.
+		return "", errImageNeedsVision
 	}
 	return "", fmt.Errorf("no text extractor for %s", mime)
+}
+
+// errImageNeedsVision marks an attachment whose payload is an image. It is not
+// a failure: the bytes are kept and injected as an image_url part on the next
+// turn, provided the target model declares vision support.
+var errImageNeedsVision = errors.New("image attachment is forwarded as a vision part, not extracted to text")
+
+// maxInlineImageBytes caps how large an image may be before we refuse to inline
+// it as base64. Base64 inflates by ~4/3, and the model's request body has to
+// fit upstream limits. 8 MiB of raw image is already generous for a screenshot.
+const maxInlineImageBytes = 8 << 20
+
+// imagePartForAttachment renders a stored image attachment as an OpenAI-style
+// content part. Returns ok=false when the file is too large or cannot be read,
+// so the caller can fall back to a text note rather than sending a broken part.
+func imagePartForAttachment(a *conversation.Attachment) (map[string]any, bool) {
+	if a.Path == "" || !strings.HasPrefix(a.Mime, "image/") {
+		return nil, false
+	}
+	if a.Size > maxInlineImageBytes {
+		return nil, false
+	}
+	f, err := os.Open(a.Path)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+
+	// Read a bounded amount so a lying Size field cannot make us load a huge
+	// file into memory.
+	data, err := io.ReadAll(io.LimitReader(f, maxInlineImageBytes+1))
+	if err != nil || len(data) == 0 || len(data) > maxInlineImageBytes {
+		return nil, false
+	}
+
+	// Trust the decoded bytes over the declared MIME: a .png that is really a
+	// JPEG would otherwise be sent with the wrong media type and rejected.
+	mime := http.DetectContentType(data)
+	if !strings.HasPrefix(mime, "image/") {
+		mime = a.Mime
+	}
+
+	return map[string]any{
+		"type": "image_url",
+		"image_url": map[string]any{
+			"url": "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data),
+		},
+	}, true
 }
 
 // isTextish reports whether the file should be read as plain text.
