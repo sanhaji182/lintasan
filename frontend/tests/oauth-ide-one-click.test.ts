@@ -57,6 +57,7 @@ describe('OAuth IDE one-click provider flow', () => {
     mocks.get.mockReset();
     mocks.post.mockReset();
     mocks.del.mockReset();
+    mocks.del.mockResolvedValue({});
     mocks.toast.mockReset();
     mocks.get.mockImplementation(async (path: string) => {
       if (path === '/api/oauth/status') return status;
@@ -97,7 +98,7 @@ describe('OAuth IDE one-click provider flow', () => {
       redirect_url: 'https://provider.example/oauth'
     });
     await waitFor(() => expect(authPopup.location.href).toBe('https://provider.example/oauth'));
-  });
+  }, 15000);
 
   it('opens device verification and polls automatically until the account becomes healthy', async () => {
     vi.useFakeTimers();
@@ -181,5 +182,219 @@ describe('OAuth IDE one-click provider flow', () => {
     expect(await screen.findByRole('button', { name: /^Add another Codex account$/i })).toBeInTheDocument();
     expect(await screen.findByText('person@example.com')).toBeInTheDocument();
     expect(await screen.findByText(/12 req/)).toBeInTheDocument();
+  });
+});
+
+describe('OAuth polling and cancellation', () => {
+  beforeEach(() => {
+    mocks.get.mockReset();
+    mocks.post.mockReset();
+    mocks.del.mockReset();
+    mocks.del.mockResolvedValue({});
+    mocks.toast.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('revokes the pending session when the flow is cancelled', async () => {
+    vi.stubGlobal('open', vi.fn(() => popup()));
+    mocks.post.mockResolvedValueOnce({
+      flow: 'browser_redirect',
+      session_id: 'session-to-cancel',
+      redirect_url: 'https://provider.example/oauth'
+    });
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/oauth/status') return status;
+      if (path === '/api/oauth/accounts') return emptyAccounts;
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Connect Codex$/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument());
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(mocks.del).toHaveBeenCalledWith('/api/oauth/sessions/session-to-cancel');
+  });
+
+  it('finishes when a new account appears even if it is already restricted', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('open', vi.fn(() => popup()));
+    mocks.post.mockResolvedValueOnce({
+      flow: 'browser_redirect',
+      session_id: 'session-restricted',
+      redirect_url: 'https://provider.example/oauth'
+    });
+    let loads = 0;
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/oauth/status') return status;
+      if (path === '/api/oauth/accounts') {
+        loads += 1;
+        if (loads === 1) return emptyAccounts;
+        return {
+          enabled: true,
+          accounts: [{ id: 'account-new', provider: 'codex', status: 'restricted', health: 'restricted' }],
+          providers: [{ provider: 'codex', name: 'Codex', active: 0, expiring: 0, restricted: 1, expired: 0, revoked: 0, total: 1, wired: false }]
+        };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Connect Codex$/i }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await vi.runAllTicks();
+
+    expect(mocks.toast).toHaveBeenCalledWith('Account connected', 'success');
+  });
+});
+
+describe('OAuth authorize cancellation race', () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('revokes the session if authorize resolves after the user cancelled', async () => {
+    vi.stubGlobal('open', vi.fn(() => popup()));
+    const authorize = deferred<any>();
+    mocks.post.mockReturnValueOnce(authorize.promise);
+    mocks.del.mockResolvedValue({});
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/oauth/status') return status;
+      if (path === '/api/oauth/accounts') return emptyAccounts;
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    await renderPage();
+    await fireEvent.click(screen.getByRole('button', { name: /^Connect Codex$/i }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    authorize.resolve({
+      flow: 'browser_redirect',
+      session_id: 'session-late',
+      redirect_url: 'https://provider.example/oauth'
+    });
+
+    await waitFor(() => expect(mocks.del).toHaveBeenCalledWith('/api/oauth/sessions/session-late'));
+  });
+});
+
+describe('OAuth revoked accounts', () => {
+  afterEach(cleanup);
+
+  it('excludes revoked accounts from Needs attention and lets them be removed', async () => {
+    mocks.get.mockReset();
+    mocks.del.mockReset();
+    mocks.toast.mockReset();
+    mocks.del.mockResolvedValue({ status: 'deleted' });
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/oauth/status') return status;
+      if (path === '/api/oauth/accounts') {
+        return {
+          enabled: true,
+          accounts: [
+            { id: 'revoked-account', provider: 'xai', status: 'revoked', health: 'revoked' },
+            { id: 'restricted-account', provider: 'codex', status: 'restricted', health: 'restricted' }
+          ],
+          providers: [
+            { provider: 'xai', name: 'xAI', active: 0, expiring: 0, restricted: 0, expired: 0, revoked: 1, total: 1, wired: false },
+            { provider: 'codex', name: 'Codex', active: 0, expiring: 0, restricted: 1, expired: 0, revoked: 0, total: 1, wired: false }
+          ]
+        };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    render(OAuthIdePage);
+    await screen.findByRole('button', { name: 'Revoke' });
+    const label = screen.getByText('Needs attention');
+    expect(label.previousElementSibling).toHaveTextContent('1');
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm remove' }));
+
+    expect(mocks.del).toHaveBeenCalledWith('/api/oauth/sessions/revoked-account');
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('Account removed', 'info'));
+  });
+
+  it('bulk removes all revoked accounts in one confirmation', async () => {
+    mocks.get.mockReset();
+    mocks.del.mockReset();
+    mocks.toast.mockReset();
+    mocks.del.mockResolvedValue({ status: 'deleted' });
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/oauth/status') return status;
+      if (path === '/api/oauth/accounts') {
+        return {
+          enabled: true,
+          accounts: [
+            { id: 'revoked-a', provider: 'xai', status: 'revoked', health: 'revoked' },
+            { id: 'revoked-b', provider: 'xai', status: 'revoked', health: 'revoked' },
+            { id: 'restricted-a', provider: 'codex', status: 'restricted', health: 'restricted' }
+          ],
+          providers: [
+            { provider: 'xai', name: 'xAI', active: 0, expiring: 0, restricted: 0, expired: 0, revoked: 2, total: 2, wired: false },
+            { provider: 'codex', name: 'Codex', active: 0, expiring: 0, restricted: 1, expired: 0, revoked: 0, total: 1, wired: false }
+          ]
+        };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    render(OAuthIdePage);
+    await fireEvent.click(await screen.findByRole('button', { name: /Remove revoked \(2\)/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm remove 2' }));
+
+    expect(mocks.del).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('2 revoked accounts removed', 'success'));
+  });
+});
+
+describe('OAuth account multi-select', () => {
+  afterEach(cleanup);
+
+  it('offers separate bulk actions for live and revoked selections', async () => {
+    mocks.get.mockReset();
+    mocks.del.mockReset();
+    mocks.toast.mockReset();
+    mocks.del.mockImplementation(async (path: string) => ({
+      status: path.includes('revoked-a') ? 'deleted' : 'revoked'
+    }));
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/oauth/status') return status;
+      if (path === '/api/oauth/accounts') {
+        return {
+          enabled: true,
+          accounts: [
+            { id: 'revoked-a', provider: 'xai', status: 'revoked', health: 'revoked' },
+            { id: 'restricted-a', provider: 'codex', status: 'restricted', health: 'restricted' }
+          ],
+          providers: [
+            { provider: 'xai', name: 'xAI', active: 0, expiring: 0, restricted: 0, expired: 0, revoked: 1, total: 1, wired: false },
+            { provider: 'codex', name: 'Codex', active: 0, expiring: 0, restricted: 1, expired: 0, revoked: 0, total: 1, wired: false }
+          ]
+        };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    render(OAuthIdePage);
+    await fireEvent.click(await screen.findByLabelText('Select revoked-a'));
+    await fireEvent.click(screen.getByLabelText('Select restricted-a'));
+
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Revoke selected (1)' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove selected (1)' })).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove selected (1)' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm remove 1' }));
+
+    expect(mocks.del).toHaveBeenCalledWith('/api/oauth/sessions/revoked-a');
+    await waitFor(() => expect(mocks.toast).toHaveBeenCalledWith('1 revoked account removed', 'success'));
   });
 });

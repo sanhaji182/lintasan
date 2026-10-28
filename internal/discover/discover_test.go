@@ -328,3 +328,38 @@ func TestFetchModelsFromProvider_SendsExplicitUserAgent(t *testing.T) {
 		t.Fatalf("expected model-1, got %#v", models)
 	}
 }
+
+func TestFetchModelsFromProvider_UsesOAuthCredential(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer oauth-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"id": "oauth-model", "name": "OAuth Model"}},
+		})
+	}))
+	defer server.Close()
+
+	d := NewDiscoverer(nil)
+	d.SetOAuthCredentialResolver(func(provider string) (*OAuthCredential, error) {
+		if provider != "xai" {
+			t.Fatalf("provider = %q, want xai", provider)
+		}
+		return &OAuthCredential{Token: "oauth-token", AuthHeader: "Authorization", AuthPrefix: "Bearer "}, nil
+	})
+	conn := map[string]any{
+		"base_url":       server.URL,
+		"models_path":    "/v1/models",
+		"format":         "openai",
+		"oauth_provider": "xai",
+	}
+	models, err := d.fetchModelsFromProvider(conn)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "oauth-model" {
+		t.Fatalf("models = %+v, want oauth-model", models)
+	}
+}

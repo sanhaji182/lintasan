@@ -153,7 +153,7 @@ export function healthDescription(health: string): string {
     case 'expired':
       return 'The token has expired. Reconnect to use it again.';
     case 'revoked':
-      return 'The session was revoked locally and is no longer used.';
+      return 'The session was revoked locally and is no longer used. Remove it to clear the row.';
     default:
       return 'Health reported by the backend.';
   }

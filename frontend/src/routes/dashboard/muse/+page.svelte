@@ -303,12 +303,26 @@
     }
   }
 
+  function formatQuota(q: any): string {
+    if (!q || typeof q !== 'object') return String(q ?? 'unknown');
+    const parts: string[] = [];
+    if (q.plan) parts.push(q.plan);
+    if (typeof q.weekly_used_percent === 'number') {
+      const left = Math.max(0, 100 - q.weekly_used_percent);
+      parts.push(`weekly ${left}% left${q.weekly_limit_reset ? `, resets ${q.weekly_limit_reset}` : ''}`);
+    }
+    if (q.additional_tokens_left) {
+      parts.push(`${q.additional_tokens_left} extra tokens left${q.additional_tokens_expiry ? ` (${q.additional_tokens_expiry})` : ''}`);
+    }
+    return parts.length ? parts.join(' · ') : JSON.stringify(q);
+  }
+
   async function checkQuota(a: MuseAccount) {
     action = 'quota-' + a.id;
     error = '';
     try {
       const res = await api.get<any>(`/api/muse/accounts/${encodeURIComponent(a.id)}/quota`);
-      quotaResult[a.id] = JSON.stringify(res?.quota ?? res);
+      quotaResult[a.id] = formatQuota(res?.quota ?? res);
       showToast('Quota snapshot updated', 'success');
     } catch (e: any) {
       error = e?.message || 'Quota lookup failed';

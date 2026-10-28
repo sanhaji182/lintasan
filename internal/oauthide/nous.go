@@ -7,7 +7,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
+
+// nousHTTPClient prevents a stalled portal from blocking a proxy request forever.
+var nousHTTPClient = &http.Client{Timeout: 20 * time.Second}
 
 // nous.go — C2 of the 9router parity plan (docs/plans/2026-10-18-9router-parity.md).
 //
@@ -242,7 +246,7 @@ func MintNousAgentKey(cfg NousConfig, accessToken string) (string, string, strin
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := nousHTTPClient.Do(req)
 	if err != nil {
 		return "", "", "", fmt.Errorf("nous agent-key request: %w", err)
 	}

@@ -56,7 +56,7 @@ func isPublicUIPath(method, path string) bool {
 		return false
 	}
 	// Static asset prefixes emitted by the SvelteKit static build.
-	if strings.HasPrefix(path, "/_app/") {
+	if strings.HasPrefix(path, "/_app/") || strings.HasPrefix(path, "/provider-logos/") {
 		return true
 	}
 	// Top-level static files + known SPA entry routes. SPA sub-routes resolve

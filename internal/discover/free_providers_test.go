@@ -120,3 +120,87 @@ func TestFreeProviderPrefixes(t *testing.T) {
 		}
 	}
 }
+
+func TestEnabledFreeProvidersAreConnectable(t *testing.T) {
+	enabled := 0
+	for _, p := range GetFreeProviders() {
+		if !p.Enabled {
+			continue
+		}
+		enabled++
+		if p.BaseURL == "" || len(p.Models) == 0 {
+			t.Errorf("%s: enabled provider is missing base URL or models", p.Name)
+		}
+		if p.Logo == "" {
+			t.Errorf("%s: enabled provider is missing logo", p.Name)
+		}
+		if p.AuthType == "none" && (p.ChatPath == "" || p.ModelsPath == "") {
+			t.Errorf("%s: no-auth provider needs explicit chat_path and models_path", p.Name)
+		}
+	}
+	if enabled < 3 {
+		t.Fatalf("expected at least 3 connectable providers, got %d", enabled)
+	}
+	pollinations := GetFreeProviderByName("Pollinations")
+	if pollinations == nil {
+		t.Fatal("Pollinations missing")
+	}
+	if pollinations.BaseURL != "https://text.pollinations.ai" ||
+		pollinations.ChatPath != "/openai" || pollinations.ModelsPath != "/models" {
+		t.Fatalf("Pollinations must use the OpenAI-compatible /openai endpoint, got %+v", pollinations)
+	}
+	if !pollinations.Enabled || pollinations.AuthType != "none" {
+		t.Fatalf("Pollinations should be a no-auth enabled provider, got %+v", pollinations)
+	}
+}
+
+func TestFreeProviderFreeModelFlags(t *testing.T) {
+	openrouter := GetFreeProviderByName("OpenRouter")
+	if openrouter == nil || !openrouter.Enabled {
+		t.Fatal("OpenRouter should be enabled")
+	}
+	if !openrouter.FreeOnly || !openrouter.SeedOnly {
+		t.Fatalf("OpenRouter must be free-only and seed-only, got %+v", openrouter)
+	}
+	if openrouter.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("OpenRouter base = %s", openrouter.BaseURL)
+	}
+
+	google := GetFreeProviderByName("Google AI Studio")
+	if google == nil || !google.Enabled || !google.SeedOnly || !google.NoModelFetch {
+		t.Fatalf("Google AI Studio flags = %+v", google)
+	}
+	if google.ChatPath != "/chat/completions" {
+		t.Fatalf("Google chat path = %s", google.ChatPath)
+	}
+
+	for _, name := range []string{"Groq", "Mistral", "SambaNova"} {
+		p := GetFreeProviderByName(name)
+		if p == nil || !p.Enabled || p.AuthType != "apikey" || p.SeedOnly {
+			t.Errorf("%s = %+v, want enabled apikey with live sync", name, p)
+		}
+	}
+}
+
+func TestFreeProviderResearchCorrections(t *testing.T) {
+	nous := GetFreeProviderByName("Nous Research (Portal)")
+	if nous == nil || !nous.Enabled || !nous.FreeOnly || !nous.SeedOnly {
+		t.Fatalf("Nous flags = %+v", nous)
+	}
+	if nous.BaseURL != "https://inference-api.nousresearch.com/v1" || len(nous.Models) != 6 {
+		t.Fatalf("Nous endpoint/models = %+v", nous)
+	}
+	zai := GetFreeProviderByName("Z.ai (GLM)")
+	if zai == nil || !zai.Enabled || !zai.FreeOnly || !zai.SeedOnly || !zai.NoModelFetch {
+		t.Fatalf("Z.ai flags = %+v", zai)
+	}
+	if zai.BaseURL != "https://api.z.ai/api/paas/v4" || zai.ChatPath != "/chat/completions" {
+		t.Fatalf("Z.ai endpoint = %s%s", zai.BaseURL, zai.ChatPath)
+	}
+	if cerebras := GetFreeProviderByName("Cerebras"); cerebras == nil || cerebras.Enabled {
+		t.Fatalf("Cerebras should be disabled (trial-only), got %+v", cerebras)
+	}
+	if longcat := GetFreeProviderByName("LongCat (Airforce)"); longcat == nil || longcat.Enabled {
+		t.Fatalf("LongCat should be disabled until free availability is verified, got %+v", longcat)
+	}
+}

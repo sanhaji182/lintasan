@@ -84,6 +84,14 @@ func (s *Server) handleOAuthAccounts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A pending session that never completed (browser closed, popup blocked)
+	// otherwise stays "pending" forever and skews the provider totals. The
+	// authorize session TTL is 10 minutes; allow a little clock slack.
+	_, _ = s.db.Conn().Exec(
+		`UPDATE oauth_sessions SET status='expired'
+		 WHERE status='pending' AND datetime(created_at) < datetime('now','localtime','-15 minutes')`,
+	)
+
 	usage := s.oauthSessionUsage()
 
 	rows, err := s.db.Conn().Query(

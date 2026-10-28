@@ -19,6 +19,10 @@ type refreshedTokens struct {
 	FlowMeta string
 }
 
+// oauthRefreshHTTPClient bounds provider refresh calls; http.DefaultClient has
+// no timeout and can pin a proxy request indefinitely on a stalled provider.
+var oauthRefreshHTTPClient = &http.Client{Timeout: 20 * time.Second}
+
 func refreshOAuthProvider(provider, refreshToken string) (*refreshedTokens, time.Time, error) {
 	switch provider {
 	case "xai":
@@ -137,7 +141,7 @@ func refreshClineToken(refreshToken string) (*refreshedTokens, time.Time, error)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthRefreshHTTPClient.Do(req)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -189,7 +193,7 @@ func refreshFormToken(tokenURL string, form url.Values, basicAuth string) (*refr
 	if basicAuth != "" {
 		req.Header.Set("Authorization", basicAuth)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthRefreshHTTPClient.Do(req)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -209,7 +213,7 @@ func refreshJSONToken(tokenURL string, payload map[string]string) (*refreshedTok
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthRefreshHTTPClient.Do(req)
 	if err != nil {
 		return nil, time.Time{}, err
 	}

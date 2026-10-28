@@ -27,6 +27,9 @@ func TestIsPublicUIPath(t *testing.T) {
 		{"GET", "/lintasan-mark-512.png", true},
 		{"GET", "/lintasan-wordmark-dark.svg", true},
 		{"GET", "/robots.txt", true},
+		{"GET", "/provider-logos/openrouter.svg", true},
+		{"HEAD", "/provider-logos/google.svg", true},
+		{"POST", "/provider-logos/openrouter.svg", false},
 		{"GET", "/favicon-private.json", false},
 		{"GET", "/lintasan-admin", false},
 		// --- public UI: SPA routes ---

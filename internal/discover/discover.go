@@ -63,11 +63,20 @@ type SyncResult struct {
 	Error        string `json:"error,omitempty"`
 }
 
+// OAuthCredential is the bearer a connection should use when its provider is
+// backed by an OAuth session rather than a static API key.
+type OAuthCredential struct {
+	Token      string
+	AuthHeader string
+	AuthPrefix string
+}
+
 // Discoverer fetches models from provider /v1/models and persists them.
 type Discoverer struct {
-	db          *db.DB
-	httpClient  *http.Client
-	knownModels map[string][]ModelInfo
+	db              *db.DB
+	httpClient      *http.Client
+	knownModels     map[string][]ModelInfo
+	oauthCredential func(provider string) (*OAuthCredential, error)
 }
 
 // NewDiscoverer creates a Discoverer wired to the Lintasan database.
@@ -79,6 +88,13 @@ func NewDiscoverer(database *db.DB) *Discoverer {
 		},
 		knownModels: knownModels(),
 	}
+}
+
+// SetOAuthCredentialResolver lets the server attach an active OAuth session to
+// model discovery. Without it, /models is called with the (usually empty)
+// static api_key on OAuth-wired connections and fails with 401.
+func (d *Discoverer) SetOAuthCredentialResolver(fn func(provider string) (*OAuthCredential, error)) {
+	d.oauthCredential = fn
 }
 
 // SyncConnection fetches models from a single active connection, persists them,
@@ -318,17 +334,31 @@ func (d *Discoverer) fetchModelsFromProvider(conn map[string]any) ([]ModelInfo, 
 		}
 	}
 
-	// Auth.
+	// Auth. OAuth-wired connections carry an empty static key; use the active
+	// session token so /models can actually authenticate.
 	apiKey, _ := conn["api_key"].(string)
+	authHeader, _ := conn["auth_header"].(string)
+	if authHeader == "" {
+		authHeader = "Authorization"
+	}
+	authPrefix, _ := conn["auth_prefix"].(string)
+	if authPrefix == "" {
+		authPrefix = "Bearer "
+	}
+	if oauthProv != "" && d.oauthCredential != nil {
+		if cred, err := d.oauthCredential(oauthProv); err == nil && cred != nil && cred.Token != "" {
+			apiKey = cred.Token
+			if cred.AuthHeader != "" {
+				authHeader = cred.AuthHeader
+			}
+			if cred.AuthPrefix != "" {
+				authPrefix = cred.AuthPrefix
+			} else if cred.AuthHeader == "Authorization" {
+				authPrefix = "Bearer "
+			}
+		}
+	}
 	if apiKey != "" {
-		authHeader, _ := conn["auth_header"].(string)
-		if authHeader == "" {
-			authHeader = "Authorization"
-		}
-		authPrefix, _ := conn["auth_prefix"].(string)
-		if authPrefix == "" {
-			authPrefix = "Bearer "
-		}
 		req.Header.Set(authHeader, authPrefix+apiKey)
 	}
 

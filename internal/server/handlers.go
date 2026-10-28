@@ -268,19 +268,22 @@ func (s *Server) handleGetConnections(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name          string `json:"name"`
-		BaseURL       string `json:"base_url"`
-		BaseURL2      string `json:"baseUrl"`
-		APIKey        string `json:"api_key"`
-		APIKey2       string `json:"apiKey"`
-		Format        string `json:"format"`
-		Priority      int    `json:"priority"`
-		ChatPath      string `json:"chatPath"`
-		ModelsPath    string `json:"modelsPath"`
-		AuthHeader    string `json:"authHeader"`
-		AuthPrefix    string `json:"authPrefix"`
-		OAuthProvider string `json:"oauth_provider"`
-		PoolID        string `json:"pool_id"`
+		Name          string   `json:"name"`
+		BaseURL       string   `json:"base_url"`
+		BaseURL2      string   `json:"baseUrl"`
+		APIKey        string   `json:"api_key"`
+		APIKey2       string   `json:"apiKey"`
+		Format        string   `json:"format"`
+		Priority      int      `json:"priority"`
+		ChatPath      string   `json:"chatPath"`
+		ChatPath2     string   `json:"chat_path"`
+		ModelsPath    string   `json:"modelsPath"`
+		ModelsPath2   string   `json:"models_path"`
+		AuthHeader    string   `json:"authHeader"`
+		AuthPrefix    string   `json:"authPrefix"`
+		OAuthProvider string   `json:"oauth_provider"`
+		PoolID        string   `json:"pool_id"`
+		Models        []string `json:"models"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -293,6 +296,12 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 	}
 	if input.APIKey == "" {
 		input.APIKey = input.APIKey2
+	}
+	if input.ChatPath == "" {
+		input.ChatPath = input.ChatPath2
+	}
+	if input.ModelsPath == "" {
+		input.ModelsPath = input.ModelsPath2
 	}
 	if input.Name == "" || input.BaseURL == "" {
 		http.Error(w, `{"error":{"message":"name and baseUrl are required"}}`, http.StatusBadRequest)
@@ -318,13 +327,55 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 		input.AuthPrefix = "Bearer "
 	}
 
+	// Re-connecting a provider from Discover must update the existing row, not
+	// append a duplicate whose models_count is zero.
+	var existingID, existingKey string
+	err := s.db.Conn().QueryRow(
+		`SELECT id, api_key FROM connections WHERE LOWER(name) = LOWER(?) LIMIT 1`, input.Name,
+	).Scan(&existingID, &existingKey)
+	if err == nil {
+		if input.APIKey == "" {
+			input.APIKey = existingKey
+		}
+		_, err = s.db.Conn().Exec(
+			`UPDATE connections SET base_url=?, api_key=?, format=?, chat_path=?, models_path=?, auth_header=?, auth_prefix=?, is_active=1, updated_at=datetime('now','localtime') WHERE id=?`,
+			input.BaseURL, input.APIKey, input.Format, input.ChatPath, input.ModelsPath, input.AuthHeader, input.AuthPrefix, existingID,
+		)
+		if err != nil {
+			http.Error(w, `{"error":"failed to update connection"}`, http.StatusInternalServerError)
+			return
+		}
+		count, seedErr := s.seedConnectionModels(existingID, input.Models)
+		if seedErr != nil {
+			http.Error(w, `{"error":"failed to store connection models"}`, http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"data":         map[string]any{"id": existingID, "models_count": count},
+			"id":           existingID,
+			"status":       "updated",
+			"models_count": count,
+		})
+		return
+	}
+	if err != sql.ErrNoRows {
+		http.Error(w, `{"error":"failed to check existing connection"}`, http.StatusInternalServerError)
+		return
+	}
+
 	id := uuid.New().String()
-	_, err := s.db.Conn().Exec(
+	_, err = s.db.Conn().Exec(
 		`INSERT INTO connections (id, name, base_url, api_key, oauth_provider, format, priority, chat_path, models_path, auth_header, auth_prefix, pool_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		id, input.Name, input.BaseURL, input.APIKey, strings.TrimSpace(strings.ToLower(input.OAuthProvider)), input.Format, input.Priority, input.ChatPath, input.ModelsPath, input.AuthHeader, input.AuthPrefix, strings.TrimSpace(input.PoolID),
 	)
 	if err != nil {
 		http.Error(w, `{"error":"failed to create connection"}`, http.StatusInternalServerError)
+		return
+	}
+	count, err := s.seedConnectionModels(id, input.Models)
+	if err != nil {
+		http.Error(w, `{"error":"failed to store connection models"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -335,7 +386,61 @@ func (s *Server) handleCreateConnection(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"id": id}, "id": id, "status": "created"})
+	json.NewEncoder(w).Encode(map[string]any{
+		"data":         map[string]any{"id": id, "models_count": count},
+		"id":           id,
+		"status":       "created",
+		"models_count": count,
+	})
+}
+
+// seedConnectionModels stores the model IDs advertised by the Discover
+// registry so a newly-connected provider is routable immediately. Rows are
+// marked owned_by='discover' so a later live /models sync can replace them
+// without touching manual models.
+func (s *Server) seedConnectionModels(connID string, models []string) (int, error) {
+	seen := make(map[string]bool, len(models))
+	for _, m := range models {
+		if m = strings.TrimSpace(m); m != "" {
+			seen[m] = true
+		}
+	}
+	if len(seen) > 0 {
+		tx, err := s.db.Conn().Begin()
+		if err != nil {
+			return 0, err
+		}
+		defer tx.Rollback()
+		if _, err := tx.Exec(
+			`DELETE FROM discovered_models WHERE connection_id=? AND (owned_by IS NULL OR owned_by <> 'manual')`, connID,
+		); err != nil {
+			return 0, err
+		}
+		for model := range seen {
+			if _, err := tx.Exec(
+				`INSERT INTO discovered_models (id, connection_id, model_id, model_name, owned_by, is_active) VALUES (?, ?, ?, ?, 'discover', 1)`,
+				uuid.New().String(), connID, model, model,
+			); err != nil {
+				return 0, err
+			}
+		}
+		if _, err := tx.Exec(
+			`UPDATE connections SET models_count=(SELECT COUNT(*) FROM discovered_models WHERE connection_id=? AND is_active=1) WHERE id=?`,
+			connID, connID,
+		); err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, err
+		}
+	}
+	var count int
+	if err := s.db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM discovered_models WHERE connection_id=? AND is_active=1`, connID,
+	).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (s *Server) handleDeleteConnection(w http.ResponseWriter, r *http.Request) {

@@ -92,6 +92,7 @@
   let pollInFlight = false;
   let flowGeneration = 0;
   let providerActiveBefore = 0;
+  let providerKnownIds = new Set<string>();
   let providerSearch = $state('');
   let providerFilter = $state<'connectable' | 'ready' | 'import' | 'all' | 'planned'>('connectable');
   let pendingRevoke = $state('');
@@ -99,6 +100,11 @@
   let lastLoadedAt = $state<number | null>(null);
   let copiedSetup = $state('');
   let showCursorImport = $state(false);
+  let bulkRemovePending = $state(false);
+  let bulkRemoving = $state(false);
+  let selected = $state(new Set<string>());
+  let bulkKind = $state<'revoke' | 'remove' | ''>('');
+  let bulkBusy = $state(false);
 
   const catalog = $derived(status?.catalog ?? []);
   const readyProviders = $derived(catalog.filter((p) => p.implementation === 'ready'));
@@ -109,8 +115,12 @@
   );
   const activeSessions = $derived(accounts.filter((account) => account.health === 'healthy' || account.health === 'expiring').length);
   const attentionCount = $derived(
-    accountProviders.reduce((sum, p) => sum + p.restricted + p.expired + p.revoked, 0)
+    accountProviders.reduce((sum, p) => sum + p.restricted + p.expired, 0)
   );
+  const revokedCount = $derived(accounts.filter((account) => account.status === 'revoked').length);
+  const selectedAccounts = $derived(accounts.filter((account) => selected.has(account.id)));
+  const selectedLive = $derived(selectedAccounts.filter((account) => account.status !== 'revoked'));
+  const selectedRevoked = $derived(selectedAccounts.filter((account) => account.status === 'revoked'));
 
   const summary = $derived({
     available: connectableProviders.length,
@@ -204,8 +214,17 @@
     }
   }
 
+  function revokePendingSession(sessionId: string) {
+    if (!sessionId) return;
+    api.delete(`/api/oauth/sessions/${encodeURIComponent(sessionId)}`).catch(() => {
+      // Best effort: an expired session may already be gone.
+    });
+  }
+
   function cancelFlow() {
+    const sessionId = pollSessionId;
     stopAutoPoll();
+    revokePendingSession(sessionId);
     waitingProvider = '';
     flowStatus = '';
     deviceInfo = null;
@@ -214,6 +233,7 @@
     showXaiComplete = false;
     showAntigravityComplete = false;
     pollSessionId = '';
+    providerKnownIds = new Set();
     if (activePopup && !activePopup.closed) activePopup.close();
     activePopup = null;
     showToast('Authorization cancelled', 'info');
@@ -226,6 +246,52 @@
     const accountData = await api.get<OAuthAccountsResponse>('/api/oauth/accounts');
     accounts = accountData.accounts ?? [];
     accountProviders = accountData.providers ?? [];
+    if (selected.size) {
+      const ids = new Set(accounts.map((account) => account.id));
+      selected = new Set([...selected].filter((id) => ids.has(id)));
+    }
+  }
+
+  function toggleSelect(id: string) {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    selected = next;
+    bulkKind = '';
+  }
+
+  function toggleSelectAll() {
+    selected = selected.size === accounts.length && accounts.length > 0
+      ? new Set()
+      : new Set(accounts.map((account) => account.id));
+    bulkKind = '';
+  }
+
+  async function runBulkSelection(kind: 'revoke' | 'remove') {
+    const targets = kind === 'remove' ? selectedRevoked : selectedLive;
+    if (!targets.length) return;
+    bulkBusy = true;
+    let done = 0;
+    for (const account of targets) {
+      try {
+        const res = await api.delete<any>(`/api/oauth/sessions/${encodeURIComponent(account.id)}`);
+        if (kind === 'remove' ? res?.status === 'deleted' : res?.status === 'revoked') done += 1;
+      } catch {
+        // Continue; one failed account must not block the batch.
+      }
+    }
+    bulkBusy = false;
+    bulkKind = '';
+    selected = new Set();
+    showToast(
+      done
+        ? kind === 'remove'
+          ? `${done} revoked account${done === 1 ? '' : 's'} removed`
+          : `${done} session${done === 1 ? '' : 's'} revoked`
+        : kind === 'remove' ? 'Could not remove selected accounts' : 'Could not revoke selected sessions',
+      done ? 'success' : 'error'
+    );
+    await load();
   }
 
   async function load() {
@@ -288,14 +354,22 @@
   }
 
   async function pollBrowserAccount(provider: string, generation: number) {
-    if (generation !== flowGeneration || pollInFlight) return;
+    if (generation !== flowGeneration) return;
+    if (pollInFlight) {
+      schedulePoll(() => pollBrowserAccount(provider, generation), 2, generation);
+      return;
+    }
     pollInFlight = true;
     try {
       await refreshAccounts();
-      if (activeAccountCount(provider) > providerActiveBefore) {
+      const rows = accounts.filter((account) => account.provider === provider);
+      const appeared = rows.some((account) => !providerKnownIds.has(account.id));
+      if (appeared || activeAccountCount(provider) > providerActiveBefore) {
         waitingProvider = '';
         flowStatus = '';
         activePopup = null;
+        pollSessionId = '';
+        providerKnownIds = new Set();
         if (pollTimer) clearTimeout(pollTimer);
         pollTimer = undefined;
         showToast('Account connected', 'success');
@@ -310,9 +384,16 @@
   }
 
   async function authorize(provider: string) {
+    const previousSession = pollSessionId;
     stopAutoPoll();
+    const generation = flowGeneration;
+    revokePendingSession(previousSession);
+    pollSessionId = '';
     selectedProvider = provider;
     providerActiveBefore = activeAccountCount(provider);
+    providerKnownIds = new Set(
+      accounts.filter((account) => account.provider === provider).map((account) => account.id)
+    );
     const authPopup = window.open('', '_blank');
     if (authPopup) {
       try {
@@ -336,13 +417,17 @@
         provider,
         acknowledge_risk: true
       });
+      if (generation !== flowGeneration) {
+        // The user cancelled while /authorize was in flight.
+        revokePendingSession(res.session_id || '');
+        return;
+      }
       pollSessionId = res.session_id || '';
       if (res.flow === 'device_code' && res.device) {
         deviceInfo = res.device;
         lastRedirect = res.device.verification_uri_complete || res.device.verification_uri || '';
         navigatePopup(authPopup, lastRedirect);
         pollDeadline = Date.now() + Math.max(1, Number(res.device.expires_in) || 900) * 1000;
-        const generation = flowGeneration;
         schedulePoll(() => pollDevice(generation), Number(res.device.interval) || 5, generation);
       } else {
         deviceInfo = null;
@@ -356,7 +441,6 @@
         }
         navigatePopup(authPopup, lastRedirect);
         pollDeadline = Date.now() + 5 * 60 * 1000;
-        const generation = flowGeneration;
         schedulePoll(() => pollBrowserAccount(provider, generation), 2, generation);
       }
       if (xaiLoopbackWarn) {
@@ -365,10 +449,14 @@
         showToast('OAuth flow started', 'info');
       }
     } catch (e: any) {
+      if (generation !== flowGeneration) return;
       error = e?.message || 'Authorize failed';
       waitingProvider = '';
       flowStatus = '';
       stopAutoPoll();
+      revokePendingSession(pollSessionId);
+      pollSessionId = '';
+      providerKnownIds = new Set();
       if (authPopup && !authPopup.closed) authPopup.close();
       activePopup = null;
     } finally {
@@ -377,7 +465,11 @@
   }
 
   async function pollDevice(generation = flowGeneration) {
-    if (!pollSessionId || generation !== flowGeneration || pollInFlight) return;
+    if (!pollSessionId || generation !== flowGeneration) return;
+    if (pollInFlight) {
+      schedulePoll(() => pollDevice(generation), Number(deviceInfo?.interval) || 5, generation);
+      return;
+    }
     if (pollTimer) clearTimeout(pollTimer);
     pollTimer = undefined;
     pollInFlight = true;
@@ -390,6 +482,8 @@
         waitingProvider = '';
         flowStatus = '';
         activePopup = null;
+        pollSessionId = '';
+        providerKnownIds = new Set();
         if (pollTimer) clearTimeout(pollTimer);
         pollTimer = undefined;
         showToast('Device login complete', 'success');
@@ -486,14 +580,53 @@
     pendingRevoke = '';
     actionLoading = id;
     try {
-      await api.delete(`/api/oauth/sessions/${id}`);
-      showToast('Session revoked', 'info');
+      const res = await api.delete<any>(`/api/oauth/sessions/${id}`);
+      showToast(res?.status === 'deleted' ? 'Account removed' : 'Session revoked', 'info');
       await load();
     } catch (e: any) {
       error = e?.message || 'Revoke failed';
     } finally {
       actionLoading = '';
     }
+  }
+
+  async function syncWiredModels(connectionId: string | undefined, name: string) {
+    if (!connectionId) return;
+    try {
+      const sync = await api.post<any>(`/api/models/sync/${encodeURIComponent(connectionId)}`, {});
+      const count = Number(sync?.synced ?? sync?.data?.models_count ?? 0);
+      if (count > 0) {
+        showToast(`${name}: ${count} models synced`, 'success', 3500);
+      }
+    } catch (e: any) {
+      showToast(
+        `${name}: wired, but model sync failed — ${e?.message || 'retry from Connections'}`,
+        'error',
+        5000
+      );
+    }
+  }
+
+  async function removeAllRevoked() {
+    const targets = accounts.filter((account) => account.status === 'revoked');
+    if (!targets.length) return;
+    bulkRemoving = true;
+    let removed = 0;
+    for (const account of targets) {
+      try {
+        const res = await api.delete<any>(`/api/oauth/sessions/${encodeURIComponent(account.id)}`);
+        if (res?.status === 'deleted') removed += 1;
+      } catch {
+        // Keep going; a single failure must not block the rest.
+      }
+    }
+    bulkRemovePending = false;
+    bulkRemoving = false;
+    showToast(
+      removed ? `${removed} revoked account${removed === 1 ? '' : 's'} removed` : 'Could not remove revoked accounts',
+      removed ? 'success' : 'error'
+    );
+    await load();
   }
 
   async function wireProxy(provider: string) {
@@ -507,6 +640,7 @@
         'info',
         4000
       );
+      void syncWiredModels(res.id, res.name || preset?.name || provider);
       await load();
       const current = providerAccountState(accountProviders, provider);
       if (wireState(current) === 'healthy') {
@@ -571,7 +705,7 @@
       { label: 'Available now', value: summary.available, tone: 'ready', hint: 'Providers you can connect today (Ready + Import).' },
       { label: 'Connected providers', value: summary.connected, tone: 'neutral', hint: 'Providers with at least one OAuth session or wired connection.' },
       { label: 'Active accounts', value: summary.active, tone: 'ok', hint: 'Accounts that are healthy or still automatically refreshable.' },
-      { label: 'Needs attention', value: summary.attention, tone: summary.attention > 0 ? 'warn' : 'neutral', hint: 'Restricted, expired, or revoked accounts.' }
+      { label: 'Needs attention', value: summary.attention, tone: summary.attention > 0 ? 'warn' : 'neutral', hint: 'Restricted or expired accounts. Revoked accounts are inert and can be removed.' }
     ] as stat}
       <div class="stat-cell" title={stat.hint}>
         <div class="stat-value {stat.tone}">{stat.value}</div>
@@ -1008,11 +1142,72 @@
               {summary.sessions}
               {summary.sessions === 1 ? 'account' : 'accounts'} across {summary.connected}
               {summary.connected === 1 ? 'provider' : 'providers'}. Restricted and expired accounts stay visible so you
-              can fix them.
+              can fix them; revoked accounts can be removed.
             </p>
           </div>
-          <a href="/dashboard/connections" class="link-sm">Connections →</a>
+          <div class="account-head-actions">
+            {#if accounts.length > 0}
+              <label class="select-all">
+                <input
+                  type="checkbox"
+                  checked={selected.size === accounts.length && accounts.length > 0}
+                  onchange={toggleSelectAll}
+                />
+                Select all
+              </label>
+            {/if}
+            {#if revokedCount > 0}
+              {#if bulkRemovePending}
+                <button type="button" class="btn-ghost-danger" disabled={bulkRemoving} onclick={removeAllRevoked}>
+                  <Trash2 size={14} />
+                  {bulkRemoving ? 'Removing…' : `Confirm remove ${revokedCount}`}
+                </button>
+                <button type="button" class="btn-secondary-sm" disabled={bulkRemoving} onclick={() => (bulkRemovePending = false)}>
+                  Keep
+                </button>
+              {:else}
+                <button type="button" class="btn-secondary-sm" onclick={() => (bulkRemovePending = true)}>
+                  <Trash2 size={14} /> Remove revoked ({revokedCount})
+                </button>
+              {/if}
+            {/if}
+            <a href="/dashboard/connections" class="link-sm">Connections →</a>
+          </div>
         </div>
+        {#if selectedAccounts.length > 0}
+          <div class="selection-bar">
+            <span class="selection-count">{selectedAccounts.length} selected</span>
+            {#if bulkKind === ''}
+              {#if selectedLive.length > 0}
+                <button type="button" class="btn-ghost-danger" onclick={() => (bulkKind = 'revoke')}>
+                  <Trash2 size={14} /> Revoke selected ({selectedLive.length})
+                </button>
+              {/if}
+              {#if selectedRevoked.length > 0}
+                <button type="button" class="btn-ghost-danger" onclick={() => (bulkKind = 'remove')}>
+                  <Trash2 size={14} /> Remove selected ({selectedRevoked.length})
+                </button>
+              {/if}
+              <button type="button" class="btn-secondary-sm" onclick={() => (selected = new Set())}>Clear</button>
+            {:else if bulkKind === 'revoke'}
+              <span class="selection-note">
+                Revoke {selectedLive.length} selected session{selectedLive.length === 1 ? '' : 's'}? They stop being used immediately.
+              </span>
+              <button type="button" class="btn-ghost-danger" disabled={bulkBusy} onclick={() => runBulkSelection('revoke')}>
+                {bulkBusy ? 'Revoking…' : `Confirm revoke ${selectedLive.length}`}
+              </button>
+              <button type="button" class="btn-secondary-sm" disabled={bulkBusy} onclick={() => (bulkKind = '')}>Cancel</button>
+            {:else}
+              <span class="selection-note">
+                Permanently remove {selectedRevoked.length} revoked account{selectedRevoked.length === 1 ? '' : 's'}?
+              </span>
+              <button type="button" class="btn-ghost-danger" disabled={bulkBusy} onclick={() => runBulkSelection('remove')}>
+                {bulkBusy ? 'Removing…' : `Confirm remove ${selectedRevoked.length}`}
+              </button>
+              <button type="button" class="btn-secondary-sm" disabled={bulkBusy} onclick={() => (bulkKind = '')}>Cancel</button>
+            {/if}
+          </div>
+        {/if}
         {#if accountProviders.length === 0 && accounts.length === 0}
           <div class="accounts-empty">
             <KeyRound size={22} />
@@ -1071,6 +1266,14 @@
                 <ul class="session-list account-list">
                   {#each providerRows as account}
                     <li class="session-row account-row">
+                      <label class="account-select" title="Select this account">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(account.id)}
+                          aria-label={`Select ${account.account_label || account.id}`}
+                          onchange={() => toggleSelect(account.id)}
+                        />
+                      </label>
                       <div class="session-main">
                         <span class="health-dot {account.health}" aria-hidden="true"></span>
                         <div class="account-primary">
@@ -1124,17 +1327,23 @@
                             disabled={actionLoading === account.id}
                             onclick={() => revoke(account.id)}
                           >
-                            <Trash2 size={14} /> {actionLoading === account.id ? 'Revoking…' : 'Confirm revoke'}
+                            <Trash2 size={14} />
+                            {actionLoading === account.id
+                              ? account.status === 'revoked' ? 'Removing…' : 'Revoking…'
+                              : account.status === 'revoked' ? 'Confirm remove' : 'Confirm revoke'}
                           </button>
                           <button type="button" class="btn-secondary-sm" onclick={() => (pendingRevoke = '')}>Keep</button>
                         {:else}
                           <button
                             type="button"
                             class="btn-ghost-danger"
-                            disabled={actionLoading === account.id || account.status === 'revoked'}
+                            disabled={actionLoading === account.id}
+                            title={account.status === 'revoked'
+                              ? 'Permanently remove this revoked account from the dashboard'
+                              : 'Revoke this OAuth session'}
                             onclick={() => (pendingRevoke = account.id)}
                           >
-                            <Trash2 size={14} /> {account.status === 'revoked' ? 'Revoked' : 'Revoke'}
+                            <Trash2 size={14} /> {account.status === 'revoked' ? 'Remove' : 'Revoke'}
                           </button>
                         {/if}
                       </div>
@@ -1576,7 +1785,16 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
     margin-bottom: 8px;
+  }
+  .account-head-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
   }
   .link-sm {
     font-size: 12px;
@@ -1602,6 +1820,54 @@
     align-items: center;
     flex: 1;
     min-width: 140px;
+  }
+  .account-select {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .account-select input,
+  .select-all input {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--color-primary);
+    cursor: pointer;
+  }
+  .select-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--color-fg-2);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .account-head-actions .btn-secondary-sm,
+  .account-head-actions .btn-ghost-danger,
+  .selection-bar .btn-secondary-sm,
+  .selection-bar .btn-ghost-danger {
+    white-space: nowrap;
+  }
+  .selection-bar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+    margin: 10px 0;
+    background: var(--color-bg-sidebar-hover);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    font-size: 12px;
+  }
+  .selection-count {
+    font-weight: 600;
+    color: var(--color-fg-1);
+  }
+  .selection-note {
+    color: var(--color-fg-2);
+    margin-right: auto;
   }
   .session-status {
     font-size: 11px;

@@ -11,7 +11,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import { showToast } from '$lib/toast';
-  import { Search, Globe, Zap, Clock, Shield, Check, Plus, AlertCircle, X } from 'lucide-svelte/icons';
+  import { Search, Globe, Zap, Clock, Shield, Check, Plus, AlertCircle, X, RefreshCw } from 'lucide-svelte/icons';
 
   interface FreeProvider {
     name: string;
@@ -21,6 +21,19 @@
     auth_type: string;
     quota_info: string;
     enabled: boolean;
+    chat_path?: string;
+    models_path?: string;
+    free_only?: boolean;
+    seed_only?: boolean;
+    no_model_fetch?: boolean;
+    logo?: string;
+  }
+
+  interface Connection {
+    id: string;
+    name: string;
+    base_url: string;
+    is_active: number;
   }
 
   let providers = $state<FreeProvider[]>([]);
@@ -31,17 +44,43 @@
   let apiKeyModal = $state<FreeProvider | null>(null);
   let apiKeyInput = $state('');
   let keyInputEl = $state<HTMLInputElement | null>(null);
+  let connectionIds = $state<Record<string, string>>({});
+  let fetchedModels = $state<Record<string, string[]>>({});
+  let modelSources = $state<Record<string, string>>({});
+  let fetchingModels = $state<Record<string, boolean>>({});
 
   async function loadProviders() {
     loading = true;
     error = '';
     try {
-      const res = await api.get<any>('/api/discover/free-providers');
-      providers = res.providers || [];
+      const [res, conns] = await Promise.all([
+        api.get<any>('/api/discover/free-providers'),
+        api.get<any>('/api/connections').catch(() => ({ data: [] }))
+      ]);
+      providers = (res.providers || [])
+        .filter((p: FreeProvider) => p.enabled !== false)
+        .map((p: FreeProvider) => ({ ...p, models: Array.isArray(p.models) ? p.models : [] }));
+      const existing = new Set<string>();
+      const ids: Record<string, string> = {};
+      for (const conn of conns?.data ?? []) {
+        if (conn.is_active === 0) continue;
+        for (const p of providers) {
+          if (conn.name === p.name && trimURL(conn.base_url) === trimURL(p.base_url)) {
+            existing.add(p.name);
+            ids[p.name] = conn.id;
+          }
+        }
+      }
+      connected = existing;
+      connectionIds = ids;
     } catch (e: any) {
       error = e.message || 'Failed to load providers';
     }
     loading = false;
+  }
+
+  function trimURL(url: string | undefined): string {
+    return (url || '').trim().replace(/\/$/, '').toLowerCase();
   }
 
   onMount(loadProviders);
@@ -56,19 +95,67 @@
     }
   }
 
+  function modelsFor(provider: FreeProvider): string[] {
+    return fetchedModels[provider.name] ?? provider.models;
+  }
+
+  async function loadDiscoveredModels(id: string): Promise<string[]> {
+    const res = await api.get<any>(`/api/models/discovered?connection_id=${encodeURIComponent(id)}`);
+    return (res?.data ?? [])
+      .filter((model: any) => model.is_active !== 0)
+      .map((model: any) => model.model_id)
+      .filter(Boolean);
+  }
+
+  async function fetchModels(provider: FreeProvider) {
+    if (provider.no_model_fetch || fetchingModels[provider.name]) return;
+    fetchingModels[provider.name] = true;
+    try {
+      const connId = connectionIds[provider.name];
+      if (connId && !provider.free_only) {
+        await api.post(`/api/models/sync/${encodeURIComponent(connId)}`, {});
+        const ids = await loadDiscoveredModels(connId);
+        if (!ids.length) throw new Error('provider returned no models');
+        fetchedModels[provider.name] = ids;
+        modelSources[provider.name] = 'live';
+        showToast(`${provider.name}: ${ids.length} live models`, 'success');
+      } else {
+        const prefix = provider.prefix.replace(/\/$/, '');
+        const res = await api.get<any>(`/api/discover/free-providers/${encodeURIComponent(prefix)}/models`);
+        const ids = res?.models ?? [];
+        if (!ids.length) throw new Error('no models returned');
+        fetchedModels[provider.name] = ids;
+        modelSources[provider.name] = res?.source || 'live';
+        showToast(`${provider.name}: ${ids.length}${provider.free_only ? ' free' : ''} models`, 'success');
+      }
+    } catch (e: any) {
+      if (e?.status === 409 || e?.detail?.needs_key) {
+        showToast(`Connect ${provider.name} with an API key first`, 'info', 4000);
+      } else {
+        showToast(e?.message || 'Failed to fetch models', 'error');
+      }
+    } finally {
+      fetchingModels[provider.name] = false;
+    }
+  }
+
   async function connectProvider(provider: FreeProvider, key: string) {
     connecting = provider.name;
     try {
-      await api.post('/api/connections', {
+      const res = await api.post<any>('/api/connections', {
         name: provider.name,
-        provider: provider.prefix.replace('/', ''),
         base_url: provider.base_url,
         api_key: key,
-        models: provider.models,
+        models: modelsFor(provider),
+        chat_path: provider.chat_path,
+        models_path: provider.models_path,
       });
       connected = new Set([...connected, provider.name]);
+      if (res?.id) connectionIds[provider.name] = res.id;
       apiKeyModal = null;
-      showToast(`Connected ${provider.name}`, 'success');
+      const count = Number(res?.models_count ?? 0);
+      const verb = res?.status === 'updated' ? 'Updated' : 'Connected';
+      showToast(`${verb} ${provider.name}${count ? ` · ${count} model${count === 1 ? '' : 's'}` : ''}`, 'success');
     } catch (e: any) {
       showToast(e.message || 'Failed to connect provider', 'error');
     } finally { connecting = null; }
@@ -95,7 +182,7 @@
     </div>
     <div>
       <h2 style="font-size: 18px; font-weight: 600; color: var(--color-fg-0); margin: 0;">Discover Free Providers</h2>
-      <p style="font-size: 12px; color: var(--color-fg-3); margin: 2px 0 0 0;">Connect free AI providers with one click. No credit card needed.</p>
+      <p style="font-size: 12px; color: var(--color-fg-3); margin: 2px 0 0 0;">Connect free-tier AI providers. Some need a free API key; limits and data policies vary.</p>
     </div>
   </div>
 
@@ -113,12 +200,22 @@
       {#each providers as provider}
         {@const badge = getAuthBadge(provider.auth_type)}
         {@const isConnected = connected.has(provider.name)}
+        {@const models = fetchedModels[provider.name] ?? provider.models}
         <div class="card" style="padding: 20px; position: relative; overflow: hidden;">
           <!-- Provider header -->
           <div class="flex items-start justify-between mb-3">
             <div class="flex items-center gap-3">
-              <div style="width: 36px; height: 36px; border-radius: 8px; background: var(--color-bg-sidebar-hover); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: var(--color-primary); font-family: var(--font-mono);">
-                {provider.prefix.replace('/', '')}
+              <div style="position: relative; width: 36px; height: 36px; border-radius: 8px; background: var(--color-bg-sidebar-hover); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: var(--color-fg-3); font-family: var(--font-mono); overflow: hidden;">
+                <span>{provider.prefix.replace('/', '')}</span>
+                {#if provider.logo}
+                  <img
+                    src={provider.logo}
+                    alt={`${provider.name} logo`}
+                    loading="lazy"
+                    style="position: absolute; width: 24px; height: 24px; object-fit: contain;"
+                    onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                  />
+                {/if}
               </div>
               <div>
                 <h3 style="font-size: 15px; font-weight: 600; color: var(--color-fg-0); margin: 0;">{provider.name}</h3>
@@ -139,15 +236,35 @@
           </div>
 
           <!-- Models -->
+          <div class="flex items-center justify-between mb-2" style="gap: 8px;">
+            <span style="font-size: 11px; color: var(--color-fg-3);">
+              {models.length}{provider.free_only ? ' free' : ''} model{models.length === 1 ? '' : 's'}{#if modelSources[provider.name] === 'live'}{' · live'}{/if}
+            </span>
+            {#if !provider.no_model_fetch}
+              <button
+                type="button"
+                class="btn-secondary"
+                style="font-size: 11px; padding: 4px 8px; display: inline-flex; align-items: center; gap: 4px;"
+                disabled={fetchingModels[provider.name] === true}
+                title="Fetch this provider's current model list"
+                onclick={() => fetchModels(provider)}
+              >
+                <RefreshCw size={12} />
+                {fetchingModels[provider.name] ? 'Fetching…' : 'Fetch models'}
+              </button>
+            {:else}
+              <span style="font-size: 10px; color: var(--color-fg-3);">curated</span>
+            {/if}
+          </div>
           <div class="flex flex-wrap gap-1.5 mb-4">
-            {#each provider.models.slice(0, 4) as model}
+            {#each models.slice(0, 4) as model}
               <span style="font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--color-bg-sidebar-hover); color: var(--color-fg-2); font-family: var(--font-mono);">
                 {model}
               </span>
             {/each}
-            {#if provider.models.length > 4}
+            {#if models.length > 4}
               <span style="font-size: 11px; padding: 3px 8px; border-radius: 4px; background: var(--color-bg-sidebar-hover); color: var(--color-fg-3);">
-                +{provider.models.length - 4} more
+                +{models.length - 4} more
               </span>
             {/if}
           </div>

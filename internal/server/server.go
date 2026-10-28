@@ -177,6 +177,17 @@ func New(cfg *config.Config, database *db.DB) *Server {
 
 	// Wire model discoverer
 	s.discoverer = discover.NewDiscoverer(database)
+	s.discoverer.SetOAuthCredentialResolver(func(provider string) (*discover.OAuthCredential, error) {
+		cred, err := s.oauthMgr.ResolveUpstreamCredentialFull(provider, s.oauthIdeEnabled())
+		if err != nil || cred == nil {
+			return nil, err
+		}
+		return &discover.OAuthCredential{
+			Token:      cred.Token,
+			AuthHeader: cred.AuthHeader,
+			AuthPrefix: cred.AuthPrefix,
+		}, nil
+	})
 
 	// Wire free provider scanner
 	s.fpScanner = freeproviders.New(database.Conn())
@@ -437,6 +448,7 @@ func (s *Server) routes() {
 
 	// Free Provider Discovery
 	s.mux.HandleFunc("GET /api/discover/free-providers", s.handleDiscoverFreeProviders)
+	s.mux.HandleFunc("GET /api/discover/free-providers/{id}/models", s.handleDiscoverProviderModels)
 
 	// Dashboard API + root redirect
 	s.registerDashboardRoutes()

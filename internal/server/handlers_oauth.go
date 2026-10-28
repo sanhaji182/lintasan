@@ -1,8 +1,10 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"os"
@@ -91,6 +93,8 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 
 	result, err := startOAuthAuthorizeFull(s, input.Provider, session.ID, s.oauthPublicBaseURL())
 	if err != nil {
+		// The flow never started, so do not leave a pending session behind.
+		_, _ = s.db.Conn().Exec(`DELETE FROM oauth_sessions WHERE id = ? AND status = 'pending'`, session.ID)
 		writeJSONStatus(w, http.StatusBadRequest, map[string]any{
 			"error":      err.Error(),
 			"provider":   input.Provider,
@@ -269,13 +273,13 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, oauthSuccessHTML, provider)
+	fmt.Fprintf(w, oauthSuccessHTML, html.EscapeString(provider))
 }
 
 func oauthIdeDisabledHTML(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusBadRequest)
-	fmt.Fprintf(w, oauthErrorHTML, msg)
+	fmt.Fprintf(w, oauthErrorHTML, html.EscapeString(msg))
 }
 
 const oauthSuccessHTML = `<!DOCTYPE html>
@@ -334,6 +338,27 @@ func (s *Server) handleOAuthRevokeSession(w http.ResponseWriter, r *http.Request
 	id := r.PathValue("id")
 	if id == "" {
 		writeJSONStatus(w, http.StatusBadRequest, map[string]string{"error": "session id is required"})
+		return
+	}
+	var status string
+	err := s.db.Conn().QueryRow(`SELECT status FROM oauth_sessions WHERE id = ?`, id).Scan(&status)
+	if err == sql.ErrNoRows {
+		writeJSONStatus(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		return
+	}
+	if err != nil {
+		writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "failed to load session"})
+		return
+	}
+	// DELETE means revoke an active session, but a revoked session is already
+	// inert — deleting it again removes the row so the dashboard can be cleaned.
+	if status == "revoked" {
+		if _, err := s.db.Conn().Exec(`DELETE FROM oauth_sessions WHERE id = ? AND status = 'revoked'`, id); err != nil {
+			writeJSONStatus(w, http.StatusInternalServerError, map[string]string{"error": "failed to remove session"})
+			return
+		}
+		s.audit("oauth.ide.purge", admin.Username, "oauth/"+id, nil)
+		writeJSON(w, map[string]string{"status": "deleted"})
 		return
 	}
 	if err := s.oauthMgr.RevokeSession(id); err != nil {

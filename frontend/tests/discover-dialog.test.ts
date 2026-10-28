@@ -22,7 +22,11 @@ describe('Discover API-key dialog accessibility', () => {
   beforeEach(() => {
     mocks.get.mockReset();
     mocks.post.mockReset();
-    mocks.get.mockResolvedValue({ providers: [openCode] });
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/discover/free-providers') return { providers: [openCode] };
+      if (path === '/api/connections') return { data: [] };
+      throw new Error(`unexpected GET ${path}`);
+    });
   });
 
   afterEach(cleanup);
@@ -50,5 +54,91 @@ describe('Discover API-key dialog accessibility', () => {
 
     await fireEvent.click(screen.getByTestId('api-key-backdrop'));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+describe('Discover connection state', () => {
+  beforeEach(() => {
+    mocks.get.mockReset();
+    mocks.post.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it('marks an existing active connection as Connected after reload', async () => {
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/discover/free-providers') return { providers: [openCode] };
+      if (path === '/api/connections') {
+        return { data: [{ id: 'c1', name: openCode.name, base_url: openCode.base_url, is_active: 1 }] };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    render(DiscoverPage);
+    const button = await screen.findByRole('button', { name: /Connected/i });
+    expect(button).toBeDisabled();
+  });
+
+  it('hides disabled providers and tolerates a null model list', async () => {
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/discover/free-providers') {
+        return {
+          providers: [
+            { ...openCode, models: null },
+            { ...openCode, name: 'Unsupported Provider', enabled: false }
+          ]
+        };
+      }
+      if (path === '/api/connections') return { data: [] };
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    render(DiscoverPage);
+    expect(await screen.findByRole('button', { name: 'Connect with API Key' })).toBeInTheDocument();
+    expect(screen.queryByText('Unsupported Provider')).not.toBeInTheDocument();
+  });
+});
+
+describe('Discover live free-model refresh', () => {
+  afterEach(cleanup);
+
+  it('fetches free models only when asked and seeds them on connect', async () => {
+    const freeProvider = {
+      ...openCode,
+      name: 'OpenRouter',
+      prefix: 'or/',
+      base_url: 'https://openrouter.ai/api/v1',
+      models: ['seed-model:free'],
+      free_only: true,
+      seed_only: true,
+    };
+    mocks.get.mockReset();
+    mocks.post.mockReset();
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/discover/free-providers') return { providers: [freeProvider] };
+      if (path === '/api/connections') return { data: [] };
+      if (path === '/api/discover/free-providers/or/models') {
+        return { models: ['alpha:free', 'beta:free'], total: 2, source: 'live', free_only: true };
+      }
+      throw new Error(`unexpected GET ${path}`);
+    });
+    mocks.post.mockResolvedValue({ status: 'created', id: 'conn-openrouter', models_count: 2 });
+
+    render(DiscoverPage);
+    await screen.findByText('seed-model:free');
+    expect(screen.queryByText('alpha:free')).not.toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Fetch models' }));
+    expect(await screen.findByText(/2 free models/)).toBeInTheDocument();
+    expect(screen.getByText('alpha:free')).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Connect with API Key' }));
+    await fireEvent.input(screen.getByLabelText('Provider API key'), { target: { value: 'sk-test' } });
+    await fireEvent.click(screen.getByRole('button', { name: /Save & Connect/ }));
+
+    await waitFor(() => expect(mocks.post).toHaveBeenCalledWith('/api/connections', expect.objectContaining({
+      name: 'OpenRouter',
+      models: ['alpha:free', 'beta:free']
+    })));
   });
 });
