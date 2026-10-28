@@ -54,6 +54,10 @@ type postMessageRequest struct {
 	// Temperature / MaxTokens pass through to the model when set.
 	Temperature *float64 `json:"temperature"`
 	MaxTokens   *int     `json:"max_tokens"`
+	// ReuseUserMessage means the prompt is already the last message in the
+	// transcript, so it must not be appended again. Set by regenerate; never by
+	// a normal POST.
+	ReuseUserMessage bool `json:"reuse_user_message,omitempty"`
 }
 
 // modelContextWindow returns the usable context window for a model name.
@@ -115,6 +119,34 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
+
+	s.postTurn(w, r, st, convID, in)
+}
+
+// servePostMessage re-enters the turn handler with an already-built body. Used
+// by regenerate/edit, which must reuse the whole turn path (streaming, tool
+// loop, attachment loading, persistence) rather than duplicate it.
+func (s *Server) servePostMessage(w http.ResponseWriter, r *http.Request, convID string, body []byte) {
+	st, ok := s.convStoreReady(w)
+	if !ok {
+		return
+	}
+
+	var in postMessageRequest
+	if err := json.Unmarshal(body, &in); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	s.postTurn(w, r, st, convID, in)
+}
+
+// postTurn is the turn body shared by a fresh message and by regenerate/edit.
+//
+// When in.ReuseUserMessage is set, the prompt already exists in the transcript
+// (regenerate keeps the original user turn) and the user row must NOT be
+// appended again — doing so duplicated the prompt on every regenerate.
+func (s *Server) postTurn(w http.ResponseWriter, r *http.Request, st *conversation.Store, convID string, in postMessageRequest) {
 	if strings.TrimSpace(in.Content) == "" && len(in.AttachmentIDs) == 0 {
 		writeErr(w, http.StatusBadRequest, "content or attachment_ids is required")
 		return
@@ -141,20 +173,43 @@ func (s *Server) handlePostMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Persist the user's turn first so a crash mid-reply still leaves the
 	// prompt visible in the UI.
-	attMeta, attText, attImages, err := s.loadAttachments(st, convID, in.AttachmentIDs)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	userMsg := &conversation.Message{
-		ConversationID: convID,
-		Role:           conversation.RoleUser,
-		Content:        in.Content,
-		Attachments:    attMeta,
-	}
-	if err := st.AppendMessage(userMsg); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+	//
+	// Regenerate reuses the user message already on disk: appending it again
+	// duplicated the prompt (1 user, 2 user, 3 assistant) and fed the model the
+	// same question twice.
+	var userMsg *conversation.Message
+	var attMeta, attText string
+	var attImages []map[string]any
+
+	if in.ReuseUserMessage {
+		last, err := s.lastUserMessage(st, convID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		userMsg = last
+
+		// Regenerate has no new attachments: replay whatever the original turn
+		// carried, so the retried answer still sees the image or file.
+		attMeta = last.Attachments
+		attText, attImages = s.attachmentPayloadFor(st, last)
+	} else {
+		var err error
+		attMeta, attText, attImages, err = s.loadAttachments(st, convID, in.AttachmentIDs)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		userMsg = &conversation.Message{
+			ConversationID: convID,
+			Role:           conversation.RoleUser,
+			Content:        in.Content,
+			Attachments:    attMeta,
+		}
+		if err := st.AppendMessage(userMsg); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
 	// First user turn names the thread, so the sidebar is not a wall of
