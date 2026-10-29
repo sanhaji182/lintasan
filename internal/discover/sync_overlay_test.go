@@ -13,7 +13,8 @@ const syncFixture = `{
     "providers": [
       {"key":"nvidia","quota":"Free 1000 req/month","models":[{"id":"nvidia/a"},{"id":"nvidia/b"}]},
       {"key":"openrouter","quota":"Free :free","models":[{"id":"vendor/paid"},{"id":"vendor/free:free"}]},
-      {"key":"googleai","quota":"Free tier","models":[{"id":"gemini-sync"}]}
+      {"key":"googleai","quota":"Free tier","models":[{"id":"gemini-sync"}]},
+      {"key":"kilo","name":"Kilo","quota":"Free · no key needed","url":"https://api.kilo.ai/api/gateway/chat/completions","models":[{"id":"kilo/free"}]}
     ]
   },
   "freellm": {
@@ -60,6 +61,13 @@ func TestApplySyncOverlayReplacesKnownProviders(t *testing.T) {
 	}
 	if zai.SyncSource != "Catalog Sync · FreeLLMAPI" {
 		t.Fatalf("zai source = %q", zai.SyncSource)
+	}
+	kilo := byPrefix["kilo/"]
+	if kilo.AuthType != "none" || kilo.BaseURL != "https://api.kilo.ai/api/gateway" || len(kilo.Models) != 1 {
+		t.Fatalf("kilo auto-discovered provider = %+v", kilo)
+	}
+	if !kilo.NoModelFetch || kilo.SyncSource == "" {
+		t.Fatalf("kilo should be a sync-only card, got %+v", kilo)
 	}
 }
 

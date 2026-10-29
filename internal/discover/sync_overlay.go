@@ -43,6 +43,8 @@ type syncModel struct {
 
 type syncProvider struct {
 	Key    string      `json:"key"`
+	Name   string      `json:"name"`
+	URL    string      `json:"url"`
 	Quota  string      `json:"quota"`
 	Models []syncModel `json:"models"`
 }
@@ -148,9 +150,39 @@ func rememberSyncFailure(url string) {
 	syncCache.mu.Unlock()
 }
 
+// syncSkipKeys are FCM entries that cannot be auto-wired: Cloudflare needs an
+// account-scoped URL, Cerebras is trial-only, and Codestral duplicates Mistral.
+var syncSkipKeys = map[string]bool{
+	"cloudflare": true,
+	"cerebras":   true,
+	"codestral":  true,
+}
+
+// syncKeyless lists FCM providers that explicitly work without an API key.
+var syncKeyless = map[string]bool{
+	"kilo":     true,
+	"llm7":     true,
+	"ovhcloud": true,
+}
+
+var syncLogos = map[string]string{
+	"qwen":        "/provider-logos/qwen.svg",
+	"novita":      "/provider-logos/novita.svg",
+	"kilo":        "/provider-logos/kilo.png",
+	"llm7":        "/provider-logos/llm7.png",
+	"onomeo":      "/provider-logos/onomeo.png",
+	"orcarouter":  "/provider-logos/orcarouter.png",
+	"requesty":    "/provider-logos/requesty.png",
+	"routeway":    "/provider-logos/routeway.png",
+	"runcrate":    "/provider-logos/runcrate.png",
+	"scaleway":    "/provider-logos/scaleway.png",
+	"siliconflow": "/provider-logos/siliconflow.png",
+}
+
 // ApplySyncOverlay replaces the static model lists of known providers with the
-// latest Catalog Sync state. It never adds providers or changes connection
-// metadata; if the sync service is unavailable the static registry is returned.
+// latest Catalog Sync state. FCM providers that are not in the curated registry
+// are appended as sync-discovered cards when their chat URL is directly usable.
+// If the sync service is unavailable the static registry is returned untouched.
 func ApplySyncOverlay(ctx context.Context, providers []FreeProvider) []FreeProvider {
 	catalog, ok := loadSyncCatalog(ctx)
 	if !ok {
@@ -199,6 +231,60 @@ func ApplySyncOverlay(ctx context.Context, providers []FreeProvider) []FreeProvi
 			out[i].SyncUpdatedAt = updatedAt
 			break
 		}
+	}
+
+	existingNames := make(map[string]bool, len(out))
+	existingPrefixes := make(map[string]bool, len(out))
+	for _, provider := range out {
+		existingNames[strings.ToLower(provider.Name)] = true
+		existingPrefixes[provider.Prefix] = true
+	}
+	knownFCMKeys := make(map[string]bool)
+	for _, refs := range syncRefs {
+		for _, ref := range refs {
+			if ref.source == "fcm" {
+				knownFCMKeys[ref.key] = true
+			}
+		}
+	}
+	for _, source := range catalog.FCM.Providers {
+		if syncSkipKeys[source.Key] || knownFCMKeys[source.Key] || existingNames[strings.ToLower(source.Name)] {
+			continue
+		}
+		baseURL := strings.TrimSuffix(strings.TrimRight(source.URL, "/"), "/chat/completions")
+		if baseURL == source.URL || baseURL == "" {
+			continue
+		}
+		prefix := source.Key + "/"
+		if existingPrefixes[prefix] {
+			continue
+		}
+		models := overlayModels(prefix, source.Models)
+		if len(models) == 0 {
+			continue
+		}
+		auth := "apikey"
+		if syncKeyless[source.Key] {
+			auth = "none"
+		}
+		out = append(out, FreeProvider{
+			Name:          source.Name,
+			Prefix:        prefix,
+			BaseURL:       baseURL,
+			Models:        models,
+			AuthType:      auth,
+			QuotaInfo:     source.Quota,
+			Enabled:       true,
+			ChatPath:      "/chat/completions",
+			ModelsPath:    "/models",
+			SeedOnly:      true,
+			NoModelFetch:  true,
+			Logo:          syncLogos[source.Key],
+			SyncSource:    "Catalog Sync · free-coding-models",
+			SyncUpdatedAt: updatedAt,
+		})
+		existingNames[strings.ToLower(source.Name)] = true
+		existingPrefixes[prefix] = true
 	}
 	return out
 }
