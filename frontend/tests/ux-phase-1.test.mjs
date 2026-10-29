@@ -113,7 +113,7 @@ test('snippets use a newly issued gateway key in every copyable example', () => 
 test('sidebar intent groups preserve every dashboard route and progressive disclosure', () => {
   const expected = [
     '/dashboard', '/dashboard/quickstart', '/dashboard/playground', '/dashboard/connections',
-    '/dashboard/models', '/dashboard/providers', '/dashboard/routing', '/dashboard/usage', '/dashboard/quota', '/dashboard/analytics', '/dashboard/keys',
+    '/dashboard/models', '/dashboard/chat', '/dashboard/routing', '/dashboard/usage', '/dashboard/quota', '/dashboard/analytics', '/dashboard/keys',
     '/dashboard/qoder-connections',
     '/dashboard/teams', '/dashboard/users', '/dashboard/webhooks', '/dashboard/memory',
     '/dashboard/mcp', '/dashboard/translator', '/dashboard/plugins', '/dashboard/backup',
@@ -138,7 +138,7 @@ test('sidebar intent groups preserve every dashboard route and progressive discl
 
 test('command search returns only real destinations and matches intent metadata', () => {
   assert.deepEqual(searchNavigation('provider').map(item => item.path), [
-    '/dashboard/connections', '/dashboard/providers', '/dashboard/experimental',
+    '/dashboard/connections', '/dashboard/experimental',
   ]);
   assert.equal(searchNavigation('observe requests')[0]?.path, '/dashboard/analytics');
   assert.equal(searchNavigation('not-a-real-command').length, 0);

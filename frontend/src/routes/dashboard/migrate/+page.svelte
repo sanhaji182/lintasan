@@ -498,11 +498,7 @@
       {#each result.skipped_reasons || [] as r}
         <p class="explain">{r}</p>
       {/each}
-      {#if result.providers_only}
-        <a class="btn primary" href="/dashboard/providers">View providers <ArrowRight size={16} /></a>
-      {:else}
-        <a class="btn primary" href="/dashboard/connections">View connections <ArrowRight size={16} /></a>
-      {/if}
+      <a class="btn primary" href="/dashboard/connections">View connections <ArrowRight size={16} /></a>
     </section>
   {/if}
 </div>

@@ -24,7 +24,6 @@ export const navigationGroups: NavigationGroup[] = [
     { label: 'Playground', path: '/dashboard/playground', icon: 'playground', description: 'Try a callable model', keywords: ['chat', 'test'] },
     { label: 'Qoder Connections', path: '/dashboard/qoder-connections', icon: 'cloud', description: 'Monitor Qoder credits and test models', keywords: ['qoder', 'credits', 'quota'] },
     { label: 'Models', path: '/dashboard/models', icon: 'models', description: 'Inspect callable model routes', keywords: ['catalog', 'test'] },
-    { label: 'Provider Catalog', path: '/dashboard/providers', icon: 'providers', description: 'Browse supported provider presets', keywords: ['provider', 'preset'] },
   ]},
   { label: 'Observe', collapsible: false, items: [
     { label: 'Usage', path: '/dashboard/usage', icon: 'usage', description: 'Token and request volume across models and accounts', keywords: ['usage', 'tokens', 'volume', 'stats'] },

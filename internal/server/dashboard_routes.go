@@ -16,6 +16,15 @@ func (s *Server) registerDashboardRoutes() {
 	mux.HandleFunc("GET /api/dashboard/logs", s.handleDashboardLogs)
 	mux.HandleFunc("PUT /api/dashboard/settings", s.handleDashboardSettings)
 
+	// Retired dashboard routes: explicit HTTP redirect to canonical destinations
+	// so bookmarks and deep links do not become unexplained 404s.
+	mux.HandleFunc("GET /dashboard/providers", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard/connections", http.StatusMovedPermanently)
+	})
+	mux.HandleFunc("GET /dashboard/providers/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard/connections", http.StatusMovedPermanently)
+	})
+
 	// Embedded SPA dashboard. Mounted at "GET /" — Go 1.22 ServeMux gives the
 	// specific /api, /v1, /health, /metrics, /mcp patterns priority, so this
 	// catch-all only handles UI routes + static assets. Serves index.html as a

@@ -72,6 +72,10 @@ func TestEveryDashboardRouteIsReachable(t *testing.T) {
 		t.Fatalf("walk frontend sources: %v", err)
 	}
 
+	retiredRoutes := map[string]string{
+		"providers": "/dashboard/connections",
+	}
+
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -79,6 +83,18 @@ func TestEveryDashboardRouteIsReachable(t *testing.T) {
 		name := e.Name()
 		if _, err := os.Stat(filepath.Join(routesDir, name, "+page.svelte")); err != nil {
 			continue // a directory without a page is not a route
+		}
+		if target, isRetired := retiredRoutes[name]; isRetired {
+			// Retired routes must NOT be linked from active navigation or sidebar
+			if strings.Contains(string(navigation), "'/dashboard/"+name+"'") || strings.Contains(string(navigation), "\"/dashboard/"+name+"\"") {
+				t.Errorf("retired route /dashboard/%s should not be present in navigation.ts", name)
+			}
+			// Verify that the route redirects to its canonical destination
+			tsPage, err := os.ReadFile(filepath.Join(routesDir, name, "+page.ts"))
+			if err != nil || !strings.Contains(string(tsPage), target) {
+				t.Errorf("retired route /dashboard/%s missing client-side redirect to %s in +page.ts", name, target)
+			}
+			continue
 		}
 		if !linked[name] {
 			t.Errorf("dashboard route /dashboard/%s has a +page.svelte but nothing links to it — "+

@@ -134,6 +134,9 @@ func TestEnabledFreeProvidersAreConnectable(t *testing.T) {
 		if p.Logo == "" {
 			t.Errorf("%s: enabled provider is missing logo", p.Name)
 		}
+		if p.IconURL == "" || p.IconURL != p.Logo {
+			t.Errorf("%s: icon_url should match logo, got %q vs %q", p.Name, p.IconURL, p.Logo)
+		}
 		if p.AuthType == "none" && (p.ChatPath == "" || p.ModelsPath == "") {
 			t.Errorf("%s: no-auth provider needs explicit chat_path and models_path", p.Name)
 		}

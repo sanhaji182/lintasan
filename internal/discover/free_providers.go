@@ -18,6 +18,7 @@ type FreeProvider struct {
 	// NoModelFetch marks providers whose OpenAI-compatible base has no /models.
 	NoModelFetch bool   `json:"no_model_fetch,omitempty"`
 	Logo         string `json:"logo,omitempty"`
+	IconURL      string `json:"icon_url,omitempty"`
 	// SyncSource/SyncUpdatedAt are filled at request time by ApplySyncOverlay.
 	SyncSource    string `json:"sync_source,omitempty"`
 	SyncUpdatedAt string `json:"sync_updated_at,omitempty"`
@@ -25,7 +26,7 @@ type FreeProvider struct {
 
 // GetFreeProviders returns the registry of known free AI providers.
 func GetFreeProviders() []FreeProvider {
-	return []FreeProvider{
+	providers := []FreeProvider{
 		{
 			Name:       "Pollinations",
 			Logo:       "/provider-logos/pollinations.svg",
@@ -200,6 +201,12 @@ func GetFreeProviders() []FreeProvider {
 			Enabled:   false,
 		},
 	}
+	for i := range providers {
+		if providers[i].IconURL == "" {
+			providers[i].IconURL = providers[i].Logo
+		}
+	}
+	return providers
 }
 
 // GetFreeProviderByPrefix looks up a free provider by its model prefix.

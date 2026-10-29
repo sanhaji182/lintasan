@@ -27,6 +27,7 @@
     seed_only?: boolean;
     no_model_fetch?: boolean;
     logo?: string;
+    icon_url?: string;
     sync_source?: string;
     sync_updated_at?: string;
   }
@@ -209,9 +210,9 @@
             <div class="flex items-center gap-3">
               <div style="position: relative; width: 36px; height: 36px; border-radius: 8px; background: var(--color-bg-sidebar-hover); display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: var(--color-fg-3); font-family: var(--font-mono); overflow: hidden;">
                 <span>{provider.prefix.replace('/', '')}</span>
-                {#if provider.logo}
+                {#if provider.logo || provider.icon_url}
                   <img
-                    src={provider.logo}
+                    src={provider.logo || provider.icon_url}
                     alt={`${provider.name} logo`}
                     loading="lazy"
                     style="position: absolute; width: 24px; height: 24px; object-fit: contain;"

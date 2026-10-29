@@ -142,3 +142,75 @@ describe('Discover live free-model refresh', () => {
     })));
   });
 });
+
+describe('Discover provider logo rendering and fallback', () => {
+  beforeEach(() => {
+    mocks.get.mockReset();
+    mocks.post.mockReset();
+  });
+
+  afterEach(cleanup);
+
+  it('renders provider logo from logo or icon_url', async () => {
+    const providerWithLogo = {
+      ...openCode,
+      name: 'NVIDIA NIM',
+      prefix: 'nvidia/',
+      logo: '/provider-logos/nvidia.svg',
+    };
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/discover/free-providers') return { providers: [providerWithLogo] };
+      if (path === '/api/connections') return { data: [] };
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    render(DiscoverPage);
+    const img = await screen.findByRole('img', { name: 'NVIDIA NIM logo' });
+    expect(img).toBeInTheDocument();
+    expect(img).toHaveAttribute('src', '/provider-logos/nvidia.svg');
+    expect(screen.getByText('nvidia')).toBeInTheDocument();
+  });
+
+  it('falls back to prefix monogram on image error', async () => {
+    const providerWithErrorLogo = {
+      ...openCode,
+      name: 'Failing Logo Provider',
+      prefix: 'fail/',
+      icon_url: 'https://invalid-domain.example/logo.svg',
+    };
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/discover/free-providers') return { providers: [providerWithErrorLogo] };
+      if (path === '/api/connections') return { data: [] };
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    render(DiscoverPage);
+    const img = await screen.findByRole('img', { name: 'Failing Logo Provider logo' });
+    expect(img).toBeInTheDocument();
+    expect(screen.getByText('fail')).toBeInTheDocument();
+
+    await fireEvent.error(img);
+    expect(img).toHaveStyle({ display: 'none' });
+  });
+
+  it('renders monogram directly when no logo or icon_url is provided', async () => {
+    const providerNoLogo = {
+      ...openCode,
+      name: 'Plain Provider',
+      prefix: 'plain/',
+      logo: undefined,
+      icon_url: undefined,
+    };
+    mocks.get.mockImplementation(async (path: string) => {
+      if (path === '/api/discover/free-providers') return { providers: [providerNoLogo] };
+      if (path === '/api/connections') return { data: [] };
+      throw new Error(`unexpected GET ${path}`);
+    });
+
+    render(DiscoverPage);
+    await screen.findByText('Plain Provider');
+    expect(screen.queryByRole('img', { name: 'Plain Provider logo' })).not.toBeInTheDocument();
+    expect(screen.getByText('plain')).toBeInTheDocument();
+  });
+});
+
