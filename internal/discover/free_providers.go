@@ -22,6 +22,9 @@ type FreeProvider struct {
 	// SyncSource/SyncUpdatedAt are filled at request time by ApplySyncOverlay.
 	SyncSource    string `json:"sync_source,omitempty"`
 	SyncUpdatedAt string `json:"sync_updated_at,omitempty"`
+	// AutoDiscovered marks providers appended from a sync feed rather than the
+	// curated registry.
+	AutoDiscovered bool `json:"auto_discovered,omitempty"`
 }
 
 // GetFreeProviders returns the registry of known free AI providers.

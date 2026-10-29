@@ -66,7 +66,7 @@ func TestApplySyncOverlayReplacesKnownProviders(t *testing.T) {
 	if kilo.AuthType != "none" || kilo.BaseURL != "https://api.kilo.ai/api/gateway" || len(kilo.Models) != 1 {
 		t.Fatalf("kilo auto-discovered provider = %+v", kilo)
 	}
-	if !kilo.NoModelFetch || kilo.SyncSource == "" {
+	if !kilo.NoModelFetch || !kilo.AutoDiscovered || kilo.SyncSource == "" {
 		t.Fatalf("kilo should be a sync-only card, got %+v", kilo)
 	}
 }

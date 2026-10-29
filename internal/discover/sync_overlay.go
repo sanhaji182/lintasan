@@ -268,20 +268,21 @@ func ApplySyncOverlay(ctx context.Context, providers []FreeProvider) []FreeProvi
 			auth = "none"
 		}
 		out = append(out, FreeProvider{
-			Name:          source.Name,
-			Prefix:        prefix,
-			BaseURL:       baseURL,
-			Models:        models,
-			AuthType:      auth,
-			QuotaInfo:     source.Quota,
-			Enabled:       true,
-			ChatPath:      "/chat/completions",
-			ModelsPath:    "/models",
-			SeedOnly:      true,
-			NoModelFetch:  true,
-			Logo:          syncLogos[source.Key],
-			SyncSource:    "Catalog Sync · free-coding-models",
-			SyncUpdatedAt: updatedAt,
+			Name:           source.Name,
+			Prefix:         prefix,
+			BaseURL:        baseURL,
+			Models:         models,
+			AuthType:       auth,
+			QuotaInfo:      source.Quota,
+			Enabled:        true,
+			ChatPath:       "/chat/completions",
+			ModelsPath:     "/models",
+			SeedOnly:       true,
+			NoModelFetch:   true,
+			Logo:           syncLogos[source.Key],
+			AutoDiscovered: true,
+			SyncSource:     "Catalog Sync · free-coding-models",
+			SyncUpdatedAt:  updatedAt,
 		})
 		existingNames[strings.ToLower(source.Name)] = true
 		existingPrefixes[prefix] = true

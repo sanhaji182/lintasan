@@ -30,6 +30,7 @@
     icon_url?: string;
     sync_source?: string;
     sync_updated_at?: string;
+    auto_discovered?: boolean;
   }
 
   interface Connection {
@@ -259,7 +260,14 @@
                 {fetchingModels[provider.name] ? 'Fetching…' : 'Fetch models'}
               </button>
             {:else}
-              <span style="font-size: 10px; color: var(--color-fg-3);">curated</span>
+              <span
+                style="font-size: 10px; color: var(--color-fg-3);"
+                title={provider.sync_source
+                  ? 'Daftar model berasal dari Catalog Sync; connect untuk memakai modelnya.'
+                  : 'Daftar model kurasi; provider tidak menyediakan endpoint /models.'}
+              >
+                {provider.auto_discovered || provider.sync_source ? 'sync-only' : 'curated'}
+              </span>
             {/if}
           </div>
           <div class="flex flex-wrap gap-1.5 mb-4">
