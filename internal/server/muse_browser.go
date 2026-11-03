@@ -42,7 +42,7 @@ const (
 	museBrowserQuality    = 60
 )
 
-var museSessionCookieNames = []string{"hatch_sess", "hatch_gw", "hatch_vml", "hatch_native_auth_device"}
+var museSessionCookieNames = []string{"hatch_sess", "hatch_vml", "hatch_native_auth_device"}
 
 type museBrowserSession struct {
 	server *Server
@@ -791,8 +791,9 @@ func (sess *museBrowserSession) readSessionCookies(ctx context.Context) (map[str
 	}
 	var result struct {
 		Cookies []struct {
-			Name  string `json:"name"`
-			Value string `json:"value"`
+			Name   string `json:"name"`
+			Value  string `json:"value"`
+			Domain string `json:"domain"`
 		} `json:"cookies"`
 	}
 	if err := json.Unmarshal(raw, &result); err != nil {
@@ -802,9 +803,12 @@ func (sess *museBrowserSession) readSessionCookies(ctx context.Context) (map[str
 	for _, name := range museSessionCookieNames {
 		want[name] = true
 	}
-	out := make(map[string]string, len(museSessionCookieNames))
+	out := make(map[string]string)
 	for _, c := range result.Cookies {
-		if want[c.Name] && c.Value != "" {
+		if c.Value == "" {
+			continue
+		}
+		if want[c.Name] || strings.HasPrefix(c.Name, "hatch_") || strings.HasPrefix(c.Name, "__Host-") || strings.HasSuffix(c.Domain, "muse.ai") {
 			out[c.Name] = c.Value
 		}
 	}

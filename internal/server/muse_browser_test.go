@@ -208,7 +208,7 @@ func TestMuseBrowserPartialRenew(t *testing.T) {
 	s.museBrowserSessions[sess.id] = sess
 
 	s.importMuseBrowserPartial(sess, map[string]string{
-		"hatch_sess": "x", "hatch_gw": "y", "hatch_native_auth_device": "z",
+		"hatch_sess": "x", "hatch_native_auth_device": "z",
 	})
 
 	deadline := time.After(5 * time.Second)

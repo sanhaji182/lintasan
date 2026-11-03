@@ -1,4 +1,4 @@
-const REQUIRED_COOKIES = ['hatch_sess', 'hatch_gw', 'hatch_vml', 'hatch_native_auth_device'];
+const REQUIRED_COOKIES = ['hatch_sess', 'hatch_native_auth_device'];
 const DEFAULT_BASE = 'https://lintasan.sans.biz.id';
 
 const baseInput = document.getElementById('base');
@@ -27,7 +27,7 @@ async function readMuseCookies() {
     try {
       const cookies = await chrome.cookies.getAll(query);
       for (const cookie of cookies) {
-        if (REQUIRED_COOKIES.includes(cookie.name) && !found[cookie.name]) {
+        if ((REQUIRED_COOKIES.includes(cookie.name) || cookie.name.startsWith('hatch_') || cookie.name.startsWith('__Host-')) && !found[cookie.name]) {
           found[cookie.name] = cookie.value;
         }
       }
