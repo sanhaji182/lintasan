@@ -7,8 +7,8 @@
 		"dev": "vite dev",
 		"build": "vite build",
 		"preview": "vite preview",
-		"test": "node --experimental-strip-types --test tests/*.test.mjs && vitest run tests/*.test.ts",
-		"test:unit": "vitest run tests/*.test.ts",
+		"test": "node --experimental-strip-types --test tests/*.test.mjs && node scripts/run-vitest.mjs tests/*.test.ts",
+		"test:unit": "node scripts/run-vitest.mjs tests/*.test.ts",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch"
