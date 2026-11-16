@@ -27,12 +27,81 @@ import (
 	"time"
 
 	"github.com/sanhaji182/lintasan-go/internal/antigravity"
+	"github.com/sanhaji182/lintasan-go/internal/oauthide"
 	"github.com/sanhaji182/lintasan-go/internal/translator"
 )
 
 const antigravityFormat = "antigravity"
 
+// antigravityReauthCode is the machine-readable code Lintasan returns when an
+// Antigravity connection cannot produce a usable token. It is deliberately NOT
+// a retryable upstream error: retrying re-reads the same dead session.
+const antigravityReauthCode = "oauth_reauth_required"
+
+// antigravityReauthError explains WHY no token was available and what a human
+// has to do about it, instead of emitting a bare "no access token" that reads
+// like an internal Lintasan fault.
+//
+// The three states an operator can actually act on:
+//   - credentials not configured  -> set the Google OAuth client env vars
+//   - credentials fine, no session -> sign in (nothing to refresh)
+//   - session exists but is dead after refresh -> sign in again
+//
+// It never pretends the provider is merely "unavailable", because leaving the
+// dashboard on "enabled" while every call fails is the silent-failure mode this
+// exists to remove.
+func antigravityReauthError(conn *Connection) error {
+	connID := ""
+	if conn != nil {
+		connID = conn.ID
+	}
+	if err := oauthide.ValidateAntigravityConfiguration(); err != nil {
+		return fmt.Errorf("%s: %w — reauthentication is impossible until the OAuth client is configured",
+			antigravityReauthCode, err)
+	}
+	return fmt.Errorf("%s: antigravity connection %q has no usable OAuth session (expired or revoked); "+
+		"sign in again from Dashboard → OAuth IDE → Antigravity to mint a new token",
+		antigravityReauthCode, connID)
+}
+
+// isAntigravityReauth reports whether err is the "human must sign in again"
+// signal. Callers use it to answer with 401 + the reauth code and to flag the
+// connection, rather than counting it as a generic 502 provider failure that
+// looks transient.
+func isAntigravityReauth(err error) bool {
+	return err != nil && strings.Contains(err.Error(), antigravityReauthCode)
+}
+
+// flagConnectionReauth records on the connection row that it is waiting for a
+// human sign-in. This is what makes the failure visible in the dashboard: an
+// enabled connection with a flagged last_error_code is distinguishable from a
+// healthy one, and the flag clears as soon as the connection serves a request.
+func (p *ProxyHandler) flagConnectionReauth(connID, model, msg string) {
+	if connID == "" {
+		return
+	}
+	if len(msg) > 512 {
+		msg = msg[:512]
+	}
+	if p.db == nil {
+		return
+	}
+	p.db.Conn().Exec(`
+		UPDATE connections
+		SET last_error_code = ?, last_error_at = datetime('now','localtime'), last_error_model = ?
+		WHERE id = ?`, antigravityReauthCode, model, connID)
+}
+
 func (p *ProxyHandler) isAntigravityNative(conn *Connection) bool {
+	if conn == nil {
+		return false
+	}
+	return isAntigravityNativeConn(conn)
+}
+
+// isAntigravityNativeConn is the package-level form so call sites that are not
+// methods (and tests) can ask the same question without a handler.
+func isAntigravityNativeConn(conn *Connection) bool {
 	if conn == nil {
 		return false
 	}
@@ -40,10 +109,25 @@ func (p *ProxyHandler) isAntigravityNative(conn *Connection) bool {
 		strings.EqualFold(strings.TrimSpace(conn.Format), antigravityFormat)
 }
 
+// clearConnectionReauth drops the reauth flag after the connection proves it can
+// serve a request. A stale "sign in again" flag is a lie in the other direction.
+func (p *ProxyHandler) clearConnectionReauth(connID string) {
+	if connID == "" || p.db == nil {
+		return
+	}
+	p.db.Conn().Exec(`
+		UPDATE connections SET last_error_code = NULL, last_error_model = NULL
+		WHERE id = ? AND last_error_code = ?`, connID, antigravityReauthCode)
+}
+
 func (p *ProxyHandler) antigravityUpstream(ctx context.Context, conn *Connection, body []byte) (*http.Request, error) {
 	apiKey := strings.TrimSpace(conn.APIKey)
 	if apiKey == "" {
-		return nil, fmt.Errorf("antigravity: connection %q has no OAuth access token", conn.ID)
+		// No usable OAuth token reached this connection. That is not a generic
+		// upstream fault the caller should retry: the account needs a human to
+		// sign in again. Resolve why so the client gets the actual next step
+		// instead of a bare "no token" that reads like a Lintasan bug.
+		return nil, antigravityReauthError(conn)
 	}
 
 	var openAI map[string]any
