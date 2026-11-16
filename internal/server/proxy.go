@@ -957,6 +957,17 @@ retryPass:
 		}
 if retryErr != nil {
 			lastErr = retryErr.Error()
+			// An OAuth connection that cannot produce a token is not a provider
+			// outage — it needs a human to sign in again. Answer 401 with the
+			// reauth code and flag the connection, so the failure is visible and
+			// actionable instead of a 502 that looks like a transient blip and
+			// invites the caller to retry a session that will never heal.
+			if isAntigravityReauth(retryErr) {
+				lastStatusCode = http.StatusUnauthorized
+				p.flagConnectionReauth(conn.ID, candidateModel, lastErr)
+				p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, http.StatusUnauthorized, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+				continue
+			}
 			failureUnlessClientGone(breaker, r.Context())
 			p.recordMultiAccountResult(conn.PoolID, poolAccountID, false, false)
 			p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, 502, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
@@ -1117,6 +1128,12 @@ if retryErr != nil {
 		// Success! Record to breaker
 		breaker.Success()
 		p.recordMultiAccountResult(conn.PoolID, poolAccountID, true, false)
+		// Clear a stale reauth flag: this connection just served a request, so
+		// it is demonstrably not waiting for a login. Leaving the flag set would
+		// tell the operator to re-authenticate an account that is working.
+		if isAntigravityNativeConn(conn) {
+			p.clearConnectionReauth(conn.ID)
+		}
 
 		// Record latency for load balancer
 		latencyMs := float64(time.Since(start).Milliseconds())
@@ -2470,8 +2487,17 @@ func (p *ProxyHandler) findConnectionForModel(model string) (*Connection, error)
 }
 
 // scanConnections runs the shared connection-column query and folds every row
-// into a Connection, applying per-connection auth. Used where more than one
-// candidate is needed (findConnectionForModel deliberately returns just one).
+// into a Connection. Used where more than one candidate is needed
+// (findConnectionForModel deliberately returns just one).
+//
+// CRITICAL: the auth overlay is deferred until AFTER the rowset is drained and
+// closed. applyConnectionAuth may touch the database (oauthIdeEnabled ->
+// GetSetting) and the pool ceiling is 1 connection, so calling it inside the
+// rows.Next() loop made the query wait forever for a connection that the open
+// rowset was itself holding. That deadlocked every OAuth IDE provider
+// (Antigravity in production) with no log line and no timeout; plain
+// connections were unaffected because applyConnectionAuth returns early when
+// oauth_provider is empty. See scan_connections_deadlock_test.go.
 func (p *ProxyHandler) scanConnections(rows *sql.Rows) []*Connection {
 	var out []*Connection
 	for rows.Next() {
@@ -2479,8 +2505,15 @@ func (p *ProxyHandler) scanConnections(rows *sql.Rows) []*Connection {
 		if err := rows.Scan(&conn.ID, &conn.Name, &conn.BaseURL, &conn.APIKey, &conn.OAuthProvider, &conn.Format, &conn.ChatPath, &conn.AuthHeader, &conn.AuthPrefix, &conn.IsActive, &conn.Priority, &conn.PoolID); err != nil {
 			continue
 		}
-		p.applyConnectionAuth(&conn)
 		out = append(out, &conn)
+	}
+	// Release the only pooled connection before any per-connection auth lookup
+	// asks for one. The caller's `defer rows.Close()` is not enough: it runs
+	// after this function returns.
+	rows.Close()
+
+	for _, conn := range out {
+		p.applyConnectionAuth(conn)
 	}
 	return out
 }

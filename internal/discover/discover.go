@@ -296,7 +296,13 @@ func (d *Discoverer) fetchModelsFromProvider(conn map[string]any) ([]ModelInfo, 
 	}
 
 	// Antigravity specialized path: Google Cloud Code does not serve /v1/models.
-	// Return the canonical Antigravity model catalogue.
+	// Ask the real entitlement endpoint (v1internal:fetchAvailableModels) with
+	// the account's own token, because the catalogue is per-account AND moves:
+	// the static list below once advertised 12 ids that Google no longer serves
+	// (gemini-3.1-pro-high, gemini-3.7-flash-*, claude-*-5-5, gemini-pro-agent),
+	// so every one of those 404'd at request time. Falling back to the static
+	// list is still correct — it is what a token-less deployment can assert —
+	// but it must never override a live answer.
 	oauthProv, _ := conn["oauth_provider"].(string)
 	cname, _ := conn["name"].(string)
 	format, _ := conn["format"].(string)
@@ -305,6 +311,9 @@ func (d *Discoverer) fetchModelsFromProvider(conn map[string]any) ([]ModelInfo, 
 		strings.EqualFold(format, "antigravity") ||
 		strings.Contains(strings.ToLower(baseURL), "cloudcode-pa.googleapis.com") ||
 		strings.Contains(strings.ToLower(cname), "antigravity") {
+		if models, err := d.fetchAntigravityModels(conn); err == nil && len(models) > 0 {
+			return models, nil
+		}
 		return AntigravityModels(), nil
 	}
 	if baseURL == "" {
