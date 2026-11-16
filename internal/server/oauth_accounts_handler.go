@@ -60,6 +60,12 @@ type oauthProviderView struct {
 	Wired          bool   `json:"wired"`
 	ConnectionID   string `json:"connection_id,omitempty"`
 	ConnectionName string `json:"connection_name,omitempty"`
+	// LastError* mirrors connections.last_error_code. Wire state alone cannot
+	// express "wired but unusable": oauth_reauth_required is the difference
+	// between "provider is fine" and "a human must sign in again".
+	LastErrorCode  string `json:"last_error_code,omitempty"`
+	LastErrorModel string `json:"last_error_model,omitempty"`
+	LastErrorAt    string `json:"last_error_at,omitempty"`
 }
 
 // maskToken reveals only enough to tell accounts apart. A token short enough
@@ -154,14 +160,22 @@ func (s *Server) handleOAuthAccounts(w http.ResponseWriter, r *http.Request) {
 
 	// Wire state per provider: does a connection point at this oauth_provider,
 	// and is it active? This is what makes the dashboard's "wired" badge honest.
+	//
+	// last_error_* is carried along because "wired" alone is not enough: a
+	// connection can be wired and still be unable to serve a single request
+	// (every session expired/revoked). Without the code, the dashboard showed a
+	// wired badge next to zero accounts and left the operator to guess whether a
+	// login was needed. oauth_reauth_required is exactly that answer.
 	connRows, err := s.db.Conn().Query(
-		`SELECT id, name, oauth_provider FROM connections
+		`SELECT id, name, oauth_provider,
+		        COALESCE(last_error_code,''), COALESCE(last_error_model,''), COALESCE(last_error_at,'')
+		 FROM connections
 		 WHERE oauth_provider != '' AND is_active = 1`)
 	if err == nil {
 		defer connRows.Close()
 		for connRows.Next() {
-			var cid, cname, prov string
-			if connRows.Scan(&cid, &cname, &prov) != nil {
+			var cid, cname, prov, errCode, errModel, errAt string
+			if connRows.Scan(&cid, &cname, &prov, &errCode, &errModel, &errAt) != nil {
 				continue
 			}
 			pv := byProvider[prov]
@@ -175,6 +189,9 @@ func (s *Server) handleOAuthAccounts(w http.ResponseWriter, r *http.Request) {
 			pv.Wired = true
 			pv.ConnectionID = cid
 			pv.ConnectionName = cname
+			pv.LastErrorCode = errCode
+			pv.LastErrorModel = errModel
+			pv.LastErrorAt = errAt
 		}
 	}
 

@@ -1260,7 +1260,12 @@
                 {/if}
                 {#if provider.wired && provider.active + provider.expiring === 0}
                   <p class="warn-note">
-                    This provider is wired but has no usable account. Reconnect a session, then verify again.
+                    {#if provider.last_error_code === 'oauth_reauth_required'}
+                      Provider ini wired tapi tidak punya sesi yang bisa dipakai —
+                      <strong>login ulang</strong> diperlukan sebelum bisa melayani request.
+                    {:else}
+                      This provider is wired but has no usable account. Reconnect a session, then verify again.
+                    {/if}
                   </p>
                 {/if}
                 <ul class="session-list account-list">

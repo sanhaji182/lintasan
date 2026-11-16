@@ -26,6 +26,10 @@ export interface OAuthProviderAccounts {
   wired: boolean;
   connection_id?: string;
   connection_name?: string;
+  /** Machine code from connections.last_error_code (e.g. oauth_reauth_required). */
+  last_error_code?: string;
+  last_error_model?: string;
+  last_error_at?: string;
 }
 
 export interface OAuthAccountsResponse {
