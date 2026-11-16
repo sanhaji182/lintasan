@@ -108,12 +108,15 @@ func TestFlagAndClearConnectionReauth(t *testing.T) {
 	// otherwise the dashboard keeps asking for a login that already happened.
 	p.clearConnectionReauth("ag-1")
 	if err := database.Conn().QueryRow(
-		`SELECT COALESCE(last_error_code,'') FROM connections WHERE id='ag-1'`,
-	).Scan(&code); err != nil {
+		`SELECT COALESCE(last_error_code,''), COALESCE(last_error_at,'') FROM connections WHERE id='ag-1'`,
+	).Scan(&code, &model); err != nil {
 		t.Fatal(err)
 	}
 	if code != "" {
 		t.Errorf("flag not cleared after success: %q", code)
+	}
+	if model != "" {
+		t.Errorf("last_error_at not cleared after success: %q", model)
 	}
 }
 

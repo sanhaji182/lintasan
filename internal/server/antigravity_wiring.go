@@ -111,12 +111,15 @@ func isAntigravityNativeConn(conn *Connection) bool {
 
 // clearConnectionReauth drops the reauth flag after the connection proves it can
 // serve a request. A stale "sign in again" flag is a lie in the other direction.
+//
+// last_error_at goes too: leaving a timestamp with no code reads as "something
+// failed recently" on every surface that shows the time.
 func (p *ProxyHandler) clearConnectionReauth(connID string) {
 	if connID == "" || p.db == nil {
 		return
 	}
 	p.db.Conn().Exec(`
-		UPDATE connections SET last_error_code = NULL, last_error_model = NULL
+		UPDATE connections SET last_error_code = NULL, last_error_model = NULL, last_error_at = NULL
 		WHERE id = ? AND last_error_code = ?`, connID, antigravityReauthCode)
 }
 
