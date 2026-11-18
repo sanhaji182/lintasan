@@ -944,6 +944,15 @@ retryPass:
 			usedConn = attemptConn
 			resp, err = p.doUpstream(r, attemptConn, candidateBody)
 			if err != nil {
+				// A reauth failure is terminal for this attempt: the session is
+				// gone and waiting cannot mint a new one, so retrying the SAME
+				// connection only burns the backoff budget (3 retries ≈ 7s of
+				// sleeping) before the request fails anyway. Return it
+				// non-retryable and let the caller fall over to another
+				// provider that actually has a live account.
+				if isAntigravityReauth(err) {
+					return false, err
+				}
 				return true, err // retry on connection errors
 			}
 			if resp.StatusCode == 429 || resp.StatusCode >= 500 {
@@ -966,6 +975,23 @@ if retryErr != nil {
 				lastStatusCode = http.StatusUnauthorized
 				p.flagConnectionReauth(conn.ID, candidateModel, lastErr)
 				p.logRequest(resolvedModel, conn.ID, conn.Name, conn.oauthSessionID, http.StatusUnauthorized, time.Since(start).Milliseconds(), 0, 0, false, lastErr, taskClass, modeLabel)
+				// A dead session is an ACCOUNT problem, not a model problem:
+				// other providers may serve this very model with a live key.
+				// Without this widening the loop simply ends and the caller
+				// gets 401 for a model another provider could have answered —
+				// measured live on 2026-11-18: gemini-2.5-flash existed on
+				// clouvia (healthy) yet every request failed here. Mirrors the
+				// 401/403 path: same helper, same untried-ids guard, same
+				// refusal to invent candidates.
+				if i >= len(candidates)-1 && comboName == "" {
+					tried := make([]string, 0, len(candidates))
+					for _, c := range candidates {
+						tried = append(tried, c.ID)
+					}
+					if alternates := p.findAlternateConnectionsForModel(resolvedModel, tried); len(alternates) > 0 {
+						candidates = append(candidates, alternates...)
+					}
+				}
 				continue
 			}
 			failureUnlessClientGone(breaker, r.Context())

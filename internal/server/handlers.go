@@ -112,6 +112,63 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A connection pointing at an OAuth IDE provider with no resolvable credential
+	// cannot serve ANY model it advertises: only a human sign-in mints a token.
+	// Leaving those models in the catalogue offers callers routes guaranteed to
+	// fail — measured live on 2026-11-18: six models were advertised exclusively
+	// by a tokenless antigravity connection and all answered 401
+	// oauth_reauth_required. The eligibility question is delegated to the OAuth
+	// manager (see shouldOfferInModelCatalog) so this cannot drift from what the
+	// proxy actually enforces.
+	//
+	// The connection rows are drained into a map BEFORE any credential lookup:
+	// the DB pool is capped at one connection, so calling into the OAuth manager
+	// while a rowset is still open would block forever (silent hang, no log).
+	oauthProviderOf := map[string]string{}
+	if connRows, cerr := s.db.Conn().Query(`SELECT id, COALESCE(oauth_provider,'') FROM connections`); cerr == nil {
+		for connRows.Next() {
+			var cid, provider string
+			if connRows.Scan(&cid, &provider) == nil {
+				oauthProviderOf[cid] = provider
+			}
+		}
+		connRows.Close()
+	}
+
+	offered := map[string]bool{}
+	for _, m := range modelsList {
+		if _, seen := offered[m.ConnectionID]; seen {
+			continue
+		}
+		provider := strings.TrimSpace(oauthProviderOf[m.ConnectionID])
+		if provider == "" {
+			// API-key connection (or an id we could not read): always offered.
+			offered[m.ConnectionID] = true
+			continue
+		}
+		offered[m.ConnectionID] = s.proxy.shouldOfferInModelCatalog(&Connection{
+			ID:            m.ConnectionID,
+			OAuthProvider: provider,
+		})
+	}
+	deadOAuth := map[string]bool{}
+	for connID, ok := range offered {
+		if !ok {
+			deadOAuth[connID] = true
+		}
+	}
+
+	if len(deadOAuth) > 0 {
+		kept := modelsList[:0]
+		for _, m := range modelsList {
+			if deadOAuth[m.ConnectionID] {
+				continue
+			}
+			kept = append(kept, m)
+		}
+		modelsList = kept
+	}
+
 	// Expose configured combos as callable models in /v1/models
 	if cbJSON, err := s.db.GetSetting("combos"); err == nil && cbJSON != "" {
 		var combosList []combo.Combo
