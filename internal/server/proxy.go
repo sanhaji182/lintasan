@@ -148,12 +148,26 @@ func NewProxyHandler(cfg *config.Config, database *db.DB) *ProxyHandler {
 	}
 	// Rate limiter: per-key requests/min, burst. Defaults 60/30 (unchanged).
 	// Override via env for benchmarking / tuning; 0 disables the limiter.
+	//
+	// The dashboard's Settings → "Rate limiting" toggle (settings.rate_limit_enabled)
+	// must be honoured: it was written by the UI and read by NOTHING, so an
+	// operator who turned the limiter off still got 429s at 60 req/min. Measured
+	// 2026-11-18: five concurrent conversations (≈72 requests) tripped it while
+	// the setting said false. An unset/unparseable value keeps the historic
+	// default so existing deployments do not silently change behaviour.
 	rlPerMin, rlBurst := 60, 30
 	if ph.cfg.RateLimitPerMin > 0 {
 		rlPerMin = ph.cfg.RateLimitPerMin
 	}
 	if ph.cfg.RateLimitBurst > 0 {
 		rlBurst = ph.cfg.RateLimitBurst
+	}
+	if database != nil {
+		if v, err := database.GetSetting(rateLimitEnabledSettingKey); err == nil {
+			if enabled, ok := parseBoolSetting(v); ok && !enabled {
+				rlPerMin = 0
+			}
+		}
 	}
 	ph.rlEnabled = rlPerMin > 0
 	if ph.rlEnabled {
@@ -269,6 +283,61 @@ func (p *ProxyHandler) getSetting(key, def string) string {
 		return def
 	}
 	return val
+}
+
+// rateLimitEnabledSettingKey is the dashboard Settings → "Rate limiting" toggle.
+// The UI has always written it; before this constant nothing in Go read it, so
+// disabling the limiter in the dashboard had no effect at all.
+const rateLimitEnabledSettingKey = "rate_limit_enabled"
+
+// rateLimitSettingEnabled reports the current toggle value at REQUEST time, so
+// flipping it in the dashboard takes effect without a restart. Unset or
+// unparseable keeps the historic default (enabled) rather than silently
+// removing a protection someone may rely on.
+func (p *ProxyHandler) rateLimitSettingEnabled() bool {
+	if p.db == nil {
+		return true
+	}
+	v, err := p.db.GetSetting(rateLimitEnabledSettingKey)
+	if err != nil {
+		return true
+	}
+	enabled, ok := parseBoolSetting(v)
+	if !ok {
+		return true
+	}
+	return enabled
+}
+
+// applyRateLimit enforces the per-key then per-IP limits. Returns false when the
+// request was rejected (and the response written), true when it may proceed.
+//
+// Split out of HandleChatCompletions so the toggle can be tested against real
+// limiter state instead of by counting HTTP responses from a mock upstream.
+func (p *ProxyHandler) applyRateLimit(w http.ResponseWriter, r *http.Request) bool {
+	if p.rl == nil || !p.rlEnabled || !p.rateLimitSettingEnabled() {
+		return true
+	}
+	apiKey := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	clientIP := r.Header.Get("X-Forwarded-For")
+	if clientIP == "" {
+		clientIP = r.RemoteAddr
+	}
+
+	allowed, remaining := p.rl.AllowKey(apiKey, 0)
+	if !allowed {
+		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("Retry-After", "60")
+		http.Error(w, `{"error":{"message":"rate limit exceeded","type":"rate_limit"}}`, http.StatusTooManyRequests)
+		return false
+	}
+	w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+
+	if !p.rl.AllowIP(clientIP) {
+		http.Error(w, `{"error":{"message":"rate limit exceeded","type":"rate_limit"}}`, http.StatusTooManyRequests)
+		return false
+	}
+	return true
 }
 
 // getSettingFromDB is a static helper that reads a setting from a DB instance.
@@ -466,29 +535,8 @@ func (p *ProxyHandler) HandleChatCompletions(w http.ResponseWriter, r *http.Requ
 
 	// Rate Limiter
 	if p.rl != nil {
-		apiKey := r.Header.Get("Authorization")
-		apiKey = strings.TrimPrefix(apiKey, "Bearer ")
-		clientIP := r.Header.Get("X-Forwarded-For")
-		if clientIP == "" {
-			clientIP = r.RemoteAddr
-		}
-
-		// Check per-key (skip entirely when limiter disabled)
-		if p.rlEnabled {
-			allowed, remaining := p.rl.AllowKey(apiKey, 0)
-			if !allowed {
-				w.Header().Set("X-RateLimit-Remaining", "0")
-				w.Header().Set("Retry-After", "60")
-				http.Error(w, `{"error":{"message":"rate limit exceeded","type":"rate_limit"}}`, http.StatusTooManyRequests)
-				return
-			}
-			w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
-
-			// Check per-IP
-			if !p.rl.AllowIP(clientIP) {
-				http.Error(w, `{"error":{"message":"rate limit exceeded","type":"rate_limit"}}`, http.StatusTooManyRequests)
-				return
-			}
+		if !p.applyRateLimit(w, r) {
+			return
 		}
 	}
 
