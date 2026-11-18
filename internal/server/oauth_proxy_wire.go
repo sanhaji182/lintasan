@@ -10,6 +10,45 @@ import (
 	"github.com/sanhaji182/lintasan-go/internal/lb"
 )
 
+// connectionHasResolvableOAuthCredential reports whether this connection's OAuth
+// provider can currently produce a usable token.
+//
+// It asks the OAuthManager instead of re-implementing the eligibility rules in
+// SQL, because those rules are not obvious: a session whose status is 'expired'
+// is STILL usable when it carries a refresh token (pickOAuthSession revives it on
+// the fly), and a revoked one never is. A hand-written `status='active'` check
+// would call a revivable account dead and hide working models from the catalogue.
+//
+// false means: no token can be minted for this provider without a human sign-in.
+func (p *ProxyHandler) connectionHasResolvableOAuthCredential(conn *Connection) bool {
+	if conn == nil || strings.TrimSpace(conn.OAuthProvider) == "" {
+		return false
+	}
+	if p.oauthMgr == nil || !p.oauthIdeEnabled() {
+		// The lab being off is a different failure (the operator disabled it on
+		// purpose); do not call every OAuth connection dead because of it.
+		return true
+	}
+	cred, err := p.oauthMgr.ResolveUpstreamCredentialFull(conn.OAuthProvider, true)
+	if err != nil || cred == nil {
+		return false
+	}
+	return strings.TrimSpace(cred.Token) != ""
+}
+
+// shouldOfferInModelCatalog decides whether a connection's advertised models
+// belong in /v1/models. API-key connections are always offered (a wrong key is a
+// different failure the operator sees on the connection row). An OAuth
+// connection whose provider has no resolvable credential is NOT offered: every
+// call to it would fail with oauth_reauth_required, so advertising its models
+// only hands callers routes guaranteed to 401.
+func (p *ProxyHandler) shouldOfferInModelCatalog(conn *Connection) bool {
+	if conn == nil || strings.TrimSpace(conn.OAuthProvider) == "" {
+		return true
+	}
+	return p.connectionHasResolvableOAuthCredential(conn)
+}
+
 // applyConnectionAuth overlays OAuth IDE session tokens when connection.oauth_provider is set.
 // Static api_key remains if OAuth is disabled, unresolved, or empty.
 func (p *ProxyHandler) applyConnectionAuth(conn *Connection) {
