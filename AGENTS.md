@@ -356,6 +356,16 @@ sudo systemctl is-active lintasan
 - login `admin/admin123` → dashboard
 - logout → `/login`
 
+**Verifikasi pasca-deploy (read-only, aman dijalankan kapan saja):**
+```bash
+python3 scripts/verify_catalog_prod.py            # ada model diiklankan tapi tak bisa dilayani?
+python3 scripts/verify_failover_prod.py [model]   # koneksi mana yang melayani 1 request, berapa lama
+bash    scripts/provider_models_probe.sh <conn>   # provider hidup? (GET /models, 0 token)
+python3 scripts/e2e_dead_oauth_provider.py        # bukti A/B: baseline vs fixed, pakai snapshot DB
+```
+Semuanya hanya membaca DB (`mode=ro`) + GET ke gateway; `verify_failover_prod.py`
+mengirim SATU chat completion untuk mengamati routing.
+
 ---
 
 ## 10. Aturan untuk Agent
