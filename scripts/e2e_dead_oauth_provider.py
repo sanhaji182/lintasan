@@ -8,11 +8,20 @@ separate port, with one extra httptest-style stub upstream standing in for the
 prod process is never touched.
 
 Assertions:
-  1. BASELINE (origin/main binary): POST /v1/chat/completions for the shared
-     model returns 401 oauth_reauth_required even though a healthy provider
-     serves it.
+  1. BASELINE (pre-fix binary): POST /v1/chat/completions for the shared model
+     returns 401 oauth_reauth_required even though a healthy provider serves it.
   2. FIXED binary: the same call returns 200 with content from the healthy
      provider.
+
+Build the baseline once (a binary WITHOUT the fix):
+
+    git -C ~/lintasan-go archive <pre-fix-sha> | tar -x -C /tmp --one-top-level=ag-baseline-src
+    cp -r ~/lintasan-go/frontend/build /tmp/ag-baseline-src/frontend/build   # go:embed needs it
+    cd /tmp/ag-baseline-src && CGO_ENABLED=1 go build \\
+        -ldflags="-s -w -X github.com/sanhaji182/lintasan-go/internal/version.Version=baseline" \\
+        -o /tmp/ag-baseline-lintasan ./cmd/lintasan
+
+Override paths with E2E_BASE_BIN / E2E_FIXED_BIN.
 """
 import json
 import os
@@ -28,8 +37,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WORK = "/tmp/ag-e2e"
 PROD_DB = os.path.expanduser("~/lintasan-go/data/lintasan.db")
 
-FIXED_BIN = os.path.join(ROOT, "dist-bin", "lintasan")
-BASE_BIN = "/home/ubuntu/lintasan-go/.worktrees/ag-baseline-check/dist-bin/lintasan"
+FIXED_BIN = os.environ.get("E2E_FIXED_BIN", os.path.join(ROOT, "dist-bin", "lintasan"))
+# Baseline must be a binary WITHOUT the fix (see BUILD_BASELINE below).
+BASE_BIN = os.environ.get("E2E_BASE_BIN", "/tmp/ag-baseline-lintasan")
 
 STUB_PORT = 25099
 SHARED_MODEL = "gemini-2.5-flash"
