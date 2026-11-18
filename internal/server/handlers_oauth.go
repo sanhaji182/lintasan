@@ -392,6 +392,12 @@ func (s *Server) handleOAuthRevokeSession(w http.ResponseWriter, r *http.Request
 // that has a connection or a session, so drift is corrected at boot instead of
 // waiting for the next account add/remove.
 //
+// Only rows that carry a provider preset name are touched. An operator may have
+// created a connection pointing at an OAuth provider BY HAND (custom base_url,
+// own name) — deleting that because the account list is empty would destroy
+// their configuration. Auto-provisioned rows are ours to manage; hand-made ones
+// are not.
+//
 // Runs in its own goroutine (see Start) and is read-only when the state is
 // already correct, so it cannot delay or break serving.
 func (s *Server) reconcileOAuthConnections() {
@@ -418,6 +424,25 @@ func (s *Server) reconcileOAuthConnections() {
 	for p := range seen {
 		s.syncOAuthConnection(p, "boot reconciliation")
 	}
+}
+
+// oauthPresetConnectionName returns the preset name auto-provisioning uses for
+// this provider ("" when there is no preset). Rows with this exact name are
+// managed by Lintasan; anything else was created by a human.
+func oauthPresetConnectionName(provider string) string {
+	if preset := presetForOAuthProvider(provider); preset != nil {
+		return preset.Name
+	}
+	return ""
+}
+
+// syncConnectionModels runs discovery for one connection. Best-effort: a provider
+// that is temporarily unreachable must not fail the sign-in that triggered it.
+func (s *Server) syncConnectionModels(connID string) {
+	if s.discoverer == nil || connID == "" {
+		return
+	}
+	_, _ = s.discoverer.SyncConnection(connID)
 }
 
 // syncOAuthConnection keeps the connection wired to oauthProvider in step with
@@ -451,23 +476,49 @@ func (s *Server) syncOAuthConnection(oauthProvider, reason string) {
 	if usable > 0 {
 		// An account exists: make sure the row does too. autoProvisionOAuthConnection
 		// is idempotent (it upserts by oauth_provider and sets is_active=1).
-		_, _ = s.autoProvisionOAuthConnection(oauthProvider)
+		id, err := s.autoProvisionOAuthConnection(oauthProvider)
+		if err != nil || id == "" {
+			return
+		}
+		// A freshly provisioned connection has NO models: discovery is what fills
+		// discovered_models, and nothing in the sign-in path ran it. Without this
+		// the operator signs in successfully and the provider still serves nothing,
+		// because /v1/models has no rows for it and routing has no candidate.
+		// Only sync when the row is empty so a boot reconcile does not hammer every
+		// provider on every restart.
+		var models int
+		if err := s.db.Conn().QueryRow(
+			`SELECT COUNT(*) FROM discovered_models WHERE connection_id = ?`, id).Scan(&models); err == nil && models == 0 {
+			s.syncConnectionModels(id)
+		}
 		return
 	}
 
 	rows, err := s.db.Conn().Query(
-		`SELECT id FROM connections WHERE oauth_provider = ?`, oauthProvider)
+		`SELECT id, name FROM connections WHERE oauth_provider = ?`, oauthProvider)
 	if err != nil {
 		return
 	}
-	var ids []string
+	type row struct{ id, name string }
+	var found []row
 	for rows.Next() {
-		var id string
-		if rows.Scan(&id) == nil {
-			ids = append(ids, id)
+		var r row
+		if rows.Scan(&r.id, &r.name) == nil {
+			found = append(found, r)
 		}
 	}
 	rows.Close()
+
+	// Only rows Lintasan created (preset name) are removed. A hand-made connection
+	// that merely points at this provider keeps its row: its configuration is the
+	// operator's, and an empty account list is not permission to delete it.
+	presetName := oauthPresetConnectionName(oauthProvider)
+	var ids []string
+	for _, r := range found {
+		if presetName != "" && r.name == presetName {
+			ids = append(ids, r.id)
+		}
+	}
 
 	for _, id := range ids {
 		if _, err := s.db.Conn().Exec(`DELETE FROM connections WHERE id = ?`, id); err != nil {

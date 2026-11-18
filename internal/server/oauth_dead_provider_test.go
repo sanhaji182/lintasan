@@ -326,3 +326,63 @@ func TestBootReconcileRemovesStrandedConnection(t *testing.T) {
 		t.Errorf("%d model rows survived reconciliation", models)
 	}
 }
+
+// A connection a human created by hand (custom base_url / own name) must survive
+// an empty account list. Reconciliation manages only what auto-provisioning made.
+func TestReconcileSparesHandMadeConnection(t *testing.T) {
+	s, _ := newTestServer(t, &config.Config{OAuthIDEEnabled: true})
+
+	if _, err := s.db.Conn().Exec(`
+		INSERT INTO connections (id, name, base_url, api_key, format, chat_path,
+		                         auth_header, auth_prefix, is_active, priority, oauth_provider)
+		VALUES ('hand-made', 'my own antigravity', 'https://my-proxy.internal',
+		        'sk-custom', 'openai', '/v1/chat/completions', 'Authorization', 'Bearer ', 1, 9, 'antigravity')`); err != nil {
+		t.Fatal(err)
+	}
+
+	s.reconcileOAuthConnections()
+
+	if !connectionExists(t, s, "hand-made") {
+		t.Fatal("boot reconciliation deleted a hand-made connection: operator config destroyed")
+	}
+	// It also must still be enabled and keep its custom endpoint.
+	var active int
+	var baseURL string
+	if err := s.db.Conn().QueryRow(
+		`SELECT is_active, base_url FROM connections WHERE id = 'hand-made'`).Scan(&active, &baseURL); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 || baseURL != "https://my-proxy.internal" {
+		t.Errorf("hand-made row mutated: active=%d base_url=%q", active, baseURL)
+	}
+}
+
+// Signing in on a provider with no models must trigger discovery, otherwise the
+// account works but the gateway has no model row to route to.
+func TestSignInSyncsModelsForEmptyConnection(t *testing.T) {
+	s, _ := newTestServer(t, &config.Config{OAuthIDEEnabled: true})
+
+	// Account appears, connection does not exist yet.
+	if _, err := s.db.Conn().Exec(`
+		INSERT INTO oauth_sessions (id, provider, access_token, status, created_at)
+		VALUES ('s-1', 'antigravity', 'tok', 'active', datetime('now','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	s.syncOAuthConnection("antigravity", "account added")
+
+	var connID string
+	if err := s.db.Conn().QueryRow(
+		`SELECT id FROM connections WHERE oauth_provider = 'antigravity'`).Scan(&connID); err != nil {
+		t.Fatalf("connection not provisioned after sign-in: %v", err)
+	}
+	// The row must be enabled so routing can pick it.
+	var active int
+	if err := s.db.Conn().QueryRow(
+		`SELECT is_active FROM connections WHERE id = ?`, connID).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Error("provisioned connection is not active")
+	}
+}
