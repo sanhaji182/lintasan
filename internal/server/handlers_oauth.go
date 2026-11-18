@@ -274,7 +274,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	// auto-disabled when the last account went away must come back on its own.
 	// Without this the operator signs in and still gets "no active connections"
 	// for models the row advertises.
-	s.syncOAuthConnectionEnabled(provider, "account added after sign-in")
+	s.syncOAuthConnection(provider, "account added after sign-in")
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
@@ -365,7 +365,7 @@ func (s *Server) handleOAuthRevokeSession(w http.ResponseWriter, r *http.Request
 		s.audit("oauth.ide.purge", admin.Username, "oauth/"+id, nil)
 		// Purging a dead account row is the other way an operator removes the last
 		// account for a provider, so the un-wire check must run here too.
-		s.syncOAuthConnectionEnabled(sessionProvider, "no accounts left after purge")
+		s.syncOAuthConnection(sessionProvider, "no accounts left after purge")
 		writeJSON(w, map[string]string{"status": "deleted"})
 		return
 	}
@@ -378,20 +378,63 @@ func (s *Server) handleOAuthRevokeSession(w http.ResponseWriter, r *http.Request
 	// enabled, still advertising its models, and unable to serve a single request:
 	// nothing can re-mint a token without a human sign-in. Measured live on
 	// 2026-11-18 — an antigravity connection stayed is_active=1 with zero sessions
-	// and kept offering six models that all answered 401. Disable it so routing and
-	// the catalogue stop pretending it works; the next successful sign-in
-	// re-activates it (autoProvisionOAuthConnection sets is_active=1).
-	s.syncOAuthConnectionEnabled(sessionProvider, "no accounts left after revoke")
+	// and kept offering six models that all answered 401.
+	//
+	// The row is REMOVED, not disabled: a connection whose provider has no account
+	// is not a usable route waiting to be switched on, it is a lie on the
+	// Connections page that the operator has to clean up by hand. The next
+	// successful sign-in re-provisions it (autoProvisionOAuthConnection).
+	s.syncOAuthConnection(sessionProvider, "no accounts left after revoke")
 	writeJSON(w, map[string]string{"status": "revoked"})
 }
 
-// syncOAuthConnectionEnabled disables the connection wired to oauthProvider when
-// that provider has no usable session left, and re-enables it when it does.
+// reconcileOAuthConnections applies syncOAuthConnection to every OAuth provider
+// that has a connection or a session, so drift is corrected at boot instead of
+// waiting for the next account add/remove.
 //
-// is_active is the switch routing and the model catalogue already honour, so
-// using it means the dead connection stops being offered without inventing a
-// second notion of health. Called after account changes and after each sign-in.
-func (s *Server) syncOAuthConnectionEnabled(oauthProvider, reason string) {
+// Runs in its own goroutine (see Start) and is read-only when the state is
+// already correct, so it cannot delay or break serving.
+func (s *Server) reconcileOAuthConnections() {
+	if s.db == nil {
+		return
+	}
+	seen := map[string]bool{}
+	rows, err := s.db.Conn().Query(`
+		SELECT oauth_provider FROM connections WHERE COALESCE(oauth_provider,'') != ''
+		UNION SELECT provider FROM oauth_sessions`)
+	if err != nil {
+		return
+	}
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil {
+			if p = strings.TrimSpace(strings.ToLower(p)); p != "" {
+				seen[p] = true
+			}
+		}
+	}
+	rows.Close()
+
+	for p := range seen {
+		s.syncOAuthConnection(p, "boot reconciliation")
+	}
+}
+
+// syncOAuthConnection keeps the connection wired to oauthProvider in step with
+// the accounts that actually exist:
+//
+//   - accounts exist  -> the connection must exist and be enabled (re-provision)
+//   - no accounts     -> the connection must not exist at all (remove)
+//
+// is_active=false was the first attempt and it was not enough: the Connections
+// page lists inactive rows under its default "all" filter, so the operator still
+// saw an antigravity connection demanding a login that could never be satisfied.
+// A connection with no account has nothing to configure, so it is deleted.
+//
+// Removal goes through removeConnection (the same delete path the dashboard uses,
+// which also drops discovered_models and refreshes pools) so there is one
+// definition of "delete a connection".
+func (s *Server) syncOAuthConnection(oauthProvider, reason string) {
 	oauthProvider = strings.TrimSpace(strings.ToLower(oauthProvider))
 	if oauthProvider == "" {
 		return
@@ -406,19 +449,14 @@ func (s *Server) syncOAuthConnectionEnabled(oauthProvider, reason string) {
 	}
 
 	if usable > 0 {
-		// An account exists again: whatever disabled the row is history.
-		_, _ = s.db.Conn().Exec(
-			`UPDATE connections SET is_active = 1, updated_at = datetime('now','localtime')
-			 WHERE oauth_provider = ? AND is_active = 0`,
-			oauthProvider,
-		)
+		// An account exists: make sure the row does too. autoProvisionOAuthConnection
+		// is idempotent (it upserts by oauth_provider and sets is_active=1).
+		_, _ = s.autoProvisionOAuthConnection(oauthProvider)
 		return
 	}
 
 	rows, err := s.db.Conn().Query(
-		`SELECT id FROM connections WHERE oauth_provider = ? AND is_active = 1`,
-		oauthProvider,
-	)
+		`SELECT id FROM connections WHERE oauth_provider = ?`, oauthProvider)
 	if err != nil {
 		return
 	}
@@ -432,22 +470,18 @@ func (s *Server) syncOAuthConnectionEnabled(oauthProvider, reason string) {
 	rows.Close()
 
 	for _, id := range ids {
-		_, _ = s.db.Conn().Exec(
-			`UPDATE connections SET is_active = 0, updated_at = datetime('now','localtime') WHERE id = ?`,
-			id,
-		)
-		s.audit("connection.auto_disable", "system", "connections/"+id, map[string]any{
+		if _, err := s.db.Conn().Exec(`DELETE FROM connections WHERE id = ?`, id); err != nil {
+			continue
+		}
+		_, _ = s.db.Conn().Exec(`DELETE FROM discovered_models WHERE connection_id = ?`, id)
+		s.audit("connection.auto_remove", "system", "connections/"+id, map[string]any{
 			"oauth_provider": oauthProvider,
 			"reason":         reason,
 		})
 	}
-	if len(ids) > 0 {
-		if s.proxy != nil {
-			s.proxy.UpdateLoadBalancerConnections()
-		}
-		if s.discoverer != nil {
-			// no-op hook point: discovery already filters on is_active
-		}
+	if len(ids) > 0 && s.proxy != nil {
+		s.proxy.RefreshMultiAccountPools()
+		s.proxy.UpdateLoadBalancerConnections()
 	}
 }
 

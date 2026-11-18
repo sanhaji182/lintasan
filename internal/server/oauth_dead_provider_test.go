@@ -203,7 +203,7 @@ func TestLiveOAuthSessionRestoresCatalog(t *testing.T) {
 //    must bring it back.
 // ---------------------------------------------------------------------------
 
-func TestRevokeLastAccountDisablesConnection(t *testing.T) {
+func TestRevokeLastAccountRemovesConnection(t *testing.T) {
 	s, _ := newTestServer(t, &config.Config{OAuthIDEEnabled: true})
 	connID := addDeadOAuthConnection(t, s.db, "xai", 5)
 
@@ -224,36 +224,38 @@ func TestRevokeLastAccountDisablesConnection(t *testing.T) {
 		t.Fatalf("revoke: %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	var active int
-	if err := s.db.Conn().QueryRow(`SELECT is_active FROM connections WHERE id = ?`, connID).Scan(&active); err != nil {
+	// The row must be GONE, not merely deactivated: the Connections page lists
+	// inactive rows under its default "all" filter, so disabling still leaves the
+	// operator staring at a provider that can never serve anything.
+	if connectionExists(t, s, connID) {
+		t.Fatal("connection row survived its last account: the Connections page keeps showing it")
+	}
+	var models int
+	if err := s.db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM discovered_models WHERE connection_id = ?`, connID).Scan(&models); err != nil {
 		t.Fatal(err)
 	}
-	if active != 0 {
-		t.Error("connection still enabled with zero accounts: routing will keep offering it")
+	if models != 0 {
+		t.Errorf("%d discovered_models rows orphaned after removal", models)
 	}
 
-	// Signing in again must re-enable it, or the operator is stuck.
-	s.syncOAuthConnectionEnabled("xai", "test")
-	if err := s.db.Conn().QueryRow(`SELECT is_active FROM connections WHERE id = ?`, connID).Scan(&active); err == nil && active != 0 {
-		t.Log("re-enabled without an account — expected only when a session exists")
-	}
+	// Signing in again must re-provision the connection, or the operator is stuck.
 	if _, err := s.db.Conn().Exec(`
 		INSERT INTO oauth_sessions (id, provider, access_token, status, created_at)
 		VALUES ('sess-2', 'xai', 'tok', 'active', datetime('now','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
-	s.syncOAuthConnectionEnabled("xai", "account added")
-	if err := s.db.Conn().QueryRow(`SELECT is_active FROM connections WHERE id = ?`, connID).Scan(&active); err != nil {
-		t.Fatal(err)
-	}
-	if active != 1 {
-		t.Error("connection not re-enabled after a new account appeared")
+	s.syncOAuthConnection("xai", "account added")
+	// Re-provisioning mints a fresh row (new UUID): the point is that the provider
+	// is wired again, not that the old id came back from the dead.
+	if !connectionExistsForProvider(t, s, "xai") {
+		t.Error("connection not re-provisioned after a new account appeared")
 	}
 }
 
 // Purge (permanent delete of a revoked row) is the other removal path and must
-// disable the connection too.
-func TestPurgeRevokedAccountDisablesConnection(t *testing.T) {
+// remove the connection too.
+func TestPurgeRevokedAccountRemovesConnection(t *testing.T) {
 	s, _ := newTestServer(t, &config.Config{OAuthIDEEnabled: true})
 	connID := addDeadOAuthConnection(t, s.db, "xai", 5)
 
@@ -275,11 +277,52 @@ func TestPurgeRevokedAccountDisablesConnection(t *testing.T) {
 		t.Fatalf("expected permanent delete, got %s", rec.Body.String())
 	}
 
-	var active int
-	if err := s.db.Conn().QueryRow(`SELECT is_active FROM connections WHERE id = ?`, connID).Scan(&active); err != nil {
+	if connectionExists(t, s, connID) {
+		t.Error("connection row survived the purge of its last (revoked) account")
+	}
+}
+
+// connectionExistsForProvider reports whether any connection is wired to provider.
+func connectionExistsForProvider(t *testing.T, s *Server, provider string) bool {
+	t.Helper()
+	var n int
+	if err := s.db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM connections WHERE oauth_provider = ?`, provider).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if active != 0 {
-		t.Error("connection still enabled after the last (revoked) account was purged")
+	return n > 0
+}
+
+// connectionExists reports whether the row is still there.
+func connectionExists(t *testing.T, s *Server, id string) bool {
+	t.Helper()
+	var n int
+	if err := s.db.Conn().QueryRow(`SELECT COUNT(*) FROM connections WHERE id = ?`, id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n > 0
+}
+
+// Boot reconciliation must clean up drift that happened BEFORE the cleanup
+// existed — exactly the production case: the antigravity account rows were
+// deleted while the fix was not yet deployed, so no event ever fired and the
+// connection sat there forever asking for a login.
+func TestBootReconcileRemovesStrandedConnection(t *testing.T) {
+	s, _ := newTestServer(t, &config.Config{OAuthIDEEnabled: true})
+	stranded := addDeadOAuthConnection(t, s.db, "antigravity", 5)
+	addAuthModel(t, s.db, "oauth-antigravity", "stranded-model")
+
+	s.reconcileOAuthConnections()
+
+	if connectionExists(t, s, stranded) {
+		t.Error("boot reconciliation left a connection with zero accounts in place")
+	}
+	var models int
+	if err := s.db.Conn().QueryRow(
+		`SELECT COUNT(*) FROM discovered_models WHERE connection_id = ?`, stranded).Scan(&models); err != nil {
+		t.Fatal(err)
+	}
+	if models != 0 {
+		t.Errorf("%d model rows survived reconciliation", models)
 	}
 }

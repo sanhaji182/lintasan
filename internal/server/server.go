@@ -224,6 +224,14 @@ func New(cfg *config.Config, database *db.DB) *Server {
 
 func (s *Server) Start() error {
 	s.startTime = time.Now()
+	// Reconcile OAuth connections against the accounts that actually exist.
+	//
+	// Doing this only on account add/remove leaves pre-existing rows stranded
+	// forever: production had an antigravity connection created before the
+	// cleanup existed, so no event ever fired for it and the Connections page
+	// kept showing a provider asking for a login that no longer had an account.
+	// Reconcile at boot so the state converges no matter how the drift happened.
+	go s.reconcileOAuthConnections()
 	// Start MITM bridge if configured
 	if s.mitmProxy != nil {
 		go func() {
