@@ -1874,6 +1874,54 @@ func transformForCommandCode(body []byte, thinkingMode string) []byte {
 		}
 	}
 
+	// CommandCode Alpha expects Anthropic-style tool declarations
+	// {name, description, input_schema}. Ported verbatim from 9router's
+	// openai-to-commandcode.js:190-210 (convertTools) and the Go fork's
+	// commandcodeTools(). Without this the tools are dropped and the model
+	// cannot emit native tool_calls.
+	if rawTools, ok := req["tools"].([]any); ok && len(rawTools) > 0 {
+		projected := make([]any, 0, len(rawTools))
+		for _, raw := range rawTools {
+			tool, ok := raw.(map[string]any)
+			if !ok || tool == nil {
+				continue
+			}
+			var name, description string
+			var schema any
+			toolType, _ := tool["type"].(string)
+			if strings.EqualFold(toolType, "function") {
+				fn, _ := tool["function"].(map[string]any)
+				if fn != nil {
+					name, _ = fn["name"].(string)
+					description, _ = fn["description"].(string)
+					schema = fn["parameters"]
+				}
+			} else if n, ok := tool["name"].(string); ok && n != "" {
+				name = n
+				description, _ = tool["description"].(string)
+				if s, ok := tool["input_schema"]; ok {
+					schema = s
+				} else {
+					schema = tool["parameters"]
+				}
+			}
+			if name == "" {
+				continue
+			}
+			if schema == nil {
+				schema = map[string]any{"type": "object"}
+			}
+			entry := map[string]any{"name": name, "input_schema": schema}
+			if description != "" {
+				entry["description"] = description
+			}
+			projected = append(projected, entry)
+		}
+		if len(projected) > 0 {
+			params["tools"] = projected
+		}
+	}
+
 	out := map[string]any{
 		"threadId": uuid.New().String(),
 		"memory":   "",
