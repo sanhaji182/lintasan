@@ -1743,6 +1743,17 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 		upReq.Header.Set("x-cli-environment", "cli")
 		upReq.Header.Set("User-Agent", "command-code/0.26.25 linux-x64")
 	}
+	// OpenCode Zen is fail-closed behind opencode_zen_enabled. When on, apply
+	// the CLI fingerprint headers + built-in tools that the upstream requires;
+	// without them the free lane answers 403 FreeTierError. The flag is read
+	// per request so the dashboard toggle takes effect without a restart.
+	if strings.EqualFold(conn.Format, "opencodezen") && opencodeZenEnabled(p) {
+		requestBody = applyOpencodeZenWire(
+			upReq, requestBody, r.Header.Get("User-Agent"), conn.APIKey, "cli", time.Now(),
+		)
+		upReq.Body = io.NopCloser(strings.NewReader(string(requestBody)))
+		upReq.ContentLength = int64(len(requestBody))
+	}
 	return p.client.Do(upReq)
 }
 
