@@ -1765,21 +1765,75 @@ func transformForCommandCode(body []byte, thinkingMode string) []byte {
 	// Detect DeepSeek reasoning models for thinking control
 	isDeepSeekReasoning := strings.Contains(model, "deepseek-v4-pro") || strings.Contains(model, "deepseek-r1")
 
-	// Extract system prompt from messages
+	// Extract system prompt from messages.
+	//
+	// CommandCode Alpha's params.messages schema accepts only "user" and
+	// "assistant" roles. Verbatim OpenAI `role: "tool"` messages make every
+	// follow-up turn of a tool-using conversation fail with:
+	//   400 ... expected one of "user"|"assistant" at params.messages[N].role
+	// Fold tool results into a user-role message so the result text survives
+	// and the conversation keeps working. Assistant tool_calls are left
+	// untouched — the upstream accepts them.
 	var systemPrompt string
 	var userMessages []map[string]any
+	var pendingToolBlocks []string
+	flushToolBlocks := func() {
+		if len(pendingToolBlocks) == 0 {
+			return
+		}
+		userMessages = append(userMessages, map[string]any{
+			"role":    "user",
+			"content": strings.Join(pendingToolBlocks, "\n\n"),
+		})
+		pendingToolBlocks = nil
+	}
 	if msgs, ok := req["messages"].([]any); ok {
 		for _, m := range msgs {
 			msg, _ := m.(map[string]any)
 			role, _ := msg["role"].(string)
-			if role == "system" || role == "developer" {
+			switch {
+			case role == "system" || role == "developer":
+				flushToolBlocks()
 				if content, ok := msg["content"].(string); ok {
 					systemPrompt += content + "\n\n"
 				}
-			} else {
+			case role == "tool" || role == "function":
+				// Fold the tool result into a user-role message. Include the
+				// tool_call_id when present so the model can correlate it with
+				// the assistant tool_calls that preceded it.
+				var sb strings.Builder
+				if id, ok := msg["tool_call_id"].(string); ok && id != "" {
+					fmt.Fprintf(&sb, "[tool result id=%s]", id)
+					if name, ok := msg["name"].(string); ok && name != "" {
+						fmt.Fprintf(&sb, " name=%s", name)
+					}
+					sb.WriteString("\n")
+				}
+				switch content := msg["content"].(type) {
+				case string:
+					sb.WriteString(content)
+				case []any:
+					// Some clients send structured tool content; flatten the
+					// textual parts rather than dropping the result entirely.
+					var parts []string
+					for _, item := range content {
+						if pm, ok := item.(map[string]any); ok {
+							if text, ok := pm["text"].(string); ok {
+								parts = append(parts, text)
+							}
+						}
+					}
+					sb.WriteString(strings.Join(parts, "\n"))
+				}
+				pendingToolBlocks = append(pendingToolBlocks, sb.String())
+			default:
+				// A real user/assistant message breaks the run of tool results,
+				// so flush what we have before appending it.
+				flushToolBlocks()
 				userMessages = append(userMessages, msg)
 			}
 		}
+		flushToolBlocks()
 	}
 	systemPrompt = strings.TrimSpace(systemPrompt)
 
