@@ -34,7 +34,7 @@ benefit.
 | `dd66965` | Translate CC `tool-call` events into OpenAI `tool_calls` (streaming + non-streaming); `cc_tool_calls_response_test.go` |
 | `2414575` | `opencode_zen_enabled` (default OFF) wires `PrepareHeaders` + fingerprint tools for `format=opencodezen`; `opencodezen_wiring*.go` |
 | `7d624eb` | `opencode_go_enabled` (default OFF) attaches the required `x-opencode-session` on `opencode.ai` connections; `opencode_go_wiring*.go` |
-| `d77ce5e` | This document + the `AGENTS.md` §10c pointer (docs-only; binary stamp stays `v0.29.3-299-g7d624eb`) |
+| (subsequent docs-only commits) | This fragment + the `AGENTS.md` §10c pointer; no Go changes, so the binary stamp legitimately stays `v0.29.3-299-g7d624eb` (`7d624eb`). |
 
 ## Tests that pin it
 
