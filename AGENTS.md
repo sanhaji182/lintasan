@@ -412,6 +412,29 @@ cd ~/worktrees/<nama-agent>
 
 ---
 
+## 10c. Catatan perbaikan 2026-11-22 (CommandCode tools + OpenCode lanes)
+
+Perbaikan tool round-trip di alias `core` (CommandCode Alpha) dan wiring
+`opencodezen` / `opencode-go` ada di
+`.changes/2026-11-22-cc-tool-parity-and-opencode-wiring.md`. Ringkasannya:
+
+- `transformForCommandCode` kini **melipat `role: tool` jadi pesan `user`**
+  (skema upstream hanya terima `user`/`assistant`) dan **memetakan `tools`**
+  OpenAI ke `{name, description, input_schema}` — jangan hapus salah satu:
+  dulu hilangnya `tools` bikin model balas Markup DSML, bukan `tool_calls`.
+- Kedua translator CC (`translateCCAlphaToOpenAI` dan
+  `pipeCCAlphaStreamToOpenAI`) kini mengubah event `tool-call` jadi OpenAI
+  `tool_calls`. Cek `finish_reason=tool-calls` DAN isi `tool_calls`, jangan
+  cuma status 200.
+- `opencode_zen_enabled` dan `opencode_go_enabled` **default OFF** (fail-closed).
+  Keduanya dibaca per-request dari `settings`; tidak ada perubahan skema DB.
+  OpenCode Go butuh `x-opencode-session` — tanpanya upstream 400
+  `MissingSessionID`.
+- A8 `mimo-free` sengaja TIDAK di-wire: channel free Xiaomi sudah dihentikan
+  upstream (registry `hidden: true`, bootstrap 404).
+- Detil verifikasi, test yang mengunci kontrak, dan batas yang belum
+  terbukti (credential Zen/Go expired) ada di file `.changes` di atas.
+
 ## 11. Quick Reference
 
 ```bash
