@@ -1971,6 +1971,11 @@ func translateCCAlphaToOpenAI(raw []byte) []byte {
 	var finishReason string
 	var usage map[string]any
 	var modelUsed string
+	type ccToolCall struct {
+		id, name string
+		input    any
+	}
+	var toolCalls []ccToolCall
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -1988,6 +1993,14 @@ func translateCCAlphaToOpenAI(raw []byte) []byte {
 		case "text-delta":
 			if t, ok := event["text"].(string); ok {
 				contentText.WriteString(t)
+			}
+		case "tool-call":
+			// CommandCode emits a tool-call event; expose it as an OpenAI
+			// tool_calls entry so clients can execute the tool.
+			id, _ := event["toolCallId"].(string)
+			name, _ := event["toolName"].(string)
+			if name != "" {
+				toolCalls = append(toolCalls, ccToolCall{id: id, name: name, input: event["input"]})
 			}
 		case "reasoning-start":
 			// Just an event marker — no text
@@ -2056,6 +2069,30 @@ func translateCCAlphaToOpenAI(raw []byte) []byte {
 	}
 	if reasoning != "" {
 		message["reasoning_content"] = reasoning
+	}
+	if len(toolCalls) > 0 {
+		openAITools := make([]map[string]any, 0, len(toolCalls))
+		for i, tc := range toolCalls {
+			args := tc.input
+			if args == nil {
+				args = map[string]any{}
+			}
+			argBytes, _ := json.Marshal(args)
+			toolID := tc.id
+			if toolID == "" {
+				toolID = "call_" + uuid.New().String()[:8]
+			}
+			openAITools = append(openAITools, map[string]any{
+				"id":   toolID,
+				"type": "function",
+				"function": map[string]any{
+					"name":      tc.name,
+					"arguments": string(argBytes),
+				},
+				"index": i,
+			})
+		}
+		message["tool_calls"] = openAITools
 	}
 
 	resp := map[string]any{
@@ -2129,6 +2166,38 @@ func (p *ProxyHandler) pipeCCAlphaStreamToOpenAI(body io.Reader, w http.Response
 				}
 				streamBuffer.WriteString(t)
 				tokensOut++
+			}
+		case "tool-call":
+			// Emit an OpenAI-style tool_call delta chunk. CommandCode's
+			// `input` object is the already-parsed arguments.
+			id, _ := event["toolCallId"].(string)
+			name, _ := event["toolName"].(string)
+			if id != "" && name != "" {
+				argBytes, _ := json.Marshal(event["input"])
+				if event["input"] == nil {
+					argBytes = []byte("{}")
+				}
+				chunk := map[string]any{
+					"id":      reqID,
+					"object":  "chat.completion.chunk",
+					"created": created,
+					"model":   model,
+					"choices": []map[string]any{
+						{
+							"index":         0,
+							"delta":         map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": id, "type": "function", "function": map[string]any{"name": name, "arguments": string(argBytes)}}}},
+							"finish_reason": nil,
+						},
+					},
+				}
+				if chunkBytes, err := json.Marshal(chunk); err == nil {
+					w.Write([]byte("data: "))
+					w.Write(chunkBytes)
+					w.Write([]byte("\n\n"))
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
 			}
 		case "reasoning-delta":
 			if t, ok := event["text"].(string); ok && t != "" {
