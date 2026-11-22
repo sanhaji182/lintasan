@@ -1754,6 +1754,14 @@ func (p *ProxyHandler) doUpstream(r *http.Request, conn *Connection, body []byte
 		upReq.Body = io.NopCloser(strings.NewReader(string(requestBody)))
 		upReq.ContentLength = int64(len(requestBody))
 	}
+	// OpenCode Go inference lane requires x-opencode-session. Without it the
+	// upstream answers 400 MissingSessionID. Fail-closed behind
+	// opencode_go_enabled; preset connections carry format=openai, so flag +
+	// opencode.ai host is the discriminator (no schema change).
+	if goEnabledSetting(p) && strings.Contains(strings.ToLower(conn.BaseURL), "opencode.ai") {
+		applyOpenCodeGoHeaders(upReq.Header, r.Header.Get("User-Agent"),
+			r.Header.Get("x-opencode-session"), "cli")
+	}
 	return p.client.Do(upReq)
 }
 
